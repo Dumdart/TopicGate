@@ -1,0 +1,16 @@
+[project]
+name = "SmartHomeObserver"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "paho-mqtt",
+    "python-dotenv",
+    "pytest"
+]
+
+[project.scripts]
+smart-home-SmartHomeObserver= "smart_home_observer.__main__:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
