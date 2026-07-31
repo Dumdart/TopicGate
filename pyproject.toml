@@ -1,5 +1,10 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "SmartHomeObserver"
+name = "smart-home-observer"
+version = "0.1.0"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -10,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-smart-home-SmartHomeObserver= "smart_home_observer.__main__:run"
+smart-home-observer = "smart_home_observer.__main__:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

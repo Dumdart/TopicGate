@@ -1,0 +1,6 @@
+# Environment variables
+.env
+
+# Distribution / build artifacts
+*.egg-info/
+__pycache__/
