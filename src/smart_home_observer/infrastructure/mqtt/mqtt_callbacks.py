@@ -1,27 +1,53 @@
 from abc import ABC, abstractmethod
+from typing import Any
+
 
 class MqttCallbacks(ABC):
     @abstractmethod
-    def on_subscribe(self, client, userdata, mid, granted_qos, properties=None):
+    async def on_subscribe(
+        self, client: Any, userdata: Any, mid: int, granted_qos: Any, properties: Any = None
+    ) -> None:
         pass
 
     @abstractmethod
-    def on_connect(self, client, userdata, flags, rc, properties=None):
+    async def on_connect(
+        self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None
+    ) -> None:
         pass
 
     @abstractmethod
-    def on_disconnect(self, client, userdata, disconnect_flags, reason_code=None, properties=None):
-        code = reason_code if reason_code is not None else disconnect_flags
-        print("Disconnected with code %s." % code)
-
-    @abstractmethod
-    def on_publish(self, client, userdata, mid, reason_code=None, properties=None):
-        print("Publish: " + str(mid))
-
-    @abstractmethod
-    def on_unsubscribe(self, client, userdata, mid, properties=None, reason_codes=None):
+    async def on_disconnect(
+        self,
+        client: Any,
+        userdata: Any,
+        disconnect_flags: Any,
+        reason_code: Any = None,
+        properties: Any = None,
+    ) -> None:
         pass
 
     @abstractmethod
-    def on_message(self, client, userdata, msg):
+    async def on_publish(
+        self,
+        client: Any,
+        userdata: Any,
+        mid: int,
+        reason_code: Any = None,
+        properties: Any = None,
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def on_unsubscribe(
+        self,
+        client: Any,
+        userdata: Any,
+        mid: int,
+        properties: Any = None,
+        reason_codes: Any = None,
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def on_message(self, client: Any, userdata: Any, msg: Any) -> None:
         pass
