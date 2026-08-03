@@ -2,10 +2,11 @@ from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.interfaces.mqtt_repository import MqttRepository
 from smart_home_observer.core.models.chicken_door import ChickenDoor
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.observer_model import TopicState
 from smart_home_observer.infrastructure.mqtt.callbacks.basic_callbacks import (
     BasicCallbacks,
 )
-from smart_home_observer.infrastructure.processors.chicken_door_mqtt_message_processor import (
+from smart_home_observer.processors.chicken_door_mqtt_message_processor import (
     ChickenDoorMqttMessageProcessor,
 )
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
@@ -36,6 +37,11 @@ class ChickenDoorRepository(MqttRepository[ChickenDoor]):
             self._state.battery,
             self._state.light_level,
         )
+
+    def get_value(self, topic)  -> bytes | None:
+        pass
+    def get_state(self, topic) -> TopicState | None:
+        pass
 
     def handle_message(self, _client, _userdata, msg: MqttMessage) -> None:
         self._message_processor.process(self._state, msg)

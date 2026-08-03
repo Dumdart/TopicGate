@@ -54,10 +54,11 @@ class MqttGate:
         )
 
     async def unsubscribe(self) -> int | None:
-        return await self.client.unsubscribe_multiple(
-            self.topics,
-            self.callbacks("on_unsubscribe", self.mqtt_callbacks),
-        )
+        if self.client.is_connected:
+            return await self.client.unsubscribe_multiple(
+                self.topics,
+                self.callbacks("on_unsubscribe", self.mqtt_callbacks),
+            )
 
     @property
     def is_started(self) -> bool:
