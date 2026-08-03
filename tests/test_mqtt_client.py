@@ -227,8 +227,11 @@ def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
 def test_async_message_callback_is_awaited_on_application_loop():
     async def scenario():
         received = asyncio.Event()
+        received_message = None
 
         async def on_message(client, userdata, message):
+            nonlocal received_message
+            received_message = message
             received.set()
 
         with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
@@ -236,8 +239,15 @@ def test_async_message_callback_is_awaited_on_application_loop():
             await client.connect(timeout=1)
             client.message_callback_add("home/state", on_message)
             fake_client = FakePahoClient.instances[-1]
-            fake_client.message_callback(fake_client, None, object())
+            paho_message = SimpleNamespace(
+                topic="home/state", payload=b"on", qos=1, retain=False
+            )
+            fake_client.message_callback(fake_client, None, paho_message)
             await asyncio.wait_for(received.wait(), timeout=1)
             await client.disconnect()
+
+        assert received_message == MqttMessage(
+            topic="home/state", payload=b"on", qos=1, retain=False
+        )
 
     asyncio.run(scenario())

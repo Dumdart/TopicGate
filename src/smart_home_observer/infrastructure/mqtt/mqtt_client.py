@@ -168,7 +168,15 @@ class MqttClient:
 
     def message_callback_add(self, topic: str, callback: Callback):
         def forward(client: Any, userdata: Any, message: Any):
-            self._call_on_loop(self._run_callback, callback, client, userdata, message)
+            mqtt_message = MqttMessage(
+                topic=str(message.topic),
+                payload=bytes(message.payload),
+                qos=int(message.qos),
+                retain=bool(message.retain),
+            )
+            self._call_on_loop(
+                self._run_callback, callback, client, userdata, mqtt_message
+            )
 
         self.client.message_callback_add(topic, forward)
 
