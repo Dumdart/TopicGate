@@ -5,6 +5,7 @@ from unittest.mock import patch
 from paho.mqtt.reasoncodes import ReasonCode
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
+from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.infrastructure.mqtt.mqtt_client import MqttClient
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
 from smart_home_observer.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
@@ -105,13 +106,22 @@ def config():
     )
 
 
-def test_async_client_waits_for_connection_and_normalizes_publish_result():
+def test_async_client_publishes_mqtt_message_and_normalizes_publish_result():
     async def scenario():
         with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
             client = MqttClient(config())
             await client.connect(timeout=1)
             assert client.is_connected
-            assert await client.publish("home/state", "on") == 11
+            message = MqttMessage("home/state", b"on", qos=2, retain=True)
+
+            assert await client.publish(message) == 11
+            assert FakePahoClient.instances[-1].events[-1] == (
+                "publish",
+                "home/state",
+                b"on",
+                2,
+                True,
+            )
             await client.disconnect()
 
     asyncio.run(scenario())
@@ -129,6 +139,43 @@ def test_async_gate_registers_message_callback_before_subscribing():
             await gate.stop()
 
     asyncio.run(scenario())
+
+
+def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
+    async def scenario():
+        FakePahoClient.instances.clear()
+
+        async def on_message(client, userdata, message):
+            pass
+
+        with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+            gate = MqttGate(config(), TestCallbacks(), ["status", "/battery/"])
+            await gate.start(timeout=1)
+
+            assert gate.is_started
+            assert await gate.subscribe(on_message) == 12
+            fake_client = FakePahoClient.instances[-1]
+            callback_topics = [
+                event[1]
+                for event in fake_client.events
+                if event[0] == "message_callback_add"
+            ]
+            subscription = next(event for event in fake_client.events if event[0] == "subscribe")
+
+            assert callback_topics == ["home/status", "home/battery"]
+            assert [topic for topic, _ in subscription[1]] == callback_topics
+
+            assert await gate.unsubscribe() == 13
+            await gate.stop()
+            assert not gate.is_started
+
+    asyncio.run(scenario())
+
+
+def test_mqtt_gate_uses_base_topic_when_no_topics_are_configured():
+    gate = MqttGate(config(), TestCallbacks())
+
+    assert gate.topics == ["home"]
 
 
 def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
