@@ -1,26 +1,29 @@
+from smart_home_observer.app.app_dependencies import AppDependencies
+from smart_home_observer.app.service_container import ServiceContainer
 from smart_home_observer.core.config.config_loader import ConfigLoader
 from smart_home_observer.core.config.app_config import AppConfig
 import asyncio
 
-from smart_home_observer.infrastructure.repository.chicken_door_repository import ChickenDoorRepository
 
 class App:
     def __init__(self, config: AppConfig):
         self.config = config
         self.name = "SmartHomeObserver"
 
-        self.chicken_door_repo = ChickenDoorRepository(self.config.mqtt)
+        self.dependencies = AppDependencies(config)
+        self.service_container = ServiceContainer(self.dependencies)
 
-    async def start(self):
-        await self.chicken_door_repo.start()
+    async def start(self) -> None:
+        await self.service_container.start_services()
 
-    async def stop(self):
-        await self.chicken_door_repo.stop()
+    async def stop(self) -> None:
+        await self.service_container.stop_services()
 
-    async def wait_forever(self):
+    async def wait_forever(self) -> None:
         await asyncio.Event().wait()
 
-async def main():
+
+async def main() -> None:
     config = ConfigLoader().load_config()
     app = App(config)
 
@@ -30,7 +33,7 @@ async def main():
     finally:
         await app.stop()
 
-def run():
+def run() -> None:
     asyncio.run(main())
 
 if __name__ == "__main__":

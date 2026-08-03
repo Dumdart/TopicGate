@@ -2,13 +2,12 @@ from abc import ABC, abstractmethod
 
 
 class ServiceItem(ABC):
-    def __init__(self) -> None:
-        pass
+    """A component whose lifetime is managed by the application."""
 
     @abstractmethod
-    def start():
-        pass
+    async def start(self) -> None:
+        """Start the service."""
 
     @abstractmethod
-    def stop():
-        pass
+    async def stop(self) -> None:
+        """Stop the service."""
