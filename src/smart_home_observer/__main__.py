@@ -1,28 +1,29 @@
+from smart_home_observer.app.app_dependencies import AppDependencies
+from smart_home_observer.app.service_container import ServiceContainer
 from smart_home_observer.core.config.config_loader import ConfigLoader
 from smart_home_observer.core.config.app_config import AppConfig
-from smart_home_observer.infrastructure.mqtt.basic_callbacks import BasicCallbacks
-from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
-
 import asyncio
+
 
 class App:
     def __init__(self, config: AppConfig):
         self.config = config
         self.name = "SmartHomeObserver"
-        self.mqtt_gate = MqttGate(config.mqtt, BasicCallbacks(), None)
 
-    async def start(self):
-        await self.mqtt_gate.start()
-        await self.mqtt_gate.publish("Hllo")
-        await self.mqtt_gate.subscribe()
+        self.dependencies = AppDependencies(config)
+        self.service_container = ServiceContainer(self.dependencies)
 
-    async def stop(self):
-        await self.mqtt_gate.stop()
+    async def start(self) -> None:
+        await self.service_container.start_services()
 
-    async def wait_forever(self):
+    async def stop(self) -> None:
+        await self.service_container.stop_services()
+
+    async def wait_forever(self) -> None:
         await asyncio.Event().wait()
 
-async def main():
+
+async def main() -> None:
     config = ConfigLoader().load_config()
     app = App(config)
 
@@ -32,7 +33,7 @@ async def main():
     finally:
         await app.stop()
 
-def run():
+def run() -> None:
     asyncio.run(main())
 
 if __name__ == "__main__":

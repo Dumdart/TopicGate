@@ -1,6 +1,6 @@
 from typing import Any
 
-from .mqtt_callbacks import MqttCallbacks
+from ..mqtt_callbacks import MqttCallbacks
 
 
 class BasicCallbacks(MqttCallbacks):

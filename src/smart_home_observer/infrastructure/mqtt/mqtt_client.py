@@ -5,15 +5,17 @@ from collections.abc import Callable
 from typing import Any
 
 import paho.mqtt.client as paho
+from paho.mqtt.subscribeoptions import SubscribeOptions
+
+from smart_home_observer.core.models.mqtt_message import MqttMessage
 
 from ...core.config.mqtt_config import MqttConfig
-
 
 Callback = Callable[..., Any]
 
 
 class MqttClient:
-    def __init__(self, config: MqttConfig):
+    def __init__(self, config: MqttConfig, qos: int = 1):
         self.config = config
         self.client = paho.Client(client_id="", userdata=None, protocol=paho.MQTTv5)
 
@@ -28,6 +30,8 @@ class MqttClient:
         self._on_subscribe: Callback | None = None
         self._on_unsubscribe: Callback | None = None
 
+        self.qos = qos
+
         self.client.on_connect = self._paho_on_connect
         self.client.on_disconnect = self._paho_on_disconnect
         self.client.on_publish = self._paho_on_publish
@@ -38,15 +42,15 @@ class MqttClient:
     def is_connected(self) -> bool:
         return self._connected
 
-    async def connect(self, on_connect: Callback | None = None, timeout: float = 10.0):
+    async def connect(self, on_connect: Callback | None = None, timeout: float = 10.0) -> bool:
         self._loop = asyncio.get_running_loop()
         self._on_connect = on_connect
 
         if self._connected:
-            return
+            return True
         if self._loop_started:
             await self.wait_connected(timeout)
-            return
+            return True
 
         self._connected_event = asyncio.Event()
         self._configure()
@@ -70,6 +74,8 @@ class MqttClient:
             await self.disconnect()
             raise ConnectionError("MQTT broker rejected the connection")
 
+        return self.is_connected
+
     async def wait_connected(self, timeout: float | None = None):
         if self._connected:
             return
@@ -85,7 +91,7 @@ class MqttClient:
         if not self._connected:
             raise ConnectionError("MQTT client is not connected")
 
-    async def disconnect(self, on_disconnect: Callback | None = None):
+    async def disconnect(self, on_disconnect: Callback | None = None) -> bool:
         self._on_disconnect = on_disconnect
 
         if self.client.is_connected():
@@ -98,25 +104,41 @@ class MqttClient:
         if self._connected_event is not None:
             self._connected_event.clear()
 
+        return self.is_connected
+
     async def publish(
         self,
-        topic: str,
-        payload: Any,
-        retain: bool = False,
+        msg: MqttMessage,
         on_publish: Callback | None = None,
     ) -> int:
         await self.wait_connected()
         self._on_publish = on_publish
 
-        result = self.client.publish(topic, payload, qos=1, retain=retain)
+        result = self.client.publish(
+            msg.topic, msg.payload, qos=msg.qos, retain=msg.retain
+        )
         self._check_result(result.rc, "publish")
         return result.mid
 
-    async def subscribe(self, topic: str, on_subscribe: Callback | None = None) -> int:
+    async def subscribe(
+        self, topic: str, on_subscribe: Callback | None = None
+    ) -> int | None:
         await self.wait_connected()
         self._on_subscribe = on_subscribe
 
-        result, mid = self.client.subscribe(topic)
+        result, mid = self.client.subscribe((topic, SubscribeOptions(qos=self.qos)))
+        self._check_result(result, "subscribe")
+        return mid
+
+    async def subscribe_multiple(
+        self, topics: list[str], on_subscribe: Callback | None = None
+    ) -> int | None:
+        await self.wait_connected()
+        self._on_subscribe = on_subscribe
+
+        result, mid = self.client.subscribe(
+            [(topic, SubscribeOptions(qos=self.qos)) for topic in topics]
+        )
         self._check_result(result, "subscribe")
         return mid
 
@@ -124,7 +146,7 @@ class MqttClient:
         self,
         topic: str,
         on_unsubscribe: Callback | None = None,
-    ) -> int:
+    ) -> int | None:
         await self.wait_connected()
         self._on_unsubscribe = on_unsubscribe
 
@@ -132,9 +154,29 @@ class MqttClient:
         self._check_result(result, "unsubscribe")
         return mid
 
+    async def unsubscribe_multiple(
+        self,
+        topics: list[str],
+        on_unsubscribe: Callback | None = None,
+    ) -> int | None:
+        await self.wait_connected()
+        self._on_unsubscribe = on_unsubscribe
+
+        result, mid = self.client.unsubscribe([topic for topic in topics])
+        self._check_result(result, "unsubscribe")
+        return mid
+
     def message_callback_add(self, topic: str, callback: Callback):
         def forward(client: Any, userdata: Any, message: Any):
-            self._call_on_loop(self._run_callback, callback, client, userdata, message)
+            mqtt_message = MqttMessage(
+                topic=str(message.topic),
+                payload=bytes(message.payload),
+                qos=int(message.qos),
+                retain=bool(message.retain),
+            )
+            self._call_on_loop(
+                self._run_callback, callback, client, userdata, mqtt_message
+            )
 
         self.client.message_callback_add(topic, forward)
 
@@ -161,7 +203,9 @@ class MqttClient:
         self._connected = reason_code == 0
         if self._connected_event is not None:
             self._connected_event.set()
-        self._run_callback(self._on_connect, client, userdata, flags, reason_code, properties)
+        self._run_callback(
+            self._on_connect, client, userdata, flags, reason_code, properties
+        )
 
     def _paho_on_disconnect(
         self,
@@ -199,7 +243,9 @@ class MqttClient:
             properties,
         )
 
-    def _paho_on_publish(self, client, userdata, mid, reason_code=None, properties=None):
+    def _paho_on_publish(
+        self, client, userdata, mid, reason_code=None, properties=None
+    ):
         self._call_on_loop(
             self._run_callback,
             self._on_publish,
@@ -254,4 +300,6 @@ class MqttClient:
     @staticmethod
     def _check_result(result, operation: str):
         if result != paho.MQTT_ERR_SUCCESS:
-            raise RuntimeError(f"Failed to {operation} MQTT: {paho.error_string(result)}")
+            raise RuntimeError(
+                f"Failed to {operation} MQTT: {paho.error_string(result)}"
+            )

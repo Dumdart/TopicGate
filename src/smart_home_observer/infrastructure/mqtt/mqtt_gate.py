@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from typing import Any
 
+from smart_home_observer.core.models.mqtt_message import MqttMessage
+
 from ...core.config.mqtt_config import MqttConfig
 from .mqtt_callbacks import MqttCallbacks
 from .mqtt_client import MqttClient
@@ -11,54 +13,63 @@ class MqttGate:
         self,
         mqtt_config: MqttConfig,
         mqtt_callbacks: MqttCallbacks,
-        topic: str | None = None,
+        topics: list[str] | None = None,
     ):
         self.client = MqttClient(mqtt_config)
         self.config = mqtt_config
         self.mqtt_callbacks = mqtt_callbacks
-        self.topic = self._build_topic(mqtt_config.base_topic, topic)
+        self._is_started = False
+
+        self.topics = self._build_topics(self.config.base_topic, topics)
 
     async def start(self, timeout: float = 10.0) -> None:
-        await self.client.connect(
+        self._is_started = await self.client.connect(
             self.callbacks("on_connect", self.mqtt_callbacks), timeout=timeout
         )
 
     async def stop(self) -> None:
-        await self.client.disconnect(
+        self._is_started = await self.client.disconnect(
             self.callbacks("on_disconnect", self.mqtt_callbacks)
         )
 
-    async def publish(self, payload: Any, retain: bool = False) -> int:
-        return await self.client.publish(
-            self.topic,
-            payload,
-            retain=retain,
-            on_publish=self.callbacks("on_publish", self.mqtt_callbacks),
-        )
+    async def subscribe(
+        self, custom_on_message_callback: Callable[..., Any] | None = None
+    ) -> int | None:
+        # Configure custom callback
+        if custom_on_message_callback:
+            for topic in self.topics:
+                self.client.message_callback_add(topic, custom_on_message_callback)
 
-    async def subscribe(self) -> int:
-        self.client.message_callback_add(
-            self.topic,
-            self.callbacks("on_message", self.mqtt_callbacks),
-        )
-        return await self.client.subscribe(
-            self.topic,
+        else:
+            for topic in self.topics:
+                self.client.message_callback_add(
+                    topic,
+                    self.callbacks("on_message", self.mqtt_callbacks),
+                )
+
+        # Suscribe
+        return await self.client.subscribe_multiple(
+            self.topics,
             self.callbacks("on_subscribe", self.mqtt_callbacks),
         )
 
-    async def unsubscribe(self) -> int:
-        return await self.client.unsubscribe(
-            self.topic,
+    async def unsubscribe(self) -> int | None:
+        return await self.client.unsubscribe_multiple(
+            self.topics,
             self.callbacks("on_unsubscribe", self.mqtt_callbacks),
         )
+
+    @property
+    def is_started(self) -> bool:
+        return self._is_started
 
     @staticmethod
     def callbacks(event: str, mqtt_callbacks: MqttCallbacks) -> Callable[..., Any]:
         return getattr(mqtt_callbacks, event)
 
     @staticmethod
-    def _build_topic(base_topic: str, topic: str | None = None) -> str:
-        if topic is None or topic.strip() == "":
-            return base_topic
+    def _build_topics(base_topic: str, topics: list[str] | None = None) -> list[str]:
+        if topics is None or len(topics) == 0:
+            return [base_topic]
 
-        return f"{base_topic.rstrip('/')}/{topic.strip('/')}"
+        return [f"{base_topic.rstrip('/')}/{topic.strip('/')}" for topic in topics]
