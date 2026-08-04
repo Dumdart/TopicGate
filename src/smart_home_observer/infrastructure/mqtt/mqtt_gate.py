@@ -53,17 +53,18 @@ class MqttGate:
                 self._register_message_filter(topic)
 
         try:
-            return await self.client.subscribe_multiple(
-                self.topics,
-                self.callbacks("on_subscribe", self.mqtt_callbacks),
-            )
+            if len(self.topics) != 0:
+                return await self.client.subscribe_multiple(
+                    self.topics,
+                    self.callbacks("on_subscribe", self.mqtt_callbacks),
+                )
         except Exception:
             self._remove_message_callbacks()
             raise
 
     async def unsubscribe(self) -> int | None:
         try:
-            if self.client.is_connected:
+            if self.client.is_connected and self.topics:
                 return await self.client.unsubscribe_multiple(
                     self.topics,
                     self.callbacks("on_unsubscribe", self.mqtt_callbacks),
