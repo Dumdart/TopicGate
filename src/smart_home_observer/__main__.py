@@ -12,19 +12,25 @@ from smart_home_observer.core.config.config_loader import ConfigLoader
 from smart_home_observer.gui.gui import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
 
+INITIAL_TOPIC = "SmartHome/Huehnerstall/door/status"
+
 
 class App:
     def __init__(self, config: AppConfig, qt_application: QApplication):
         self._qt_application = qt_application
         self._dependencies = AppDependencies(config)
         self._services = ServiceContainer(self._dependencies)
-        self._view_model = MainViewModel(self._dependencies)
+        self._view_model = MainViewModel(
+            self._dependencies.observer_model_repository,
+            INITIAL_TOPIC,
+        )
         self._window = MainWindow(self._view_model)
 
 
     async def run(self) -> int:
         try:
             await self._services.start_services()
+            await self._view_model.start()
             stopped = asyncio.get_running_loop().create_future()
             self._qt_application.aboutToQuit.connect(
                 lambda: not stopped.done() and stopped.set_result(None)
@@ -33,6 +39,7 @@ class App:
             await stopped
             return 0
         finally:
+            await self._view_model.stop()
             await self._services.stop_services()
 
 
