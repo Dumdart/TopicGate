@@ -166,6 +166,9 @@ class MqttClient:
 
         self.client.message_callback_add(topic, forward)
 
+    def message_callback_remove(self, topic: str) -> None:
+        self.client.message_callback_remove(topic)
+
     def _configure(self):
         if self.config.use_tls:
             self.client.tls_set(tls_version=ssl.PROTOCOL_TLS)

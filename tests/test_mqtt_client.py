@@ -61,6 +61,9 @@ class FakePahoClient:
         self.events.append(("message_callback_add", topic))
         self.message_callback = callback
 
+    def message_callback_remove(self, topic):
+        self.events.append(("message_callback_remove", topic))
+
     def tls_set(self, **kwargs):
         self.events.append(("tls_set", kwargs))
 

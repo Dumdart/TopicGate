@@ -19,6 +19,7 @@ class MqttGate:
         self.config = mqtt_config
         self.mqtt_callbacks = mqtt_callbacks
         self._is_started = False
+        self._registered_message_filters: set[str] = set()
 
         self.topics = self._build_topics(topic_filters)
 
@@ -39,6 +40,7 @@ class MqttGate:
         if custom_on_message_callback:
             for topic in self.topics:
                 self.client.message_callback_add(topic, custom_on_message_callback)
+                self._registered_message_filters.add(topic)
 
         else:
             for topic in self.topics:
@@ -46,20 +48,26 @@ class MqttGate:
                     topic,
                     self.callbacks("on_message", self.mqtt_callbacks),
                 )
-                print("suscribed to topic" + topic)
+                self._registered_message_filters.add(topic)
 
-        # Suscribe
-        return await self.client.subscribe_multiple(
-            self.topics,
-            self.callbacks("on_subscribe", self.mqtt_callbacks),
-        )
+        try:
+            return await self.client.subscribe_multiple(
+                self.topics,
+                self.callbacks("on_subscribe", self.mqtt_callbacks),
+            )
+        except Exception:
+            self._remove_message_callbacks()
+            raise
 
     async def unsubscribe(self) -> int | None:
-        if self.client.is_connected:
-            return await self.client.unsubscribe_multiple(
-                self.topics,
-                self.callbacks("on_unsubscribe", self.mqtt_callbacks),
-            )
+        try:
+            if self.client.is_connected:
+                return await self.client.unsubscribe_multiple(
+                    self.topics,
+                    self.callbacks("on_unsubscribe", self.mqtt_callbacks),
+                )
+        finally:
+            self._remove_message_callbacks()
 
     @property
     def is_started(self) -> bool:
@@ -80,3 +88,8 @@ class MqttGate:
             return []
 
         return list(topic_filters)
+
+    def _remove_message_callbacks(self) -> None:
+        for topic in self._registered_message_filters:
+            self.client.message_callback_remove(topic)
+        self._registered_message_filters.clear()
