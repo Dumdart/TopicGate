@@ -106,20 +106,6 @@ class MqttClient:
 
         return self.is_connected
 
-    async def publish(
-        self,
-        msg: MqttMessage,
-        on_publish: Callback | None = None,
-    ) -> int:
-        await self.wait_connected()
-        self._on_publish = on_publish
-
-        result = self.client.publish(
-            msg.topic, msg.payload, qos=msg.qos, retain=msg.retain
-        )
-        self._check_result(result.rc, "publish")
-        return result.mid
-
     async def subscribe(
         self, topic: str, on_subscribe: Callback | None = None
     ) -> int | None:

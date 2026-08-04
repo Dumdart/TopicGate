@@ -1,5 +1,5 @@
 from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.processors.observer_model_processor import (
+from smart_home_observer.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
 from smart_home_observer.services.observer_model_service import ObserverModelService

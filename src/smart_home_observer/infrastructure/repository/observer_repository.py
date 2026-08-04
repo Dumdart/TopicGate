@@ -10,7 +10,7 @@ from smart_home_observer.infrastructure.mqtt.callbacks.basic_callbacks import (
     BasicCallbacks,
 )
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
-from smart_home_observer.processors.observer_model_processor import (
+from smart_home_observer.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
 from smart_home_observer.services.observer_model_service import ObserverModelService

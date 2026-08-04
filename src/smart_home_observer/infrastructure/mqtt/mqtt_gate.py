@@ -20,7 +20,7 @@ class MqttGate:
         self.mqtt_callbacks = mqtt_callbacks
         self._is_started = False
 
-        self.topics = self._build_topics(self.config.base_topic, topics)
+        self.topics = self._build_topics(topics)
 
     async def start(self, timeout: float = 10.0) -> None:
         self._is_started = await self.client.connect(
@@ -46,6 +46,7 @@ class MqttGate:
                     topic,
                     self.callbacks("on_message", self.mqtt_callbacks),
                 )
+                print("suscribed to topic" + topic)
 
         # Suscribe
         return await self.client.subscribe_multiple(
@@ -69,8 +70,8 @@ class MqttGate:
         return getattr(mqtt_callbacks, event)
 
     @staticmethod
-    def _build_topics(base_topic: str, topics: list[str] | None = None) -> list[str]:
+    def _build_topics(topics: list[str] | None = None) -> list[str]:
         if topics is None or len(topics) == 0:
-            return [base_topic]
+            return []
 
-        return [f"{base_topic.rstrip('/')}/{topic.strip('/')}" for topic in topics]
+        return [f"{topic.strip('/')}" for topic in topics]
