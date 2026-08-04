@@ -12,7 +12,8 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
             port=1883,
             username="",
             password="",
-        )
+        ),
+        ["SmartHome/#"],
     )
     message = MqttMessage(
         "SmartHome/Huehnerstall/door/status", b"open", qos=1, retain=True
@@ -29,17 +30,11 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
     assert repository.get_value("SmartHome/missing") is None
 
 
-def test_repository_subscribes_to_its_configured_absolute_topics() -> None:
+def test_repository_subscribes_to_its_configured_absolute_topic_filters() -> None:
+    topic_filters = ["/SmartHome/Huehnerstall/door/#", "SmartHome/+/status"]
     repository = ObserverRepository(
-        MqttConfig(host="broker", port=1883, username="", password="")
+        MqttConfig(host="broker", port=1883, username="", password=""),
+        topic_filters,
     )
 
-    assert repository._mqtt_gate.topics == [
-        "SmartHome/Huehnerstall/door/command",
-        "SmartHome/Huehnerstall/door/status",
-        "SmartHome/Huehnerstall/door/status_code",
-        "SmartHome/Huehnerstall/door/fault",
-        "SmartHome/Huehnerstall/door/connected",
-        "SmartHome/Huehnerstall/door/battery",
-        "SmartHome/Huehnerstall/door/light_level",
-    ]
+    assert repository._mqtt_gate.topics == topic_filters

@@ -1,8 +1,14 @@
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicNode
+from smart_home_observer.services.observer_model_service import ObserverModelService
 
 
 class TopicService:
-    """Provides the configured MQTT topic catalogue."""
+    """Provides an optional convenience catalogue of MQTT topic filters."""
+
+    @staticmethod
+    def get_topic_filters() -> list[str]:
+        """Return the catalogue's absolute MQTT filters."""
+        return ObserverModelService.get_all_topics(TopicService.get_topics())
 
     @staticmethod
     def get_topics() -> ObserverModel:

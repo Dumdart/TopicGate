@@ -50,6 +50,28 @@ class ObserverModelService:
         )
 
     @staticmethod
+    def find_or_create_node(model: ObserverModel, topic: str) -> TopicNode:
+        """Return the exact topic node, creating its path when first observed."""
+        segments = topic.split("/")
+        root = next(
+            (node for node in model.root_stats if node.segment == segments[0]),
+            None,
+        )
+        if root is None:
+            root = TopicNode(segment=segments[0])
+            model.root_stats.append(root)
+
+        node = root
+        for segment in segments[1:]:
+            child = node.children.get(segment)
+            if child is None:
+                child = TopicNode(segment=segment)
+                node.children[segment] = child
+            node = child
+
+        return node
+
+    @staticmethod
     def _scan_nodes(model: ObserverModel) -> Iterator[tuple[str, TopicNode]]:
         for root in model.root_stats:
             yield from ObserverModelService._scan_node(root, root.segment)

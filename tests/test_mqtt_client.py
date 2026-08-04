@@ -140,7 +140,7 @@ def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
             ]
             subscription = next(event for event in fake_client.events if event[0] == "subscribe")
 
-            assert callback_topics == ["SmartHome/door/status", "SmartHome/door/battery"]
+            assert callback_topics == ["SmartHome/door/status", "/SmartHome/door/battery/"]
             assert [topic for topic, _ in subscription[1]] == callback_topics
 
             assert await gate.unsubscribe() == 13

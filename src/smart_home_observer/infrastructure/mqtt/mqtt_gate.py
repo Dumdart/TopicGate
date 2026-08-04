@@ -13,14 +13,14 @@ class MqttGate:
         self,
         mqtt_config: MqttConfig,
         mqtt_callbacks: MqttCallbacks,
-        topics: list[str] | None = None,
+        topic_filters: list[str] | None = None,
     ):
         self.client = MqttClient(mqtt_config)
         self.config = mqtt_config
         self.mqtt_callbacks = mqtt_callbacks
         self._is_started = False
 
-        self.topics = self._build_topics(topics)
+        self.topics = self._build_topics(topic_filters)
 
     async def start(self, timeout: float = 10.0) -> None:
         self._is_started = await self.client.connect(
@@ -70,8 +70,13 @@ class MqttGate:
         return getattr(mqtt_callbacks, event)
 
     @staticmethod
-    def _build_topics(topics: list[str] | None = None) -> list[str]:
-        if topics is None or len(topics) == 0:
+    def _build_topics(topic_filters: list[str] | None = None) -> list[str]:
+        """Return MQTT filters exactly as supplied by the caller.
+
+        Filters are absolute MQTT filters, so a leading or trailing slash and
+        wildcard characters are meaningful and must not be normalized.
+        """
+        if topic_filters is None or len(topic_filters) == 0:
             return []
 
-        return [f"{topic.strip('/')}" for topic in topics]
+        return list(topic_filters)
