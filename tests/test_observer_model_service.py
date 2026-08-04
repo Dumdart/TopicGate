@@ -9,18 +9,13 @@ def test_get_all_topics_returns_configured_leaf_topic_paths() -> None:
     model = TopicService.get_topics()
 
     assert ObserverModelService.get_all_topics(model) == [
-        "home/chicken-door/command",
-        "home/chicken-door/status",
-        "home/chicken-door/status_code",
-        "home/chicken-door/fault",
-        "home/chicken-door/connected",
-        "home/chicken-door/battery",
-        "home/chicken-door/light_level",
-        "home/weather-station/temperature",
-        "home/weather-station/humidity",
-        "home/weather-station/pressure",
-        "home/weather-station/battery",
-        "home/weather-station/connected",
+        "SmartHome/Huehnerstall/door/command",
+        "SmartHome/Huehnerstall/door/status",
+        "SmartHome/Huehnerstall/door/status_code",
+        "SmartHome/Huehnerstall/door/fault",
+        "SmartHome/Huehnerstall/door/connected",
+        "SmartHome/Huehnerstall/door/battery",
+        "SmartHome/Huehnerstall/door/light_level",
     ]
 
 
@@ -29,15 +24,20 @@ def test_get_all_nodes_returns_branches_and_leaf_nodes() -> None:
 
     nodes = ObserverModelService.get_all_nodes(model)
 
-    assert [node.segment for node in nodes[:3]] == ["home", "chicken-door", "command"]
-    assert len(nodes) == 15
+    assert [node.segment for node in nodes[:4]] == [
+        "SmartHome",
+        "Huehnerstall",
+        "door",
+        "command",
+    ]
+    assert len(nodes) == 10
 
 
 def test_get_all_states_and_find_node_scan_the_same_tree() -> None:
     model = TopicService.get_topics()
     state = TopicState(
         name="Door status",
-        topic="home/chicken-door/status",
+        topic="SmartHome/Huehnerstall/door/status",
         payload=b"open",
         qos=1,
         retain=True,
@@ -49,20 +49,22 @@ def test_get_all_states_and_find_node_scan_the_same_tree() -> None:
     status_node.state = state
 
     assert ObserverModelService.get_all_states(model) == [state]
-    assert ObserverModelService.find_node(model, "home/missing") is None
+    assert ObserverModelService.find_node(model, "SmartHome/missing") is None
 
 
 def test_deep_copy_returns_an_independent_observer_model() -> None:
     original = TopicService.get_topics()
 
     copied = ObserverModelService.deep_copy(original)
-    copied.root_stats[0].children["chicken-door"].children["status"].segment = (
-        "door-status"
-    )
+    copied.root_stats[0].children["Huehnerstall"].children["door"].children[
+        "status"
+    ].segment = "door-status"
 
     assert copied is not original
     assert copied.root_stats[0] is not original.root_stats[0]
     assert (
-        original.root_stats[0].children["chicken-door"].children["status"].segment
+        original.root_stats[0].children["Huehnerstall"].children["door"].children[
+            "status"
+        ].segment
         == "status"
     )

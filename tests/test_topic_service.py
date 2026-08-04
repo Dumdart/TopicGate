@@ -4,10 +4,10 @@ from smart_home_observer.services.topic_service import TopicService
 def test_topic_service_provides_chicken_door_topic_tree() -> None:
     model = TopicService.get_topics()
 
-    home = model.root_stats[0]
-    chicken_door = home.children["chicken-door"]
+    smart_home = model.root_stats[0]
+    chicken_door = smart_home.children["Huehnerstall"].children["door"]
 
-    assert home.segment == "home"
+    assert smart_home.segment == "SmartHome"
     assert set(chicken_door.children) == {
         "command",
         "status",
@@ -19,15 +19,7 @@ def test_topic_service_provides_chicken_door_topic_tree() -> None:
     }
 
 
-def test_topic_service_provides_a_separate_weather_station_branch() -> None:
+def test_topic_service_contains_only_the_configured_chicken_door_branch() -> None:
     model = TopicService.get_topics()
 
-    weather_station = model.root_stats[0].children["weather-station"]
-
-    assert set(weather_station.children) == {
-        "temperature",
-        "humidity",
-        "pressure",
-        "battery",
-        "connected",
-    }
+    assert set(model.root_stats[0].children) == {"Huehnerstall"}

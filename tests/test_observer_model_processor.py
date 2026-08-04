@@ -9,7 +9,7 @@ from smart_home_observer.services.topic_service import TopicService
 def test_process_stores_message_state_on_the_matching_topic_node() -> None:
     model = TopicService.get_topics()
     message = MqttMessage(
-        "home/chicken-door/status", b"open", qos=1, retain=True
+        "SmartHome/Huehnerstall/door/status", b"open", qos=1, retain=True
     )
 
     ObserverModelMqttMessageProcessor().process(model, message)
@@ -30,7 +30,7 @@ def test_process_ignores_messages_for_unconfigured_topics() -> None:
     model = TopicService.get_topics()
 
     ObserverModelMqttMessageProcessor().process(
-        model, MqttMessage("home/unknown", b"value", qos=0, retain=False)
+        model, MqttMessage("SmartHome/unknown", b"value", qos=0, retain=False)
     )
 
     assert ObserverModelService.get_all_states(model) == []
