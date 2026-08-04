@@ -42,9 +42,16 @@ class MqttClient:
     def is_connected(self) -> bool:
         return self._connected
 
-    async def connect(self, on_connect: Callback | None = None, timeout: float = 10.0) -> bool:
+    async def connect(
+        self,
+        on_connect: Callback | None = None,
+        timeout: float = 10.0,
+        *,
+        on_disconnect: Callback | None = None,
+    ) -> bool:
         self._loop = asyncio.get_running_loop()
         self._on_connect = on_connect
+        self._on_disconnect = on_disconnect
 
         if self._connected:
             return True
@@ -106,20 +113,6 @@ class MqttClient:
 
         return self.is_connected
 
-    async def publish(
-        self,
-        msg: MqttMessage,
-        on_publish: Callback | None = None,
-    ) -> int:
-        await self.wait_connected()
-        self._on_publish = on_publish
-
-        result = self.client.publish(
-            msg.topic, msg.payload, qos=msg.qos, retain=msg.retain
-        )
-        self._check_result(result.rc, "publish")
-        return result.mid
-
     async def subscribe(
         self, topic: str, on_subscribe: Callback | None = None
     ) -> int | None:
@@ -179,6 +172,9 @@ class MqttClient:
             )
 
         self.client.message_callback_add(topic, forward)
+
+    def message_callback_remove(self, topic: str) -> None:
+        self.client.message_callback_remove(topic)
 
     def _configure(self):
         if self.config.use_tls:

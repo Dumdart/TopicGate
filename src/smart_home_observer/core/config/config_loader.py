@@ -19,7 +19,6 @@ class ConfigLoader:
                 port=int(values['MQTT_PORT']),
                 username=values['MQTT_USERNAME'],
                 password=values['MQTT_PASSWORD'],
-                base_topic=values['MQTT_BASE_TOPIC'],
                 use_tls=values['MQTT_USE_TLS'].strip().lower() == 'true',
             )
         )

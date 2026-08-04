@@ -6,5 +6,4 @@ class MqttConfig:
     port: int
     username: str
     password: str
-    base_topic: str
     use_tls: bool = False
