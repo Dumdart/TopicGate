@@ -21,8 +21,8 @@ class ObserverRepository(MqttRepository[ObserverModel]):
     def __init__(self, config: MqttConfig, topic_filters: list[str]) -> None:
         self._state = ObserverModel(root_stats=[])
         self._mqtt_gate = MqttGate(config, BasicCallbacks(), topic_filters)
-
         self._message_processor = ObserverModelMqttMessageProcessor()
+        self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue()
 
     async def start(self) -> None:
         try:
@@ -55,8 +55,9 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         return None
 
     def get_state(self, topic: str) -> TopicState | None:
-        node = ObserverModelService.find_node(self._state, topic)
-        return node.state if node is not None else None
+        return self._state.topic_states.get(topic)
 
     def handle_message(self, _client, _userdata, msg: MqttMessage) -> None:
         self._message_processor.process(self._state, msg)
+        self.message_queue.put_nowait(msg)
+import asyncio

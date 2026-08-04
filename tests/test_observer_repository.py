@@ -30,6 +30,19 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
     assert repository.get_value("SmartHome/missing") is None
 
 
+def test_repository_updates_topic_state_before_queuing_message() -> None:
+    repository = ObserverRepository(
+        MqttConfig(host="broker", port=1883, username="", password=""),
+        ["SmartHome/#"],
+    )
+    message = MqttMessage("SmartHome/discovered/value", b"42", qos=0, retain=False)
+
+    repository.handle_message(None, None, message)
+
+    assert repository.get_value(message.topic) == b"42"
+    assert asyncio.run(repository.message_queue.get()) == message
+
+
 def test_repository_subscribes_to_its_configured_absolute_topic_filters() -> None:
     topic_filters = ["/SmartHome/Huehnerstall/door/#", "SmartHome/+/status"]
     repository = ObserverRepository(
@@ -38,3 +51,4 @@ def test_repository_subscribes_to_its_configured_absolute_topic_filters() -> Non
     )
 
     assert repository._mqtt_gate.topics == topic_filters
+import asyncio

@@ -9,7 +9,7 @@ from smart_home_observer.services.observer_model_service import ObserverModelSer
 class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
     def process(self, state: ObserverModel, message: MqttMessage) -> None:
         node = ObserverModelService.find_or_create_node(state, message.topic)
-        node.state = TopicState(
+        topic_state = TopicState(
             name=node.segment,
             topic=message.topic,
             payload=message.payload,
@@ -17,3 +17,5 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
             retain=message.retain,
             recieved_at=datetime.now(timezone.utc),
         )
+        node.state = topic_state
+        state.topic_states[message.topic] = topic_state

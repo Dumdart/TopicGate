@@ -26,11 +26,11 @@ def test_process_stores_message_state_on_the_matching_topic_node() -> None:
     assert node.state.recieved_at.tzinfo is not None
 
 
-def test_process_ignores_messages_for_unconfigured_topics() -> None:
+def test_process_stores_messages_for_discovered_topics() -> None:
     model = TopicService.get_topics()
+    message = MqttMessage("SmartHome/unknown", b"value", qos=0, retain=False)
 
-    ObserverModelMqttMessageProcessor().process(
-        model, MqttMessage("SmartHome/unknown", b"value", qos=0, retain=False)
-    )
+    ObserverModelMqttMessageProcessor().process(model, message)
 
-    assert ObserverModelService.get_all_states(model) == []
+    assert model.topic_states[message.topic].payload == b"value"
+    assert ObserverModelService.find_node(model, message.topic) is not None

@@ -21,3 +21,4 @@ class TopicNode:
 @dataclass
 class ObserverModel(MqttState):
     root_stats: list[TopicNode]
+    topic_states: dict[str, TopicState] = field(default_factory=dict)

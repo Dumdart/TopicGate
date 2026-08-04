@@ -30,12 +30,12 @@ class ObserverModelService:
 
     @staticmethod
     def get_all_states(model: ObserverModel) -> list[TopicState]:
-        """Return the current state attached to every configured topic node."""
-        return [
-            node.state
-            for _, node in ObserverModelService._scan_nodes(model)
-            if node.state is not None
-        ]
+        """Return the current state for every received topic."""
+        states = dict(model.topic_states)
+        for _, node in ObserverModelService._scan_nodes(model):
+            if node.state is not None:
+                states.setdefault(node.state.topic, node.state)
+        return list(states.values())
 
     @staticmethod
     def find_node(model: ObserverModel, topic: str) -> TopicNode | None:
