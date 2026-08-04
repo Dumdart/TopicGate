@@ -11,8 +11,8 @@ class MqttRepository(ServiceItem, Generic[T]):
     def get(self) -> T:
         """Return the current MQTT-backed state."""
     @abstractmethod
-    def get_value(self, topic) -> bytes | None:
+    def get_value(self, topic: str) -> bytes | None:
         """REturn the value of a topic."""
     @abstractmethod
-    def get_state(self, topic) -> TopicState | None:
+    def get_state(self, topic: str) -> TopicState | None:
         """Return the state of a topic."""

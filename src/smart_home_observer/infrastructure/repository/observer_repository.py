@@ -112,9 +112,13 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         except Exception as ex:
             self._is_running = False
             self._is_stopping = True
-            await self._mqtt_gate.stop()
-            self._is_stopping = False
-            self._set_connection_status(ConnectionStatus.DISCONNECTED)
+            try:
+                await self._mqtt_gate.stop()
+            except Exception:
+                pass
+            finally:
+                self._is_stopping = False
+                self._set_connection_status(ConnectionStatus.DISCONNECTED)
             raise ConnectionError(
                 "ObserverRepository could not start the MQTT connection."
             ) from ex

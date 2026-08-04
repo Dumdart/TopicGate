@@ -42,9 +42,16 @@ class MqttClient:
     def is_connected(self) -> bool:
         return self._connected
 
-    async def connect(self, on_connect: Callback | None = None, timeout: float = 10.0) -> bool:
+    async def connect(
+        self,
+        on_connect: Callback | None = None,
+        timeout: float = 10.0,
+        *,
+        on_disconnect: Callback | None = None,
+    ) -> bool:
         self._loop = asyncio.get_running_loop()
         self._on_connect = on_connect
+        self._on_disconnect = on_disconnect
 
         if self._connected:
             return True

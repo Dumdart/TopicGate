@@ -14,18 +14,20 @@ class MqttGate:
         mqtt_config: MqttConfig,
         mqtt_callbacks: MqttCallbacks,
         topic_filters: list[str] | None = None,
-    ):
+    ) -> None:
         self.client = MqttClient(mqtt_config)
         self.config = mqtt_config
         self.mqtt_callbacks = mqtt_callbacks
         self._is_started = False
-        self._registered_message_filters: set[str] = set()
+        self._registered_message_filters: list[str] = []
 
         self.topics = self._build_topics(topic_filters)
 
     async def start(self, timeout: float = 10.0) -> None:
         self._is_started = await self.client.connect(
-            self.callbacks("on_connect", self.mqtt_callbacks), timeout=timeout
+            self.callbacks("on_connect", self.mqtt_callbacks),
+            timeout=timeout,
+            on_disconnect=self.callbacks("on_disconnect", self.mqtt_callbacks),
         )
 
     async def stop(self) -> None:
@@ -40,7 +42,7 @@ class MqttGate:
         if custom_on_message_callback:
             for topic in self.topics:
                 self.client.message_callback_add(topic, custom_on_message_callback)
-                self._registered_message_filters.add(topic)
+                self._register_message_filter(topic)
 
         else:
             for topic in self.topics:
@@ -48,7 +50,7 @@ class MqttGate:
                     topic,
                     self.callbacks("on_message", self.mqtt_callbacks),
                 )
-                self._registered_message_filters.add(topic)
+                self._register_message_filter(topic)
 
         try:
             return await self.client.subscribe_multiple(
@@ -93,3 +95,7 @@ class MqttGate:
         for topic in self._registered_message_filters:
             self.client.message_callback_remove(topic)
         self._registered_message_filters.clear()
+
+    def _register_message_filter(self, topic: str) -> None:
+        if topic not in self._registered_message_filters:
+            self._registered_message_filters.append(topic)
