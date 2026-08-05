@@ -11,6 +11,7 @@ class TopicState:
     qos: int
     retain: bool
     recieved_at: datetime
+    message_count: int = 1
 
 @dataclass
 class TopicNode:

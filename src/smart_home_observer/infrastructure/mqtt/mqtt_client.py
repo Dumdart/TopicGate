@@ -8,6 +8,7 @@ import paho.mqtt.client as paho
 from paho.mqtt.subscribeoptions import SubscribeOptions
 
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.subscription import Subscription
 
 from ...core.config.mqtt_config import MqttConfig
 
@@ -124,13 +125,29 @@ class MqttClient:
         return mid
 
     async def subscribe_multiple(
-        self, topics: list[str], on_subscribe: Callback | None = None
+        self,
+        subscriptions: list[Subscription] | list[str],
+        on_subscribe: Callback | None = None,
     ) -> int | None:
         await self.wait_connected()
         self._on_subscribe = on_subscribe
+        normalized_subscriptions = [
+            item if isinstance(item, Subscription) else Subscription(item)
+            for item in subscriptions
+        ]
 
         result, mid = self.client.subscribe(
-            [(topic, SubscribeOptions(qos=self.qos)) for topic in topics]
+            [
+                (
+                    subscription.topic_filter,
+                    SubscribeOptions(
+                        qos=subscription.qos,
+                        retainAsPublished=subscription.retain_as_published,
+                        retainHandling=subscription.retain_handling,
+                    ),
+                )
+                for subscription in normalized_subscriptions
+            ]
         )
         self._check_result(result, "subscribe")
         return mid

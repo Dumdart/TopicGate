@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Any
 
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.subscription import Subscription
 
 from ...core.config.mqtt_config import MqttConfig
 from .mqtt_callbacks import MqttCallbacks
@@ -13,7 +14,7 @@ class MqttGate:
         self,
         mqtt_config: MqttConfig,
         mqtt_callbacks: MqttCallbacks,
-        topic_filters: list[str] | None = None,
+        topic_filters: list[str] | list[Subscription] | None = None,
     ) -> None:
         self.client = MqttClient(mqtt_config)
         self.config = mqtt_config
@@ -21,7 +22,14 @@ class MqttGate:
         self._is_started = False
         self._registered_message_filters: list[str] = []
 
-        self.topics = self._build_topics(topic_filters)
+        self.subscriptions = self._build_subscriptions(topic_filters)
+
+    @property
+    def topics(self) -> list[str]:
+        return [subscription.topic_filter for subscription in self.subscriptions]
+
+    def set_subscriptions(self, subscriptions: list[Subscription]) -> None:
+        self.subscriptions = list(subscriptions)
 
     async def start(self, timeout: float = 10.0) -> None:
         self._is_started = await self.client.connect(
@@ -55,7 +63,7 @@ class MqttGate:
         try:
             if len(self.topics) != 0:
                 return await self.client.subscribe_multiple(
-                    self.topics,
+                    self.subscriptions,
                     self.callbacks("on_subscribe", self.mqtt_callbacks),
                 )
         except Exception:
@@ -81,7 +89,9 @@ class MqttGate:
         return getattr(mqtt_callbacks, event)
 
     @staticmethod
-    def _build_topics(topic_filters: list[str] | None = None) -> list[str]:
+    def _build_subscriptions(
+        topic_filters: list[str] | list[Subscription] | None = None,
+    ) -> list[Subscription]:
         """Return MQTT filters exactly as supplied by the caller.
 
         Filters are absolute MQTT filters, so a leading or trailing slash and
@@ -90,7 +100,10 @@ class MqttGate:
         if topic_filters is None or len(topic_filters) == 0:
             return []
 
-        return list(topic_filters)
+        return [
+            item if isinstance(item, Subscription) else Subscription(item)
+            for item in topic_filters
+        ]
 
     def _remove_message_callbacks(self) -> None:
         for topic in self._registered_message_filters:

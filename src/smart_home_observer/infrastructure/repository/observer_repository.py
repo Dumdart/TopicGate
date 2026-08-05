@@ -7,6 +7,7 @@ from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.interfaces.mqtt_repository import MqttRepository
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
+from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
 from smart_home_observer.processors.observer_model_mqtt_message_processor import (
@@ -154,6 +155,54 @@ class ObserverRepository(MqttRepository[ObserverModel]):
     def get_state(self, topic: str) -> TopicState | None:
         return self._state.topic_states.get(topic)
 
+    @property
+    def subscriptions(self) -> tuple[Subscription, ...]:
+        """Return an immutable snapshot of the configured MQTT filters."""
+        return tuple(self._mqtt_gate.subscriptions)
+
+    async def add_subscription(self, subscription: Subscription) -> None:
+        """Add and activate a subscription filter."""
+        if any(
+            item.topic_filter == subscription.topic_filter
+            for item in self._mqtt_gate.subscriptions
+        ):
+            raise ValueError("That subscription filter already exists.")
+        await self._replace_subscriptions(
+            [*self._mqtt_gate.subscriptions, subscription]
+        )
+
+    async def update_subscription(
+        self,
+        original_filter: str,
+        subscription: Subscription,
+    ) -> None:
+        """Replace and reactivate one configured subscription filter."""
+        index = next(
+            (
+                index
+                for index, item in enumerate(self._mqtt_gate.subscriptions)
+                if item.topic_filter == original_filter
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError("The subscription filter no longer exists.")
+        if any(
+            item.topic_filter == subscription.topic_filter
+            and item.topic_filter != original_filter
+            for item in self._mqtt_gate.subscriptions
+        ):
+            raise ValueError("That subscription filter already exists.")
+
+        subscriptions = list(self._mqtt_gate.subscriptions)
+        subscriptions[index] = subscription
+        await self._replace_subscriptions(subscriptions)
+
+    async def reconnect(self) -> None:
+        """Reconnect and restore all active subscriptions."""
+        await self.stop()
+        await self.start()
+
     def handle_message(
         self, _client: Any, _userdata: Any, msg: MqttMessage
     ) -> None:
@@ -188,6 +237,16 @@ class ObserverRepository(MqttRepository[ObserverModel]):
                 return
             await self._mqtt_gate.subscribe(self.handle_message)
             self._subscriptions_active = True
+
+    async def _replace_subscriptions(
+        self, subscriptions: list[Subscription]
+    ) -> None:
+        if self._is_running and self._subscriptions_active:
+            await self._mqtt_gate.unsubscribe()
+            self._subscriptions_active = False
+        self._mqtt_gate.set_subscriptions(subscriptions)
+        if self._is_running:
+            await self._subscribe_once()
 
     def _set_connection_status(self, status: ConnectionStatus) -> None:
         if self.connection_status != status:
