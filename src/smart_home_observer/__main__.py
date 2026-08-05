@@ -1,40 +1,57 @@
+import asyncio
+import sys
+
+from PySide6.QtCore import QCoreApplication
+from PySide6.QtWidgets import QApplication
+from qasync import QEventLoop
+
 from smart_home_observer.app.app_dependencies import AppDependencies
 from smart_home_observer.app.service_container import ServiceContainer
-from smart_home_observer.core.config.config_loader import ConfigLoader
 from smart_home_observer.core.config.app_config import AppConfig
-import asyncio
-
+from smart_home_observer.core.config.config_loader import ConfigLoader
+from smart_home_observer.gui.main_window import MainWindow
+from smart_home_observer.gui.main_view_model import MainViewModel
 
 class App:
-    def __init__(self, config: AppConfig):
-        self.config = config
-        self.name = "SmartHomeObserver"
-
-        self.dependencies = AppDependencies(config)
-        self.service_container = ServiceContainer(self.dependencies)
-
-    async def start(self) -> None:
-        await self.service_container.start_services()
-
-    async def stop(self) -> None:
-        await self.service_container.stop_services()
-
-    async def wait_forever(self) -> None:
-        await asyncio.Event().wait()
+    def __init__(self, config: AppConfig, qt_application: QApplication):
+        self._qt_application = qt_application
+        self._dependencies = AppDependencies(config)
+        self._services = ServiceContainer(self._dependencies)
+        self._view_model = MainViewModel(
+            self._dependencies.observer_model_repository,
+            "",
+        )
+        self._window = MainWindow(self._view_model)
 
 
-async def main() -> None:
-    config = ConfigLoader().load_config()
-    app = App(config)
+    async def run(self) -> int:
+        try:
+            await self._services.start_services()
+            await self._view_model.start()
+            stopped = asyncio.get_running_loop().create_future()
+            self._qt_application.aboutToQuit.connect(
+                lambda: not stopped.done() and stopped.set_result(None)
+            )
+            self._window.show()
+            await stopped
+            return 0
+        finally:
+            await self._view_model.stop()
+            await self._services.stop_services()
 
-    try:
-        await app.start()
-        await app.wait_forever()
-    finally:
-        await app.stop()
 
-def run() -> None:
-    asyncio.run(main())
+def run() -> int:
+    QCoreApplication.setOrganizationName("SmartHomeObserver")
+    QCoreApplication.setApplicationName("Smart Home Observer")
+    qt_application = QApplication(sys.argv)
+    event_loop = QEventLoop(qt_application)
+    asyncio.set_event_loop(event_loop)
+
+    app = App(ConfigLoader().load_config(), qt_application)
+
+    with event_loop:
+        return event_loop.run_until_complete(app.run())
+
 
 if __name__ == "__main__":
-    run()
+    raise SystemExit(run())

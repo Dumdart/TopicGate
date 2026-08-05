@@ -6,6 +6,7 @@ from paho.mqtt.reasoncodes import ReasonCode
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.mqtt.mqtt_client import MqttClient
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
 from smart_home_observer.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
@@ -157,6 +158,26 @@ def test_mqtt_gate_has_no_topics_when_none_are_configured():
     gate = MqttGate(config(), TestCallbacks())
 
     assert gate.topics == []
+
+
+def test_gate_preserves_per_subscription_qos_and_retain_options():
+    gate = MqttGate(
+        config(),
+        TestCallbacks(),
+        [
+            Subscription(
+                "SmartHome/#",
+                qos=2,
+                retain_as_published=True,
+                retain_handling=1,
+            )
+        ],
+    )
+
+    subscription = gate.subscriptions[0]
+    assert subscription.qos == 2
+    assert subscription.retain_as_published is True
+    assert subscription.retain_handling == 1
 
 
 def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():

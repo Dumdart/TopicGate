@@ -34,3 +34,13 @@ def test_process_stores_messages_for_discovered_topics() -> None:
 
     assert model.topic_states[message.topic].payload == b"value"
     assert ObserverModelService.find_node(model, message.topic) is not None
+
+
+def test_process_counts_messages_per_topic() -> None:
+    model = TopicService.get_topics()
+    processor = ObserverModelMqttMessageProcessor()
+
+    processor.process(model, MqttMessage("SmartHome/device/value", b"1", 0, False))
+    processor.process(model, MqttMessage("SmartHome/device/value", b"2", 0, False))
+
+    assert model.topic_states["SmartHome/device/value"].message_count == 2

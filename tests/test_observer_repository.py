@@ -5,6 +5,7 @@ from paho.mqtt.reasoncodes import ReasonCode
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.repository.observer_repository import (
     ConnectionStatus,
     ObserverRepository,
@@ -195,5 +196,50 @@ def test_startup_failure_leaves_repository_disconnected() -> None:
             raise AssertionError("Expected startup to fail")
 
         assert repository.connection_status == ConnectionStatus.DISCONNECTED
+
+    asyncio.run(scenario())
+
+
+def test_updating_a_subscription_replaces_the_active_broker_filter() -> None:
+    async def scenario() -> None:
+        with patch(
+            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            repository = ObserverRepository(
+                MqttConfig(host="broker", port=1883, username="", password=""),
+                ["SmartHome/old/#"],
+            )
+            await repository.start()
+            fake_client = repository._mqtt_gate.client.client
+
+            await repository.update_subscription(
+                "SmartHome/old/#",
+                Subscription(
+                    "SmartHome/new/#",
+                    qos=2,
+                    retain_as_published=True,
+                    retain_handling=1,
+                ),
+            )
+
+            assert repository.subscriptions == (
+                Subscription(
+                    "SmartHome/new/#",
+                    qos=2,
+                    retain_as_published=True,
+                    retain_handling=1,
+                ),
+            )
+            assert [
+                event[1] for event in fake_client.events if event[0] == "unsubscribe"
+            ] == [["SmartHome/old/#"]]
+            assert [
+                topic
+                for topic, _ in [
+                    event for event in fake_client.events if event[0] == "subscribe"
+                ][-1][1]
+            ] == ["SmartHome/new/#"]
+            await repository.stop()
 
     asyncio.run(scenario())

@@ -1,85 +1,19 @@
 import asyncio
 from collections.abc import AsyncIterator
-from enum import StrEnum
 from typing import Any
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.interfaces.mqtt_repository import MqttRepository
+from smart_home_observer.core.models.connection_status import ConnectionStatus
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
-from smart_home_observer.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
+from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.infrastructure.mqtt.callbacks.observer_repository_callbacks import ObserverRepositoryCallbacks
+from smart_home_observer.services.observer_model_service import ObserverModelService
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
 from smart_home_observer.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
-from smart_home_observer.services.observer_model_service import ObserverModelService
-
-
-class ConnectionStatus(StrEnum):
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    RECONNECTING = "reconnecting"
-    DISCONNECTED = "disconnected"
-
-
-class _ObserverRepositoryCallbacks(MqttCallbacks):
-    """Forward MQTT lifecycle events to the owning repository."""
-
-    def __init__(self, repository: "ObserverRepository") -> None:
-        self._repository = repository
-
-    async def on_connect(
-        self,
-        client: Any,
-        userdata: Any,
-        flags: Any,
-        rc: Any,
-        properties: Any = None,
-    ) -> None:
-        await self._repository._handle_connected()
-
-    async def on_disconnect(
-        self,
-        client: Any,
-        userdata: Any,
-        disconnect_flags: Any,
-        reason_code: Any = None,
-        properties: Any = None,
-    ) -> None:
-        self._repository._handle_disconnected()
-
-    async def on_publish(
-        self,
-        client: Any,
-        userdata: Any,
-        mid: int,
-        reason_code: Any = None,
-        properties: Any = None,
-    ) -> None:
-        return None
-
-    async def on_subscribe(
-        self,
-        client: Any,
-        userdata: Any,
-        mid: int,
-        granted_qos: Any,
-        properties: Any = None,
-    ) -> None:
-        return None
-
-    async def on_unsubscribe(
-        self,
-        client: Any,
-        userdata: Any,
-        mid: int,
-        properties: Any = None,
-        reason_codes: Any = None,
-    ) -> None:
-        return None
-
-    async def on_message(self, client: Any, userdata: Any, msg: MqttMessage) -> None:
-        self._repository.handle_message(client, userdata, msg)
 
 
 class ObserverRepository(MqttRepository[ObserverModel]):
@@ -96,7 +30,7 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         self._subscriptions_active = False
         self._subscription_lock = asyncio.Lock()
         self._mqtt_gate = MqttGate(
-            config, _ObserverRepositoryCallbacks(self), topic_filters
+            config, ObserverRepositoryCallbacks(self), topic_filters
         )
 
     async def start(self) -> None:
@@ -154,6 +88,54 @@ class ObserverRepository(MqttRepository[ObserverModel]):
     def get_state(self, topic: str) -> TopicState | None:
         return self._state.topic_states.get(topic)
 
+    @property
+    def subscriptions(self) -> tuple[Subscription, ...]:
+        """Return an immutable snapshot of the configured MQTT filters."""
+        return tuple(self._mqtt_gate.subscriptions)
+
+    async def add_subscription(self, subscription: Subscription) -> None:
+        """Add and activate a subscription filter."""
+        if any(
+            item.topic_filter == subscription.topic_filter
+            for item in self._mqtt_gate.subscriptions
+        ):
+            raise ValueError("That subscription filter already exists.")
+        await self._replace_subscriptions(
+            [*self._mqtt_gate.subscriptions, subscription]
+        )
+
+    async def update_subscription(
+        self,
+        original_filter: str,
+        subscription: Subscription,
+    ) -> None:
+        """Replace and reactivate one configured subscription filter."""
+        index = next(
+            (
+                index
+                for index, item in enumerate(self._mqtt_gate.subscriptions)
+                if item.topic_filter == original_filter
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError("The subscription filter no longer exists.")
+        if any(
+            item.topic_filter == subscription.topic_filter
+            and item.topic_filter != original_filter
+            for item in self._mqtt_gate.subscriptions
+        ):
+            raise ValueError("That subscription filter already exists.")
+
+        subscriptions = list(self._mqtt_gate.subscriptions)
+        subscriptions[index] = subscription
+        await self._replace_subscriptions(subscriptions)
+
+    async def reconnect(self) -> None:
+        """Reconnect and restore all active subscriptions."""
+        await self.stop()
+        await self.start()
+
     def handle_message(
         self, _client: Any, _userdata: Any, msg: MqttMessage
     ) -> None:
@@ -188,6 +170,16 @@ class ObserverRepository(MqttRepository[ObserverModel]):
                 return
             await self._mqtt_gate.subscribe(self.handle_message)
             self._subscriptions_active = True
+
+    async def _replace_subscriptions(
+        self, subscriptions: list[Subscription]
+    ) -> None:
+        if self._is_running and self._subscriptions_active:
+            await self._mqtt_gate.unsubscribe()
+            self._subscriptions_active = False
+        self._mqtt_gate.set_subscriptions(subscriptions)
+        if self._is_running:
+            await self._subscribe_once()
 
     def _set_connection_status(self, status: ConnectionStatus) -> None:
         if self.connection_status != status:
