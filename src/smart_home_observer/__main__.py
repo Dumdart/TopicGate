@@ -1,6 +1,7 @@
 import asyncio
 import sys
 
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
@@ -8,12 +9,8 @@ from smart_home_observer.app.app_dependencies import AppDependencies
 from smart_home_observer.app.service_container import ServiceContainer
 from smart_home_observer.core.config.app_config import AppConfig
 from smart_home_observer.core.config.config_loader import ConfigLoader
-
-from smart_home_observer.gui.gui import MainWindow
+from smart_home_observer.gui.main_window import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
-
-INITIAL_TOPIC = "SmartHome/Huehnerstall/door/status"
-
 
 class App:
     def __init__(self, config: AppConfig, qt_application: QApplication):
@@ -22,7 +19,7 @@ class App:
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
             self._dependencies.observer_model_repository,
-            INITIAL_TOPIC,
+            "",
         )
         self._window = MainWindow(self._view_model)
 
@@ -44,6 +41,8 @@ class App:
 
 
 def run() -> int:
+    QCoreApplication.setOrganizationName("SmartHomeObserver")
+    QCoreApplication.setApplicationName("Smart Home Observer")
     qt_application = QApplication(sys.argv)
     event_loop = QEventLoop(qt_application)
     asyncio.set_event_loop(event_loop)
