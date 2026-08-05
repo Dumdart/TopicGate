@@ -22,6 +22,7 @@ from smart_home_observer.gui.components.subscription_settings import (
     SubscriptionSettingsPane,
 )
 from smart_home_observer.gui.components.topic_details import TopicDetailsPane
+from smart_home_observer.gui.main_view_model import MainViewModel
 
 
 class MainWindow(QMainWindow):
