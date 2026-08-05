@@ -104,6 +104,14 @@ class ObserverRepository(MqttRepository[ObserverModel]):
             [*self._mqtt_gate.subscriptions, subscription]
         )
 
+    async def remove_subscription(self, subscription: Subscription) -> None:
+        """Remove a subscription filter."""
+        if subscription not in self._mqtt_gate.subscriptions:
+            raise ValueError("The subscription filter no longer exists.")
+        await self._replace_subscriptions(
+            [item for item in self._mqtt_gate.subscriptions if item != subscription]
+        )
+
     async def update_subscription(
         self,
         original_filter: str,
@@ -134,6 +142,14 @@ class ObserverRepository(MqttRepository[ObserverModel]):
     async def reconnect(self) -> None:
         """Reconnect and restore all active subscriptions."""
         await self.stop()
+        await self.start()
+
+    async def disconnect(self) -> None:
+        """Disconnect from MQTT while preserving configured subscriptions."""
+        await self.stop()
+
+    async def connect(self) -> None:
+        """Connect to MQTT and activate all configured subscriptions."""
         await self.start()
 
     def handle_message(

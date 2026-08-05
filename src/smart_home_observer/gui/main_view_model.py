@@ -1,36 +1,12 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
 from contextlib import suppress
-from typing import Protocol
 
 from PySide6.QtCore import QObject, Signal
 
-from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
+from smart_home_observer.core.models.observer_model import TopicState
 from smart_home_observer.core.models.subscription import Subscription
-
-
-class ObserverStateReader(Protocol):
-    """Provides observer state and runtime subscription operations to the UI."""
-
-    connection_status: object
-
-    def get(self) -> ObserverModel: ...
-
-    def get_state(self, topic: str) -> TopicState | None: ...
-
-    def messages(self) -> AsyncIterator[MqttMessage]: ...
-
-    def connection_statuses(self) -> AsyncIterator[object]: ...
-
-    async def add_subscription(self, subscription: Subscription) -> None: ...
-
-    async def update_subscription(
-        self, original_filter: str, subscription: Subscription
-    ) -> None: ...
-
-    async def reconnect(self) -> None: ...
+from smart_home_observer.gui.observer_state_reader import ObserverStateReader
 
 
 def mqtt_filter_matches(topic_filter: str, topic: str) -> bool:
@@ -206,6 +182,14 @@ class MainViewModel(QObject):
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 
+    async def remove_suscrioption(
+        self, subscription: Subscription
+    ) -> None:
+        # await self._repository.remove_subscription(subscription)
+        self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
+        self.topics_changed.emit()
+        self.subscriptions_changed.emit()
+
     async def update_subscription(
         self, original_filter: str, subscription: Subscription
     ) -> None:
@@ -219,9 +203,18 @@ class MainViewModel(QObject):
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 
-    async def reconnect(self) -> None:
+    async def reconnect_to_broker(self) -> None:
         self.log_message.emit("Reconnect requested")
         await self._repository.reconnect()
+
+    async def connect_to_broker(self) -> None:
+        self.log_message.emit("Connect requested")
+        await self._repository.connect()
+
+
+    async def disconnect_from_broker(self) -> None:
+        self.log_message.emit("Disconnect requested")
+        await self._repository.disconnect()
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():

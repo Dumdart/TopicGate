@@ -6,6 +6,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.gui.components.connection_controls import ConnectionControls
 from smart_home_observer.gui.gui import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
 
@@ -68,11 +70,60 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
         "Matched by subscription: home/+/temperature"
     )
     connection_status = window.findChild(QLabel, "connectionStatus")
+    connection_controls = window.findChild(ConnectionControls)
     toolbar = window.findChild(QToolBar, "observerToolbar")
+    assert connection_controls is not None
     assert connection_status is not None
     assert connection_status.text().endswith("Connected")
     assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is connection_status
     assert toolbar.findChild(QLabel, "connectionStatus") is None
+    assert not window.findChild(QAction, "connectAction").isEnabled()
+    assert window.findChild(QAction, "reconnectAction").isEnabled()
+    assert window.findChild(QAction, "disconnectAction").isEnabled()
+
+    window.close()
+    application.processEvents()
+
+
+def test_connection_controls_bundle_actions_and_request_signals() -> None:
+    application = QApplication.instance() or QApplication([])
+    controls = ConnectionControls()
+    requests: list[str] = []
+    controls.connect_requested.connect(lambda: requests.append("connect"))
+    controls.reconnect_requested.connect(lambda: requests.append("reconnect"))
+    controls.disconnect_requested.connect(lambda: requests.append("disconnect"))
+
+    for action in controls.actions:
+        action.setEnabled(True)
+        action.trigger()
+
+    assert requests == ["connect", "reconnect", "disconnect"]
+    controls.status_label.deleteLater()
+    controls.deleteLater()
+    application.processEvents()
+
+
+def test_connection_actions_follow_the_rendered_connection_status() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    view_model = MainViewModel(repository)
+    window = MainWindow(view_model)
+
+    connect_action = window.findChild(QAction, "connectAction")
+    reconnect_action = window.findChild(QAction, "reconnectAction")
+    disconnect_action = window.findChild(QAction, "disconnectAction")
+
+    view_model._connection_status = "disconnected"
+    view_model.connection_changed.emit()
+    assert connect_action.isEnabled()
+    assert not reconnect_action.isEnabled()
+    assert not disconnect_action.isEnabled()
+
+    view_model._connection_status = "reconnecting"
+    view_model.connection_changed.emit()
+    assert not connect_action.isEnabled()
+    assert reconnect_action.isEnabled()
+    assert disconnect_action.isEnabled()
 
     window.close()
     application.processEvents()

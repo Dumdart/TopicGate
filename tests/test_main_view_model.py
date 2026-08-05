@@ -13,6 +13,7 @@ class FakeObserverRepository:
         self._states: dict[str, TopicState] = {}
         self._messages: asyncio.Queue[MqttMessage] = asyncio.Queue()
         self.subscriptions: tuple[Subscription, ...] = ()
+        self.connection_operations: list[str] = []
 
     def get(self) -> ObserverModel:
         return ObserverModel(root_stats=[], topic_states=dict(self._states))
@@ -34,6 +35,15 @@ class FakeObserverRepository:
             recieved_at=datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc),
         )
         self._messages.put_nowait(message)
+
+    async def connect(self) -> None:
+        self.connection_operations.append("connect")
+
+    async def reconnect(self) -> None:
+        self.connection_operations.append("reconnect")
+
+    async def disconnect(self) -> None:
+        self.connection_operations.append("disconnect")
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -95,3 +105,21 @@ def test_mqtt_filter_matching_supports_wildcards_and_system_topic_rules() -> Non
     assert not mqtt_filter_matches("home/+/temperature", "home/temperature")
     assert not mqtt_filter_matches("#", "$SYS/broker/uptime")
     assert mqtt_filter_matches("$SYS/#", "$SYS/broker/uptime")
+
+
+def test_connection_commands_are_forwarded_to_the_repository() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        view_model = MainViewModel(repository)
+
+        await view_model.connect_to_broker()
+        await view_model.reconnect_to_broker()
+        await view_model.disconnect_from_broker()
+
+        assert repository.connection_operations == [
+            "connect",
+            "reconnect",
+            "disconnect",
+        ]
+
+    asyncio.run(scenario())

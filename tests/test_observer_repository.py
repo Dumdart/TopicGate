@@ -172,6 +172,35 @@ def test_connection_loss_reconnects_and_restores_subscriptions() -> None:
     asyncio.run(scenario())
 
 
+def test_manual_disconnect_and_connect_restore_subscriptions() -> None:
+    async def scenario() -> None:
+        with patch(
+            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            repository = ObserverRepository(
+                MqttConfig(host="broker", port=1883, username="", password=""),
+                ["SmartHome/#"],
+            )
+
+            await repository.connect()
+            fake_client = repository._mqtt_gate.client.client
+            await repository.disconnect()
+
+            assert repository.connection_status == ConnectionStatus.DISCONNECTED
+            assert not repository._mqtt_gate.is_started
+
+            await repository.connect()
+
+            assert repository.connection_status == ConnectionStatus.CONNECTED
+            assert len(
+                [event for event in fake_client.events if event[0] == "subscribe"]
+            ) == 2
+            await repository.disconnect()
+
+    asyncio.run(scenario())
+
+
 def test_startup_failure_leaves_repository_disconnected() -> None:
     async def scenario() -> None:
         repository = ObserverRepository(

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.add_subscription_dialog import AddSubscriptionDialog
-from smart_home_observer.gui.components.connection_status import ConnectionStatusLabel
+from smart_home_observer.gui.components.connection_controls import ConnectionControls
 from smart_home_observer.gui.components.log_console import LogConsoleDock
 from smart_home_observer.gui.components.observer_tree import ObserverTreePane
 from smart_home_observer.gui.components.subscription_settings import (
@@ -74,10 +74,15 @@ class MainWindow(QMainWindow):
         self._splitter.setSizes([420, 430, 270])
 
     def _create_actions(self) -> None:
-        self._reconnect_action = QAction("Reconnect", self)
-        self._reconnect_action.setToolTip("Reconnect to the MQTT broker")
-        self._reconnect_action.triggered.connect(
-            lambda: self._run_async(self._view_model.reconnect())
+        self._connection_controls = ConnectionControls(self)
+        self._connection_controls.connect_requested.connect(
+            lambda: self._run_async(self._view_model.connect_to_broker())
+        )
+        self._connection_controls.reconnect_requested.connect(
+            lambda: self._run_async(self._view_model.reconnect_to_broker())
+        )
+        self._connection_controls.disconnect_requested.connect(
+            lambda: self._run_async(self._view_model.disconnect_from_broker())
         )
 
         self._add_filter_action = QAction("Add filter", self)
@@ -115,7 +120,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._quit_action)
 
         connection_menu = self.menuBar().addMenu("&Connection")
-        connection_menu.addAction(self._reconnect_action)
+        connection_menu.addActions(self._connection_controls.actions)
 
         self._view_menu: QMenu = self.menuBar().addMenu("&View")
         self._view_menu.addAction(self._expand_action)
@@ -124,9 +129,8 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction(self._about_action)
 
-        self._connection_status = ConnectionStatusLabel()
         self.menuBar().setCornerWidget(
-            self._connection_status,
+            self._connection_controls.status_label,
             Qt.Corner.TopRightCorner,
         )
 
@@ -134,7 +138,8 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Observer tools", self)
         toolbar.setObjectName("observerToolbar")
         toolbar.setMovable(False)
-        toolbar.addAction(self._reconnect_action)
+        toolbar.addActions(self._connection_controls.actions)
+        toolbar.addSeparator()
         toolbar.addAction(self._add_filter_action)
         toolbar.addSeparator()
         toolbar.addAction(self._console_action)
@@ -181,7 +186,7 @@ class MainWindow(QMainWindow):
         )
 
     def _render_connection(self) -> None:
-        self._connection_status.render(self._view_model.connection_status)
+        self._connection_controls.render(self._view_model.connection_status)
 
     def _apply_subscription(
         self,
