@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QTreeView,
 )
 
-from smart_home_observer.gui.workspace_pane import WorkspacePane
+from smart_home_observer.gui.components.workspace_pane import WorkspacePane
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
 

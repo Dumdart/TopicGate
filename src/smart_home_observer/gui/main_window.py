@@ -14,15 +14,14 @@ from PySide6.QtWidgets import (
 )
 
 from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.gui.add_subscription_dialog import AddSubscriptionDialog
-from smart_home_observer.gui.connection_status import ConnectionStatusLabel
-from smart_home_observer.gui.log_console import LogConsoleDock
-from smart_home_observer.gui.main_view_model import MainViewModel
-from smart_home_observer.gui.observer_tree import ObserverTreePane
-from smart_home_observer.gui.subscription_settings import (
+from smart_home_observer.gui.components.add_subscription_dialog import AddSubscriptionDialog
+from smart_home_observer.gui.components.connection_status import ConnectionStatusLabel
+from smart_home_observer.gui.components.log_console import LogConsoleDock
+from smart_home_observer.gui.components.observer_tree import ObserverTreePane
+from smart_home_observer.gui.components.subscription_settings import (
     SubscriptionSettingsPane,
 )
-from smart_home_observer.gui.topic_details import TopicDetailsPane
+from smart_home_observer.gui.components.topic_details import TopicDetailsPane
 
 
 class MainWindow(QMainWindow):

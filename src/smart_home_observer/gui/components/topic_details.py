@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFormLayout, QLabel, QPlainTextEdit
 
 from smart_home_observer.gui.main_view_model import MainViewModel
-from smart_home_observer.gui.workspace_pane import WorkspacePane
+from smart_home_observer.gui.components.workspace_pane import WorkspacePane
 
 
 class TopicDetailsPane(WorkspacePane):

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.gui.workspace_pane import WorkspacePane
+from smart_home_observer.gui.components.workspace_pane import WorkspacePane
 
 
 class SubscriptionSettingsPane(WorkspacePane):
