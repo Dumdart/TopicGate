@@ -1,36 +1,17 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
 from contextlib import suppress
-from typing import Protocol
+from uuid import UUID
 
 from PySide6.QtCore import QObject, Signal
 
-from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.config.mqtt_config import MqttConfig
+from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
-
-
-class ObserverStateReader(Protocol):
-    """Provides observer state and runtime subscription operations to the UI."""
-
-    connection_status: object
-
-    def get(self) -> ObserverModel: ...
-
-    def get_state(self, topic: str) -> TopicState | None: ...
-
-    def messages(self) -> AsyncIterator[MqttMessage]: ...
-
-    def connection_statuses(self) -> AsyncIterator[object]: ...
-
-    async def add_subscription(self, subscription: Subscription) -> None: ...
-
-    async def update_subscription(
-        self, original_filter: str, subscription: Subscription
-    ) -> None: ...
-
-    async def reconnect(self) -> None: ...
+from smart_home_observer.gui.broker_state_reader import BrokerStateReader
+from smart_home_observer.gui.observer_state_reader import ObserverStateReader
+from smart_home_observer.services.observer_model_service import ObserverModelService
 
 
 def mqtt_filter_matches(topic_filter: str, topic: str) -> bool:
@@ -61,11 +42,19 @@ class MainViewModel(QObject):
     topics_changed = Signal()
     subscriptions_changed = Signal()
     connection_changed = Signal()
+    configuration_changed = Signal()
     log_message = Signal(str)
 
-    def __init__(self, repository: ObserverStateReader, topic: str = "") -> None:
+    def __init__(
+        self,
+        repository: ObserverStateReader,
+        topic: str = "",
+        *,
+        broker_repository: BrokerStateReader | None = None,
+    ) -> None:
         super().__init__()
         self._repository = repository
+        self._broker_repository = broker_repository
         self._topic = topic
         self._state: TopicState | None = None
         self._message_task: asyncio.Task[None] | None = None
@@ -128,16 +117,47 @@ class MainViewModel(QObject):
         return self._connection_status
 
     @property
+    def mqtt_config(self) -> MqttConfig:
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        return self._broker_repository.get_mqtt()
+
+    @property
+    def broker_profiles(self) -> tuple[BrokerProfile, ...]:
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        return self._broker_repository.get_all_profiles()
+
+    @property
+    def active_broker_profile(self) -> BrokerProfile:
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        return self._broker_repository.get_profile()
+
+    @property
     def subscriptions(self) -> tuple[Subscription, ...]:
         subscriptions = getattr(self._repository, "subscriptions", ())
         return tuple(subscriptions)
 
     @property
     def topic_paths(self) -> list[str]:
-        paths = {subscription.topic_filter for subscription in self.subscriptions}
-        get_snapshot = getattr(self._repository, "get", None)
-        if get_snapshot is not None:
-            paths.update(get_snapshot().topic_states)
+        subscriptions = self.subscriptions
+        model = (
+            self.active_broker_profile.workspace.model
+            if self._broker_repository is not None
+            else self._repository.get()
+        )
+        paths = {subscription.topic_filter for subscription in subscriptions}
+        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics.update(model.topic_states)
+        paths.update(
+            topic
+            for topic in observed_topics
+            if any(
+                mqtt_filter_matches(subscription.topic_filter, topic)
+                for subscription in subscriptions
+            )
+        )
         return sorted(paths, key=str.casefold)
 
     @property
@@ -202,7 +222,18 @@ class MainViewModel(QObject):
 
     async def add_subscription(self, subscription: Subscription) -> None:
         await self._repository.add_subscription(subscription)
+        self._store_active_profile_subscriptions()
         self.log_message.emit(f"Added subscription: {subscription.topic_filter}")
+        self.topics_changed.emit()
+        self.subscriptions_changed.emit()
+
+    async def remove_subscription(self, subscription: Subscription) -> None:
+        await self._repository.remove_subscription(subscription)
+        self._store_active_profile_subscriptions()
+        self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
+        if self._topic not in self.topic_paths:
+            self._topic = ""
+            self.refresh()
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 
@@ -210,6 +241,7 @@ class MainViewModel(QObject):
         self, original_filter: str, subscription: Subscription
     ) -> None:
         await self._repository.update_subscription(original_filter, subscription)
+        self._store_active_profile_subscriptions()
         self.log_message.emit(
             f"Updated subscription: {original_filter} -> {subscription.topic_filter}"
         )
@@ -219,9 +251,124 @@ class MainViewModel(QObject):
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 
-    async def reconnect(self) -> None:
+    async def reconnect_to_broker(self) -> None:
         self.log_message.emit("Reconnect requested")
         await self._repository.reconnect()
+
+    async def connect_to_broker(self) -> None:
+        self.log_message.emit("Connect requested")
+        await self._repository.connect()
+
+
+    async def disconnect_from_broker(self) -> None:
+        self.log_message.emit("Disconnect requested")
+        await self._repository.disconnect()
+
+    async def update_mqtt_config(self, mqtt_config: MqttConfig) -> None:
+        """Apply broker settings before retaining them in application settings."""
+        await self.update_broker_profile(
+            self.active_broker_profile.id,
+            mqtt_config,
+        )
+
+    async def update_broker_profile(
+        self,
+        profile_id: UUID,
+        mqtt_config: MqttConfig,
+        profile_name: str | None = None,
+    ) -> None:
+        """Reconnect using a profile before making it the active profile."""
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+
+        profile = self._broker_repository.get_profile(profile_id)
+        profile_changed = profile.id != self.active_broker_profile.id
+        normalized_name = (
+            self._validated_profile_name(profile_name, profile_id)
+            if profile_name is not None
+            else profile.name
+        )
+
+        self.log_message.emit(
+            f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
+        )
+        try:
+            await self._repository.update_broker(
+                mqtt_config,
+                profile.workspace.model,
+                profile.workspace.subscriptions,
+            )
+        except Exception as error:
+            self.log_message.emit(f"Broker update failed: {error}")
+            raise
+        profile.name = normalized_name
+        profile.config = mqtt_config
+        self._broker_repository.update_profile(profile)
+        self._broker_repository.activate_profile(profile_id, mqtt_config)
+        if profile_changed:
+            self._topic = ""
+            self.refresh()
+            self.topics_changed.emit()
+            self.subscriptions_changed.emit()
+        self.configuration_changed.emit()
+        self.log_message.emit(
+            f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
+        )
+
+    def create_broker_profile(
+        self,
+        name: str,
+        mqtt_config: MqttConfig,
+    ) -> BrokerProfile:
+        """Create a selectable broker profile without changing connections."""
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        profile = self._broker_repository.create_profile(name, mqtt_config)
+        self.configuration_changed.emit()
+        self.log_message.emit(f"Created broker profile: {profile.name}")
+        return profile
+
+    async def delete_broker_profile(self, profile_id: UUID) -> None:
+        """Delete a profile, switching away first when it is active."""
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        profile = self._broker_repository.get_profile(profile_id)
+        profiles = self.broker_profiles
+        if len(profiles) == 1:
+            raise ValueError("At least one broker profile is required.")
+        if profile.id == self.active_broker_profile.id:
+            replacement = next(item for item in profiles if item.id != profile.id)
+            await self.update_broker_profile(replacement.id, replacement.config)
+        self._broker_repository.delete_profile(profile.id)
+        self.configuration_changed.emit()
+        self.log_message.emit(f"Deleted broker profile: {profile.name}")
+
+    def _store_active_profile_subscriptions(self) -> None:
+        """Persist the active broker's subscriptions with its workspace."""
+        if self._broker_repository is None:
+            return
+
+        workspace = self.active_broker_profile.workspace
+        workspace.subscriptions = self.subscriptions
+        update_workspace = getattr(
+            self._broker_repository,
+            "update_observer_workspace",
+            None,
+        )
+        if update_workspace is not None:
+            update_workspace(workspace)
+
+    def _validated_profile_name(self, name: str, profile_id: UUID) -> str:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("A broker profile name is required.")
+        if any(
+            profile.id != profile_id
+            and profile.name.casefold() == normalized_name.casefold()
+            for profile in self.broker_profiles
+        ):
+            raise ValueError("A broker profile with that name already exists.")
+        return normalized_name
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():

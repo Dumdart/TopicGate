@@ -119,6 +119,32 @@ def test_async_gate_registers_message_callback_before_subscribing():
     asyncio.run(scenario())
 
 
+def test_tls_client_can_disconnect_and_reconnect() -> None:
+    async def scenario() -> None:
+        FakePahoClient.instances.clear()
+        tls_config = MqttConfig(
+            host="broker",
+            port=8883,
+            username="observer",
+            password="password",
+            use_tls=True,
+        )
+        with patch(
+            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(tls_config)
+            await client.connect(timeout=1)
+            await client.disconnect()
+            await client.connect(timeout=1)
+
+        events = FakePahoClient.instances[0].events
+        assert [event[0] for event in events].count("tls_set") == 1
+        assert [event[0] for event in events].count("connect") == 2
+
+    asyncio.run(scenario())
+
+
 def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
     async def scenario():
         FakePahoClient.instances.clear()

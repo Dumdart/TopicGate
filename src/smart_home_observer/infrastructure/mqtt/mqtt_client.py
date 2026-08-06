@@ -24,6 +24,7 @@ class MqttClient:
         self._connected_event: asyncio.Event | None = None
         self._connected = False
         self._loop_started = False
+        self._configured = False
 
         self._on_connect: Callback | None = None
         self._on_disconnect: Callback | None = None
@@ -193,7 +194,9 @@ class MqttClient:
     def message_callback_remove(self, topic: str) -> None:
         self.client.message_callback_remove(topic)
 
-    def _configure(self):
+    def _configure(self) -> None:
+        if self._configured:
+            return
         if self.config.use_tls:
             self.client.tls_set(tls_version=ssl.PROTOCOL_TLS)
         if self.config.username or self.config.password:
@@ -201,6 +204,9 @@ class MqttClient:
                 self.config.username or None,
                 self.config.password or None,
             )
+        # Check that TLS is configured only once: Paho rejects a second
+        # tls_set call on the same client during a manual reconnect.
+        self._configured = True
 
     def _paho_on_connect(self, client, userdata, flags, reason_code, properties=None):
         self._call_on_loop(

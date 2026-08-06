@@ -1,10 +1,18 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
+from smart_home_observer.core.models.broker_profile import BrokerProfile
+from smart_home_observer.core.models.observer_model import (
+    ObserverModel,
+    TopicNode,
+    TopicState,
+)
+from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.gui.main_view_model import MainViewModel, mqtt_filter_matches
 
 
@@ -13,6 +21,9 @@ class FakeObserverRepository:
         self._states: dict[str, TopicState] = {}
         self._messages: asyncio.Queue[MqttMessage] = asyncio.Queue()
         self.subscriptions: tuple[Subscription, ...] = ()
+        self.connection_operations: list[str] = []
+        self.removed_subscriptions: list[Subscription] = []
+        self.broker_configurations: list[MqttConfig] = []
 
     def get(self) -> ObserverModel:
         return ObserverModel(root_stats=[], topic_states=dict(self._states))
@@ -34,6 +45,85 @@ class FakeObserverRepository:
             recieved_at=datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc),
         )
         self._messages.put_nowait(message)
+
+    async def connect(self) -> None:
+        self.connection_operations.append("connect")
+
+    async def reconnect(self) -> None:
+        self.connection_operations.append("reconnect")
+
+    async def disconnect(self) -> None:
+        self.connection_operations.append("disconnect")
+
+    async def update_broker(
+        self,
+        new_config: MqttConfig,
+        model: ObserverModel | None = None,
+        subscriptions: tuple[Subscription, ...] | None = None,
+    ) -> None:
+        self.broker_configurations.append(new_config)
+        if model is not None:
+            self._states = model.topic_states
+        if subscriptions is not None:
+            self.subscriptions = subscriptions
+
+    async def remove_subscription(self, subscription: Subscription) -> None:
+        self.removed_subscriptions.append(subscription)
+        self.subscriptions = tuple(
+            item for item in self.subscriptions if item != subscription
+        )
+
+
+class FakeBrokerRepository:
+    def __init__(self, mqtt: MqttConfig) -> None:
+        default_profile = self._profile("Default", mqtt)
+        local_profile = self._profile("Local MQTT", MqttConfig("localhost", 1883, "", ""))
+        self._profiles = {
+            default_profile.id: default_profile,
+            local_profile.id: local_profile,
+        }
+        self._active_profile_id = default_profile.id
+        self.updated_mqtt: list[MqttConfig] = []
+
+    def get_mqtt(self) -> MqttConfig:
+        return self.get_profile().config
+
+    def update_mqtt(self, mqtt: MqttConfig) -> None:
+        self.activate_profile(self._active_profile_id, mqtt)
+
+    def get_profile(self, profile_id: UUID | None = None) -> BrokerProfile:
+        return self._profiles[profile_id or self._active_profile_id]
+
+    def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
+        return tuple(self._profiles.values())
+
+    def create_profile(self, name: str, mqtt: MqttConfig) -> BrokerProfile:
+        profile = self._profile(name.strip(), mqtt)
+        self._profiles[profile.id] = profile
+        return profile
+
+    def update_profile(self, profile: BrokerProfile) -> None:
+        self._profiles[profile.id] = profile
+
+    def delete_profile(self, profile_id: UUID) -> BrokerProfile:
+        return self._profiles.pop(profile_id)
+
+    def activate_profile(self, profile_id: UUID, mqtt: MqttConfig | None = None) -> None:
+        profile = self.get_profile(profile_id)
+        if mqtt is not None:
+            profile.config = mqtt
+            self.updated_mqtt.append(mqtt)
+        self._active_profile_id = profile_id
+
+    @staticmethod
+    def _profile(name: str, mqtt: MqttConfig) -> BrokerProfile:
+        profile_id = uuid4()
+        workspace = ObserverWorkspace(
+            id=uuid4(),
+            profile_id=profile_id,
+            model=ObserverModel(root_stats=[]),
+        )
+        return BrokerProfile(profile_id, name, mqtt, workspace.id, workspace)
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -88,6 +178,18 @@ def test_topic_paths_include_configured_filters_and_discovered_topics() -> None:
     ]
 
 
+def test_topic_paths_exclude_discovered_topics_without_an_active_filter() -> None:
+    repository = FakeObserverRepository()
+    repository.subscriptions = (Subscription("SmartHome/#"),)
+    repository.publish(MqttMessage("SmartHome/kitchen/status", b"open", 1, False))
+    repository.publish(MqttMessage("Other/device/status", b"open", 1, False))
+
+    assert MainViewModel(repository).topic_paths == [
+        "SmartHome/#",
+        "SmartHome/kitchen/status",
+    ]
+
+
 def test_mqtt_filter_matching_supports_wildcards_and_system_topic_rules() -> None:
     assert mqtt_filter_matches("home/+/temperature", "home/kitchen/temperature")
     assert mqtt_filter_matches("home/#", "home/kitchen/temperature")
@@ -95,3 +197,291 @@ def test_mqtt_filter_matching_supports_wildcards_and_system_topic_rules() -> Non
     assert not mqtt_filter_matches("home/+/temperature", "home/temperature")
     assert not mqtt_filter_matches("#", "$SYS/broker/uptime")
     assert mqtt_filter_matches("$SYS/#", "$SYS/broker/uptime")
+
+
+def test_connection_commands_are_forwarded_to_the_repository() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        view_model = MainViewModel(repository)
+
+        await view_model.connect_to_broker()
+        await view_model.reconnect_to_broker()
+        await view_model.disconnect_from_broker()
+
+        assert repository.connection_operations == [
+            "connect",
+            "reconnect",
+            "disconnect",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_mqtt_configuration_is_applied_then_stored() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        initial = MqttConfig("old", 1883, "", "")
+        broker_repository = FakeBrokerRepository(initial)
+        view_model = MainViewModel(
+            repository,
+            broker_repository=broker_repository,
+        )
+        replacement = MqttConfig("new", 8883, "observer", "password", True)
+        logs: list[str] = []
+        changes: list[bool] = []
+        view_model.log_message.connect(logs.append)
+        view_model.configuration_changed.connect(lambda: changes.append(True))
+
+        await view_model.update_mqtt_config(replacement)
+
+        assert view_model.mqtt_config == replacement
+        assert repository.broker_configurations == [replacement]
+        assert broker_repository.updated_mqtt == [replacement]
+        assert changes == [True]
+        assert logs == [
+            "Connecting to MQTT broker: new:8883",
+            "Updated MQTT broker: new:8883",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_switching_broker_profile_activates_its_workspace_after_connecting() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        local_profile = broker_repository.get_all_profiles()[1]
+
+        await view_model.update_broker_profile(local_profile.id, local_profile.config)
+
+        assert repository.broker_configurations == [local_profile.config]
+        assert view_model.active_broker_profile.id == local_profile.id
+        assert view_model.mqtt_config == local_profile.config
+
+    asyncio.run(scenario())
+
+
+def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(
+            MqttConfig("default", 1883, "", "")
+        )
+        default_profile, local_profile = broker_repository.get_all_profiles()
+        default_profile.workspace.model = ObserverModel(
+            root_stats=[
+                TopicNode(
+                    "home",
+                    children={"status": TopicNode("status")},
+                )
+            ]
+        )
+        default_profile.workspace.subscriptions = (Subscription("home/status"),)
+        repository.subscriptions = default_profile.workspace.subscriptions
+        local_profile.workspace.model = ObserverModel(
+            root_stats=[
+                TopicNode(
+                    "bridge",
+                    children={"connected": TopicNode("connected")},
+                )
+            ]
+        )
+        local_profile.workspace.subscriptions = (
+            Subscription("bridge/connected"),
+        )
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+
+        assert view_model.topic_paths == ["home/status"]
+
+        await view_model.update_broker_profile(
+            local_profile.id,
+            local_profile.config,
+        )
+
+        assert view_model.topic_paths == ["bridge/connected"]
+        assert repository.subscriptions == (Subscription("bridge/connected"),)
+
+    asyncio.run(scenario())
+
+
+def test_view_model_creates_and_renames_broker_profiles() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        changes: list[bool] = []
+        logs: list[str] = []
+        view_model.configuration_changed.connect(lambda: changes.append(True))
+        view_model.log_message.connect(logs.append)
+
+        created = view_model.create_broker_profile(
+            "Remote",
+            MqttConfig("remote", 1883, "", ""),
+        )
+        await view_model.update_broker_profile(
+            created.id,
+            MqttConfig("remote-new", 8883, "user", "secret", True),
+            "Remote TLS",
+        )
+
+        assert view_model.active_broker_profile.name == "Remote TLS"
+        assert view_model.active_broker_profile.config.host == "remote-new"
+        assert changes == [True, True]
+        assert logs[0] == "Created broker profile: Remote"
+
+    asyncio.run(scenario())
+
+
+def test_deleting_active_profile_switches_before_removing_it() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        deleted_profile = view_model.active_broker_profile
+        replacement = view_model.broker_profiles[1]
+
+        await view_model.delete_broker_profile(deleted_profile.id)
+
+        assert view_model.active_broker_profile.id == replacement.id
+        assert deleted_profile not in view_model.broker_profiles
+        assert repository.broker_configurations == [replacement.config]
+
+    asyncio.run(scenario())
+
+
+def test_failed_mqtt_configuration_is_not_stored() -> None:
+    class FailingObserverRepository(FakeObserverRepository):
+        async def update_broker(
+            self,
+            new_config: MqttConfig,
+            model: ObserverModel | None = None,
+            subscriptions: tuple[Subscription, ...] | None = None,
+        ) -> None:
+            raise ConnectionError("broker unavailable")
+
+    async def scenario() -> None:
+        initial = MqttConfig("old", 1883, "", "")
+        broker_repository = FakeBrokerRepository(initial)
+        view_model = MainViewModel(
+            FailingObserverRepository(),
+            broker_repository=broker_repository,
+        )
+        logs: list[str] = []
+        view_model.log_message.connect(logs.append)
+
+        try:
+            await view_model.update_mqtt_config(MqttConfig("new", 8883, "", ""))
+        except ConnectionError:
+            pass
+        else:
+            raise AssertionError("Expected the broker update to fail")
+
+        assert view_model.mqtt_config == initial
+        assert broker_repository.updated_mqtt == []
+        assert logs == [
+            "Connecting to MQTT broker: new:8883",
+            "Broker update failed: broker unavailable",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_updates_topics_and_clears_stale_selection() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        subscription = Subscription("SmartHome/#")
+        repository.subscriptions = (subscription,)
+        view_model = MainViewModel(repository, subscription.topic_filter)
+        changed: list[str] = []
+        logs: list[str] = []
+        view_model.state_changed.connect(lambda: changed.append("state"))
+        view_model.topics_changed.connect(lambda: changed.append("topics"))
+        view_model.subscriptions_changed.connect(
+            lambda: changed.append("subscriptions")
+        )
+        view_model.log_message.connect(logs.append)
+
+        await view_model.remove_subscription(subscription)
+
+        assert repository.removed_subscriptions == [subscription]
+        assert repository.subscriptions == ()
+        assert view_model.topic == ""
+        assert changed == ["state", "topics", "subscriptions"]
+        assert logs == ["Removed subscription: SmartHome/#"]
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        subscription = Subscription("SmartHome/kitchen/status")
+        repository.subscriptions = (subscription,)
+        repository.publish(
+            MqttMessage(subscription.topic_filter, b"open", 1, False)
+        )
+        view_model = MainViewModel(repository, subscription.topic_filter)
+
+        await view_model.remove_subscription(subscription)
+
+        assert view_model.topic == ""
+        assert view_model.topic_paths == []
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        subscription = Subscription("SmartHome/kitchen/status")
+        repository.subscriptions = (subscription,)
+        broker_repository = FakeBrokerRepository(
+            MqttConfig("default", 1883, "", "")
+        )
+        profile = broker_repository.get_profile()
+        profile.workspace.model = ObserverModel(
+            root_stats=[
+                TopicNode(
+                    segment="SmartHome",
+                    children={
+                        "kitchen": TopicNode(
+                            segment="kitchen",
+                            children={"status": TopicNode(segment="status")},
+                        )
+                    },
+                )
+            ]
+        )
+        view_model = MainViewModel(
+            repository,
+            subscription.topic_filter,
+            broker_repository=broker_repository,
+        )
+
+        await view_model.remove_subscription(subscription)
+
+        assert view_model.topic == ""
+        assert view_model.topic_paths == []
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_keeps_topics_covered_by_another_filter() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        removed = Subscription("SmartHome/kitchen/status")
+        remaining = Subscription("SmartHome/#")
+        repository.subscriptions = (removed, remaining)
+        repository.publish(MqttMessage(removed.topic_filter, b"open", 1, False))
+        view_model = MainViewModel(repository, removed.topic_filter)
+
+        await view_model.remove_subscription(removed)
+
+        assert view_model.topic == removed.topic_filter
+        assert view_model.topic_paths == [
+            remaining.topic_filter,
+            removed.topic_filter,
+        ]
+
+    asyncio.run(scenario())

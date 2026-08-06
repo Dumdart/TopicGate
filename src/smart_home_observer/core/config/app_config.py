@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from .mqtt_config import MqttConfig
 
-@dataclass(frozen=True)
+@dataclass
 class AppConfig:
     mqtt: MqttConfig
