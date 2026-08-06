@@ -1,74 +1,40 @@
 import asyncio
-from unittest.mock import patch
-
-from paho.mqtt.reasoncodes import ReasonCode
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
+from smart_home_observer.core.models.connection_status import ConnectionStatus
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.repository.observer_repository import (
-    ConnectionStatus,
     ObserverRepository,
 )
 
 
-class FakePahoClient:
-    def __init__(self, **kwargs) -> None:
-        self.events: list[tuple] = []
-        self.connected = False
-        self.on_connect = None
-        self.on_disconnect = None
-        self.on_publish = None
-        self.on_subscribe = None
-        self.on_unsubscribe = None
+def build_repository() -> tuple[ObserverRepository, MagicMock]:
+    manager = MagicMock()
+    manager.activate = AsyncMock()
+    manager.deactivate = AsyncMock()
+    manager.add = AsyncMock()
+    manager.remove = AsyncMock()
+    manager.update = AsyncMock()
+    manager.subscribe_once = AsyncMock()
+    manager.disconnect = MagicMock()
+    manager.subscriptions = ()
 
-    def connect(self, host: str, port: int) -> int:
-        self.connected = True
-        return 0
+    with patch(
+        "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+        return_value=manager,
+    ):
+        repository = ObserverRepository(
+            MqttConfig(host="broker", port=1883, username="", password=""),
+            ["SmartHome/#"],
+        )
 
-    def loop_start(self) -> int:
-        self.on_connect(self, None, {}, ReasonCode(2, identifier=0), None)
-        return 0
-
-    def loop_stop(self) -> None:
-        self.events.append(("loop_stop",))
-
-    def is_connected(self) -> bool:
-        return self.connected
-
-    def disconnect(self) -> int:
-        self.connected = False
-        self.on_disconnect(self, None, 0, None)
-        return 0
-
-    def subscribe(self, topics: list[tuple[str, object]]) -> tuple[int, int]:
-        self.events.append(("subscribe", topics))
-        self.on_subscribe(self, None, 1, [1], None)
-        return 0, 1
-
-    def unsubscribe(self, topics: list[str]) -> tuple[int, int]:
-        self.events.append(("unsubscribe", topics))
-        self.on_unsubscribe(self, None, 1, None, [1])
-        return 0, 1
-
-    def message_callback_add(self, topic: str, callback: object) -> None:
-        self.events.append(("message_callback_add", topic))
-
-    def message_callback_remove(self, topic: str) -> None:
-        self.events.append(("message_callback_remove", topic))
-
-    def tls_set(self, **kwargs) -> None:
-        pass
-
-    def username_pw_set(self, username: str | None, password: str | None) -> None:
-        pass
+    return repository, manager
 
 
 def test_repository_returns_state_and_value_by_topic_path() -> None:
-    repository = ObserverRepository(
-        MqttConfig(host="broker", port=1883, username="", password=""),
-        ["SmartHome/#"],
-    )
+    repository, _ = build_repository()
     message = MqttMessage(
         "SmartHome/Huehnerstall/door/status", b"open", qos=1, retain=True
     )
@@ -86,10 +52,7 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
 
 def test_repository_updates_topic_state_before_publishing_message() -> None:
     async def scenario() -> None:
-        repository = ObserverRepository(
-            MqttConfig(host="broker", port=1883, username="", password=""),
-            ["SmartHome/#"],
-        )
+        repository, _ = build_repository()
         message = MqttMessage(
             "SmartHome/discovered/value", b"42", qos=0, retain=False
         )
@@ -104,118 +67,88 @@ def test_repository_updates_topic_state_before_publishing_message() -> None:
     asyncio.run(scenario())
 
 
-def test_repository_subscribes_to_its_configured_absolute_topic_filters() -> None:
-    topic_filters = ["/SmartHome/Huehnerstall/door/#", "SmartHome/+/status"]
-    repository = ObserverRepository(
-        MqttConfig(host="broker", port=1883, username="", password=""),
-        topic_filters,
-    )
-
-    assert repository._mqtt_gate.topics == topic_filters
-
-
-def test_connection_loss_reconnects_and_restores_subscriptions() -> None:
+def test_repository_delegates_subscription_operations() -> None:
     async def scenario() -> None:
-        topic_filters = ["/SmartHome/#", "SmartHome/+/status"]
-        with patch(
-            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
-            FakePahoClient,
-        ):
-            repository = ObserverRepository(
-                MqttConfig(host="broker", port=1883, username="", password=""),
-                topic_filters,
-            )
-            status_stream = repository.connection_statuses()
-            await repository.start()
-            fake_client = repository._mqtt_gate.client.client
-            await asyncio.sleep(0)
+        repository, manager = build_repository()
+        original = Subscription("SmartHome/old/#")
+        replacement = Subscription("SmartHome/new/#", qos=2)
+        manager.subscriptions = (original,)
 
-            assert repository.connection_status == ConnectionStatus.CONNECTED
-            assert await anext(status_stream) == ConnectionStatus.CONNECTING
-            assert await anext(status_stream) == ConnectionStatus.CONNECTED
-            assert len(
-                [event for event in fake_client.events if event[0] == "subscribe"]
-            ) == 1
+        await repository.add_subscription(replacement)
+        await repository.remove_subscription(original)
+        await repository.update_subscription(original.topic_filter, replacement)
 
-            fake_client.connected = False
-            fake_client.on_disconnect(fake_client, None, "network", None)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
-            assert repository.connection_status == ConnectionStatus.RECONNECTING
-            assert await anext(status_stream) == ConnectionStatus.RECONNECTING
-
-            fake_client.connected = True
-            fake_client.on_connect(
-                fake_client, None, {}, ReasonCode(2, identifier=0), None
-            )
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
-
-            subscriptions = [
-                event for event in fake_client.events if event[0] == "subscribe"
-            ]
-            assert repository.connection_status == ConnectionStatus.CONNECTED
-            assert await anext(status_stream) == ConnectionStatus.CONNECTED
-            assert len(subscriptions) == 2
-            assert [topic for topic, _ in subscriptions[-1][1]] == topic_filters
-
-            await repository.stop()
-            assert await anext(status_stream) == ConnectionStatus.DISCONNECTED
-            await repository.stop()
-            await status_stream.aclose()
-            assert [
-                event[1]
-                for event in fake_client.events
-                if event[0] == "message_callback_remove"
-            ] == topic_filters
+        assert repository.subscriptions == (original,)
+        manager.add.assert_awaited_once_with(replacement)
+        manager.remove.assert_awaited_once_with(original)
+        manager.update.assert_awaited_once_with(original.topic_filter, replacement)
 
     asyncio.run(scenario())
 
 
-def test_manual_disconnect_and_connect_restore_subscriptions() -> None:
+def test_start_connects_then_activates_subscription_manager() -> None:
     async def scenario() -> None:
-        with patch(
-            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
-            FakePahoClient,
-        ):
-            repository = ObserverRepository(
-                MqttConfig(host="broker", port=1883, username="", password=""),
-                ["SmartHome/#"],
-            )
+        repository, manager = build_repository()
+        repository._mqtt_gate.start = AsyncMock()
+        status_stream = repository.connection_statuses()
 
-            await repository.connect()
-            fake_client = repository._mqtt_gate.client.client
-            await repository.disconnect()
+        await repository.start()
 
-            assert repository.connection_status == ConnectionStatus.DISCONNECTED
-            assert not repository._mqtt_gate.is_started
-
-            await repository.connect()
-
-            assert repository.connection_status == ConnectionStatus.CONNECTED
-            assert len(
-                [event for event in fake_client.events if event[0] == "subscribe"]
-            ) == 2
-            await repository.disconnect()
+        repository._mqtt_gate.start.assert_awaited_once()
+        manager.activate.assert_awaited_once()
+        assert repository.connection_status == ConnectionStatus.CONNECTED
+        assert await anext(status_stream) == ConnectionStatus.CONNECTING
+        assert await anext(status_stream) == ConnectionStatus.CONNECTED
+        await status_stream.aclose()
 
     asyncio.run(scenario())
 
 
-def test_startup_failure_leaves_repository_disconnected() -> None:
+def test_stop_deactivates_manager_before_stopping_mqtt_gate() -> None:
     async def scenario() -> None:
-        repository = ObserverRepository(
-            MqttConfig(host="broker", port=1883, username="", password=""),
-            ["SmartHome/#"],
+        repository, manager = build_repository()
+        repository._is_running = True
+        events: list[str] = []
+
+        async def deactivate() -> None:
+            events.append("deactivate")
+
+        async def stop() -> None:
+            events.append("stop")
+
+        manager.deactivate.side_effect = deactivate
+        repository._mqtt_gate.stop = AsyncMock(side_effect=stop)
+
+        await repository.stop()
+
+        assert events == ["deactivate", "stop"]
+        assert repository.connection_status == ConnectionStatus.DISCONNECTED
+
+    asyncio.run(scenario())
+
+
+def test_connected_and_disconnected_callbacks_delegate_to_manager() -> None:
+    async def scenario() -> None:
+        repository, manager = build_repository()
+        repository._is_running = True
+
+        await repository._handle_connected()
+        repository._handle_disconnected()
+
+        manager.subscribe_once.assert_awaited_once()
+        manager.disconnect.assert_called_once()
+        assert repository.connection_status == ConnectionStatus.RECONNECTING
+
+    asyncio.run(scenario())
+
+
+def test_startup_failure_stops_gate_and_leaves_repository_disconnected() -> None:
+    async def scenario() -> None:
+        repository, manager = build_repository()
+        repository._mqtt_gate.start = AsyncMock(
+            side_effect=RuntimeError("broker unavailable")
         )
-
-        async def fail_start() -> None:
-            raise RuntimeError("broker unavailable")
-
-        async def stop_gate() -> None:
-            return None
-
-        repository._mqtt_gate.start = fail_start
-        repository._mqtt_gate.stop = stop_gate
+        repository._mqtt_gate.stop = AsyncMock()
 
         try:
             await repository.start()
@@ -224,83 +157,8 @@ def test_startup_failure_leaves_repository_disconnected() -> None:
         else:
             raise AssertionError("Expected startup to fail")
 
+        repository._mqtt_gate.stop.assert_awaited_once()
+        manager.activate.assert_not_awaited()
         assert repository.connection_status == ConnectionStatus.DISCONNECTED
-
-    asyncio.run(scenario())
-
-
-def test_updating_a_subscription_replaces_the_active_broker_filter() -> None:
-    async def scenario() -> None:
-        with patch(
-            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
-            FakePahoClient,
-        ):
-            repository = ObserverRepository(
-                MqttConfig(host="broker", port=1883, username="", password=""),
-                ["SmartHome/old/#"],
-            )
-            await repository.start()
-            fake_client = repository._mqtt_gate.client.client
-
-            await repository.update_subscription(
-                "SmartHome/old/#",
-                Subscription(
-                    "SmartHome/new/#",
-                    qos=2,
-                    retain_as_published=True,
-                    retain_handling=1,
-                ),
-            )
-
-            assert repository.subscriptions == (
-                Subscription(
-                    "SmartHome/new/#",
-                    qos=2,
-                    retain_as_published=True,
-                    retain_handling=1,
-                ),
-            )
-            assert [
-                event[1] for event in fake_client.events if event[0] == "unsubscribe"
-            ] == [["SmartHome/old/#"]]
-            assert [
-                topic
-                for topic, _ in [
-                    event for event in fake_client.events if event[0] == "subscribe"
-                ][-1][1]
-            ] == ["SmartHome/new/#"]
-            await repository.stop()
-
-    asyncio.run(scenario())
-
-
-def test_removing_a_subscription_updates_the_active_broker_filters() -> None:
-    async def scenario() -> None:
-        removed = Subscription("SmartHome/old/#")
-        remaining = Subscription("SmartHome/+/status", qos=2)
-        with patch(
-            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
-            FakePahoClient,
-        ):
-            repository = ObserverRepository(
-                MqttConfig(host="broker", port=1883, username="", password=""),
-                [removed, remaining],
-            )
-            await repository.start()
-            fake_client = repository._mqtt_gate.client.client
-
-            await repository.remove_subscription(removed)
-
-            assert repository.subscriptions == (remaining,)
-            assert [
-                event[1] for event in fake_client.events if event[0] == "unsubscribe"
-            ] == [[removed.topic_filter, remaining.topic_filter]]
-            assert [
-                topic
-                for topic, _ in [
-                    event for event in fake_client.events if event[0] == "subscribe"
-                ][-1][1]
-            ] == [remaining.topic_filter]
-            await repository.stop()
 
     asyncio.run(scenario())

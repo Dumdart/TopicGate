@@ -1,16 +1,15 @@
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
-from typing_extensions import Callable
-
-
 class SubscriptionManager:
     def __init__(self, mqtt_gate: MqttGate, message_handler: Callable[..., Any]):
         self._mqtt_gate = mqtt_gate
         self._message_handler = message_handler
         self._subscription_lock = asyncio.Lock()
+        self._is_running = False
         self._subscriptions_active = False
 
     async def activate(self) -> None:

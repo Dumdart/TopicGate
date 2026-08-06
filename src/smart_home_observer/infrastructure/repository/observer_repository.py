@@ -31,7 +31,9 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         self._mqtt_gate = MqttGate(
             config, ObserverRepositoryCallbacks(self), topic_filters
         )
-        self._subscription_manager = SubscriptionManager(self._mqtt_gate, self.handle_message)
+        self._subscription_manager = SubscriptionManager(
+            self._mqtt_gate, self.handle_message
+        )
 
     async def start(self) -> None:
         if self._is_running:
