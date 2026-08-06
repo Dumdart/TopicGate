@@ -57,3 +57,16 @@ def test_broker_repository_links_observer_model_to_active_profile() -> None:
     assert workspace.profile_id == profile.id
     assert profile.workspace_id == workspace.id
     repository.save.assert_called_once_with()
+
+
+def test_broker_repository_provides_two_independent_profiles() -> None:
+    repository = BrokerRepository(AppConfig(MqttConfig("broker", 1883, "", "")))
+
+    default_profile, local_profile = repository.get_all_profiles()
+
+    assert [profile.name for profile in (default_profile, local_profile)] == [
+        "Default",
+        "Local MQTT",
+    ]
+    assert local_profile.config == MqttConfig("localhost", 1883, "", "")
+    assert default_profile.workspace.model is not local_profile.workspace.model

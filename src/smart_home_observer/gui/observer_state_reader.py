@@ -34,4 +34,8 @@ class ObserverStateReader(Protocol):
 
     async def disconnect(self) -> None: ...
 
-    async def update_broker(self, new_config: MqttConfig) -> None: ...
+    async def update_broker(
+        self,
+        new_config: MqttConfig,
+        model: ObserverModel | None = None,
+    ) -> None: ...

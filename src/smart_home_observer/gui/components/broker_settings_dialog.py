@@ -5,10 +5,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QWidget,
 )
+from uuid import UUID
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.gui.main_view_model import MainViewModel
@@ -29,7 +31,9 @@ class BrokerSettingsDialog(QDialog):
         self.setWindowTitle("Broker settings")
         self.setObjectName("brokerSettingsDialog")
 
-        mqtt_config = view_model.mqtt_config
+        active_profile = view_model.active_broker_profile
+        self._profile_id = active_profile.id
+        mqtt_config = active_profile.config
         layout = QFormLayout(self)
         self._host_edit = QLineEdit(mqtt_config.host)
         self._host_edit.setObjectName("brokerHostEdit")
@@ -45,6 +49,7 @@ class BrokerSettingsDialog(QDialog):
         self._use_tls_checkbox.setObjectName("brokerUseTlsCheckbox")
         self._use_tls_checkbox.setChecked(mqtt_config.use_tls)
 
+        layout.addRow("Profile", QLabel(active_profile.name))
         layout.addRow("Host", self._host_edit)
         layout.addRow("Port", self._port_edit)
         layout.addRow("Username", self._username_edit)
@@ -91,6 +96,11 @@ class BrokerSettingsDialog(QDialog):
             password=self._password_edit.text(),
             use_tls=self._use_tls_checkbox.isChecked(),
         )
+
+    @property
+    def profile_id(self) -> UUID:
+        """Return the profile selected for the pending broker update."""
+        return self._profile_id
 
     def set_applying(self, applying: bool) -> None:
         """Prevent edits while a broker update is reconnecting."""

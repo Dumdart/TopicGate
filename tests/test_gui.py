@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID, uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -13,10 +14,12 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDockWidget,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QToolBar,
@@ -26,7 +29,9 @@ from PySide6.QtWidgets import (
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
+from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.connection_controls import ConnectionControls
 from smart_home_observer.gui.components.broker_settings_dialog import (
@@ -70,27 +75,67 @@ class FakeGuiRepository:
             item for item in self.subscriptions if item != subscription
         )
 
-    async def update_broker(self, mqtt_config: MqttConfig) -> None:
+    async def update_broker(
+        self,
+        mqtt_config: MqttConfig,
+        model: ObserverModel | None = None,
+    ) -> None:
         self.broker_configurations.append(mqtt_config)
 
 
 class FakeBrokerRepository:
     def __init__(self, mqtt_config: MqttConfig) -> None:
-        self._mqtt_config = mqtt_config
+        default_profile = self._profile("Default", mqtt_config)
+        local_profile = self._profile("Local MQTT", MqttConfig("localhost", 1883, "", ""))
+        self._profiles = {
+            default_profile.id: default_profile,
+            local_profile.id: local_profile,
+        }
+        self._active_profile_id = default_profile.id
         self.updated_mqtt: list[MqttConfig] = []
 
     def get_mqtt(self) -> MqttConfig:
-        return self._mqtt_config
+        return self.get_profile().config
 
     def update_mqtt(self, mqtt_config: MqttConfig) -> None:
-        self._mqtt_config = mqtt_config
-        self.updated_mqtt.append(mqtt_config)
+        self.activate_profile(self._active_profile_id, mqtt_config)
+
+    def get_profile(self, profile_id: UUID | None = None) -> BrokerProfile:
+        return self._profiles[profile_id or self._active_profile_id]
+
+    def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
+        return tuple(self._profiles.values())
+
+    def activate_profile(
+        self,
+        profile_id: UUID,
+        mqtt_config: MqttConfig | None = None,
+    ) -> None:
+        profile = self.get_profile(profile_id)
+        if mqtt_config is not None:
+            profile.config = mqtt_config
+            self.updated_mqtt.append(mqtt_config)
+        self._active_profile_id = profile_id
+
+    @staticmethod
+    def _profile(name: str, mqtt_config: MqttConfig) -> BrokerProfile:
+        profile_id = uuid4()
+        workspace = ObserverWorkspace(
+            id=uuid4(),
+            profile_id=profile_id,
+            model=ObserverModel(root_stats=[]),
+        )
+        return BrokerProfile(profile_id, name, mqtt_config, workspace.id, workspace)
 
 
 def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
-    view_model = MainViewModel(repository, repository.state.topic)
+    view_model = MainViewModel(
+        repository,
+        repository.state.topic,
+        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+    )
     settings = QSettings(
         str(Path(".pytest_cache/gui-layout.ini").resolve()),
         QSettings.Format.IniFormat,
@@ -109,12 +154,19 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     )
     connection_status = window.findChild(QLabel, "connectionStatus")
     connection_controls = window.findChild(ConnectionControls)
-    toolbar = window.findChild(QToolBar, "observerToolbar")
+    broker_settings_button = window.findChild(
+        QToolButton,
+        "brokerSettingsButton",
+    )
     assert connection_controls is not None
     assert connection_status is not None
     assert connection_status.text().endswith("Connected")
-    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is connection_status
-    assert toolbar.findChild(QLabel, "connectionStatus") is None
+    assert broker_settings_button is not None
+    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner).findChild(
+        QLabel,
+        "connectionStatus",
+    ) is connection_status
+    assert window.findChild(QToolBar, "observerToolbar") is None
     assert not window.findChild(QAction, "connectAction").isEnabled()
     assert window.findChild(QAction, "reconnectAction").isEnabled()
     assert window.findChild(QAction, "disconnectAction").isEnabled()
@@ -144,7 +196,10 @@ def test_connection_controls_bundle_actions_and_request_signals() -> None:
 def test_connection_actions_follow_the_rendered_connection_status() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
-    view_model = MainViewModel(repository)
+    view_model = MainViewModel(
+        repository,
+        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+    )
     window = MainWindow(view_model)
 
     connect_action = window.findChild(QAction, "connectAction")
@@ -170,7 +225,11 @@ def test_connection_actions_follow_the_rendered_connection_status() -> None:
 def test_unmatched_dynamic_topic_leaves_settings_disabled() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
-    view_model = MainViewModel(repository, "unmatched/topic")
+    view_model = MainViewModel(
+        repository,
+        "unmatched/topic",
+        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+    )
     settings = QSettings(
         str(Path(".pytest_cache/gui-unmatched.ini").resolve()),
         QSettings.Format.IniFormat,
@@ -224,7 +283,11 @@ def test_subscription_trash_button_runs_the_removal_workflow() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
-        view_model = MainViewModel(repository, repository.state.topic)
+        view_model = MainViewModel(
+            repository,
+            repository.state.topic,
+            broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        )
         settings = QSettings(
             str(Path(".pytest_cache/gui-remove.ini").resolve()),
             QSettings.Format.IniFormat,
@@ -280,7 +343,6 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     assert password_edit.echoMode() == QLineEdit.EchoMode.Password
     assert not tls_checkbox.isChecked()
     assert apply_button.isEnabled()
-
     host_edit.setText(" ")
     assert not apply_button.isEnabled()
     host_edit.setText("broker.local")
@@ -293,6 +355,61 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
 
     dialog.close()
     application.processEvents()
+
+
+def test_observer_tree_renders_a_broker_profile_dropdown() -> None:
+    application = QApplication.instance() or QApplication([])
+    broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
+    pane = ObserverTreePane()
+    selected: list[UUID] = []
+    pane.broker_profile_selected.connect(selected.append)
+
+    pane.render_broker_profiles(
+        broker_repository.get_all_profiles(),
+        broker_repository.get_profile().id,
+    )
+
+    button = pane.findChild(QToolButton, "brokerProfileButton")
+    assert button is not None
+    assert button.text() == "Default"
+    actions = button.menu().actions()
+    assert [action.text() for action in actions] == ["Default", "Local MQTT"]
+    assert actions[0].isChecked()
+    assert not actions[0].isEnabled()
+
+    actions[1].trigger()
+
+    assert selected == [broker_repository.get_all_profiles()[1].id]
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
+    async def scenario() -> None:
+        application = QApplication.instance() or QApplication([])
+        repository = FakeGuiRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        window = MainWindow(view_model)
+        button = window.findChild(QToolButton, "brokerProfileButton")
+        assert button is not None
+        local_profile = broker_repository.get_all_profiles()[1]
+
+        with patch(
+            "smart_home_observer.gui.main_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as question:
+            button.menu().actions()[1].trigger()
+            await asyncio.sleep(0)
+
+        assert repository.broker_configurations == [local_profile.config]
+        assert broker_repository.get_profile().id == local_profile.id
+        assert "Do you want to switch" in question.call_args.args[2]
+        assert "shutting down the current MQTT connection" in question.call_args.args[2]
+        window.close()
+        application.processEvents()
+
+    asyncio.run(scenario())
 
 
 def test_tls_defaults_port_only_until_the_user_changes_it() -> None:
@@ -351,7 +468,11 @@ def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> 
 
 def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
     class FailingGuiRepository(FakeGuiRepository):
-        async def update_broker(self, mqtt_config: MqttConfig) -> None:
+        async def update_broker(
+            self,
+            mqtt_config: MqttConfig,
+            model: ObserverModel | None = None,
+        ) -> None:
             raise ConnectionError("broker unavailable")
 
     async def scenario() -> None:

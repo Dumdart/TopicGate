@@ -1,11 +1,13 @@
 import asyncio
 import json
 from contextlib import suppress
+from uuid import UUID
 
 from PySide6.QtCore import QObject, Signal
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.core.models.observer_model import TopicState
+from smart_home_observer.core.models.broker_profile import BrokerProfile
+from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.broker_state_reader import BrokerStateReader
 from smart_home_observer.gui.observer_state_reader import ObserverStateReader
@@ -118,6 +120,18 @@ class MainViewModel(QObject):
         if self._broker_repository is None:
             raise RuntimeError("MainViewModel requires a broker repository.")
         return self._broker_repository.get_mqtt()
+
+    @property
+    def broker_profiles(self) -> tuple[BrokerProfile, ...]:
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        return self._broker_repository.get_all_profiles()
+
+    @property
+    def active_broker_profile(self) -> BrokerProfile:
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        return self._broker_repository.get_profile()
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
@@ -243,18 +257,37 @@ class MainViewModel(QObject):
 
     async def update_mqtt_config(self, mqtt_config: MqttConfig) -> None:
         """Apply broker settings before retaining them in application settings."""
+        await self.update_broker_profile(
+            self.active_broker_profile.id,
+            mqtt_config,
+        )
+
+    async def update_broker_profile(
+        self,
+        profile_id: UUID,
+        mqtt_config: MqttConfig,
+    ) -> None:
+        """Reconnect using a profile before making it the active profile."""
         if self._broker_repository is None:
             raise RuntimeError("MainViewModel requires a broker repository.")
+
+        profile = self._broker_repository.get_profile(profile_id)
+        profile_changed = profile.id != self.active_broker_profile.id
 
         self.log_message.emit(
             f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
         )
         try:
-            await self._repository.update_broker(mqtt_config)
+            await self._repository.update_broker(mqtt_config, profile.workspace.model)
         except Exception as error:
             self.log_message.emit(f"Broker update failed: {error}")
             raise
-        self._broker_repository.update_mqtt(mqtt_config)
+        self._broker_repository.activate_profile(profile_id, mqtt_config)
+        if profile_changed:
+            self._topic = ""
+            self.refresh()
+            self.topics_changed.emit()
+            self.subscriptions_changed.emit()
         self.configuration_changed.emit()
         self.log_message.emit(
             f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"

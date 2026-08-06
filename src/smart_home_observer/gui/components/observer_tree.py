@@ -1,15 +1,19 @@
+from uuid import UUID
+
 from PySide6.QtCore import QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
+    QMenu,
     QStyle,
     QToolButton,
     QTreeView,
     QWidget,
 )
 
+from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.workspace_pane import WorkspacePane
 
@@ -22,6 +26,7 @@ class ObserverTreePane(WorkspacePane):
     topic_selected = Signal(str)
     add_filter_requested = Signal()
     remove_filter_requested = Signal(object)
+    broker_profile_selected = Signal(object)
 
     def __init__(self) -> None:
         super().__init__("Observer Tree")
@@ -39,23 +44,15 @@ class ObserverTreePane(WorkspacePane):
         add_button.clicked.connect(self.add_filter_requested)
         controls.addWidget(add_button)
 
-        expand_button = QToolButton()
-        expand_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown)
+        self._broker_profile_button = QToolButton()
+        self._broker_profile_button.setObjectName("brokerProfileButton")
+        self._broker_profile_button.setMinimumWidth(126)
+        self._broker_profile_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
         )
-        expand_button.setToolTip("Expand all topics")
-        expand_button.setAccessibleName("Expand all topics")
-        expand_button.clicked.connect(self.expand_all)
-        controls.addWidget(expand_button)
-
-        collapse_button = QToolButton()
-        collapse_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
-        )
-        collapse_button.setToolTip("Collapse all topics")
-        collapse_button.setAccessibleName("Collapse all topics")
-        collapse_button.clicked.connect(self.collapse_all)
-        controls.addWidget(collapse_button)
+        self._broker_profile_menu = QMenu(self._broker_profile_button)
+        self._broker_profile_button.setMenu(self._broker_profile_menu)
+        controls.addWidget(self._broker_profile_button)
         self.content_layout.addLayout(controls)
 
         self._model = QStandardItemModel(self)
@@ -127,6 +124,36 @@ class ObserverTreePane(WorkspacePane):
 
     def collapse_all(self) -> None:
         self._tree.collapseAll()
+
+    def render_broker_profiles(
+        self,
+        profiles: tuple[BrokerProfile, ...],
+        active_profile_id: UUID,
+    ) -> None:
+        """Render a quick-switch menu for the available broker profiles."""
+        self._broker_profile_menu.clear()
+        active_profile = next(
+            profile for profile in profiles if profile.id == active_profile_id
+        )
+        self._broker_profile_button.setText(active_profile.name)
+        self._broker_profile_button.setToolTip(
+            f"Switch broker profile (current: {active_profile.name})"
+        )
+        self._broker_profile_button.setAccessibleName("Switch broker profile")
+        for profile in profiles:
+            action = self._broker_profile_menu.addAction(profile.name)
+            action.setCheckable(True)
+            action.setChecked(profile.id == active_profile_id)
+            action.setEnabled(profile.id != active_profile_id)
+            action.triggered.connect(
+                lambda _checked=False, profile_id=profile.id: (
+                    self.broker_profile_selected.emit(profile_id)
+                )
+            )
+
+    def set_profile_switching(self, switching: bool) -> None:
+        """Prevent duplicate profile switches while the broker reconnects."""
+        self._broker_profile_button.setEnabled(not switching)
 
     def _add_topic(self, topic: str) -> None:
         parent = self._model.invisibleRootItem()

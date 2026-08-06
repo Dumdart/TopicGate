@@ -1,9 +1,12 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
+from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.gui.main_view_model import MainViewModel, mqtt_filter_matches
@@ -48,7 +51,11 @@ class FakeObserverRepository:
     async def disconnect(self) -> None:
         self.connection_operations.append("disconnect")
 
-    async def update_broker(self, new_config: MqttConfig) -> None:
+    async def update_broker(
+        self,
+        new_config: MqttConfig,
+        model: ObserverModel | None = None,
+    ) -> None:
         self.broker_configurations.append(new_config)
 
     async def remove_subscription(self, subscription: Subscription) -> None:
@@ -60,15 +67,43 @@ class FakeObserverRepository:
 
 class FakeBrokerRepository:
     def __init__(self, mqtt: MqttConfig) -> None:
-        self._mqtt = mqtt
+        default_profile = self._profile("Default", mqtt)
+        local_profile = self._profile("Local MQTT", MqttConfig("localhost", 1883, "", ""))
+        self._profiles = {
+            default_profile.id: default_profile,
+            local_profile.id: local_profile,
+        }
+        self._active_profile_id = default_profile.id
         self.updated_mqtt: list[MqttConfig] = []
 
     def get_mqtt(self) -> MqttConfig:
-        return self._mqtt
+        return self.get_profile().config
 
     def update_mqtt(self, mqtt: MqttConfig) -> None:
-        self._mqtt = mqtt
-        self.updated_mqtt.append(mqtt)
+        self.activate_profile(self._active_profile_id, mqtt)
+
+    def get_profile(self, profile_id: UUID | None = None) -> BrokerProfile:
+        return self._profiles[profile_id or self._active_profile_id]
+
+    def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
+        return tuple(self._profiles.values())
+
+    def activate_profile(self, profile_id: UUID, mqtt: MqttConfig | None = None) -> None:
+        profile = self.get_profile(profile_id)
+        if mqtt is not None:
+            profile.config = mqtt
+            self.updated_mqtt.append(mqtt)
+        self._active_profile_id = profile_id
+
+    @staticmethod
+    def _profile(name: str, mqtt: MqttConfig) -> BrokerProfile:
+        profile_id = uuid4()
+        workspace = ObserverWorkspace(
+            id=uuid4(),
+            profile_id=profile_id,
+            model=ObserverModel(root_stats=[]),
+        )
+        return BrokerProfile(profile_id, name, mqtt, workspace.id, workspace)
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -191,9 +226,29 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
     asyncio.run(scenario())
 
 
+def test_switching_broker_profile_activates_its_workspace_after_connecting() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        local_profile = broker_repository.get_all_profiles()[1]
+
+        await view_model.update_broker_profile(local_profile.id, local_profile.config)
+
+        assert repository.broker_configurations == [local_profile.config]
+        assert view_model.active_broker_profile.id == local_profile.id
+        assert view_model.mqtt_config == local_profile.config
+
+    asyncio.run(scenario())
+
+
 def test_failed_mqtt_configuration_is_not_stored() -> None:
     class FailingObserverRepository(FakeObserverRepository):
-        async def update_broker(self, new_config: MqttConfig) -> None:
+        async def update_broker(
+            self,
+            new_config: MqttConfig,
+            model: ObserverModel | None = None,
+        ) -> None:
             raise ConnectionError("broker unavailable")
 
     async def scenario() -> None:

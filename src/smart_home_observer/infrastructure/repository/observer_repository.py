@@ -95,11 +95,16 @@ class ObserverRepository(MqttRepository[ObserverModel]):
             self._is_stopping = False
             self._set_connection_status(ConnectionStatus.DISCONNECTED)
 
-    async def update_broker(self, new_config: MqttConfig) -> None:
+    async def update_broker(
+        self,
+        new_config: MqttConfig,
+        model: ObserverModel | None = None,
+    ) -> None:
         """Replace the MQTT connection with one configured for a new broker."""
         async with self._lifecycle_lock:
             previous_gate = self._mqtt_gate
             previous_manager = self._subscription_manager
+            previous_model = self._state
             was_running = self._is_running
             subscriptions = list(self.subscriptions)
 
@@ -112,6 +117,8 @@ class ObserverRepository(MqttRepository[ObserverModel]):
             self._subscription_manager = SubscriptionManager(
                 self._mqtt_gate, self.handle_message
             )
+            if model is not None:
+                self._state = model
 
             try:
                 await self._start()
@@ -120,6 +127,7 @@ class ObserverRepository(MqttRepository[ObserverModel]):
                 # the previous, known configuration rather than the failed one.
                 self._mqtt_gate = previous_gate
                 self._subscription_manager = previous_manager
+                self._state = previous_model
                 if was_running:
                     try:
                         await self._start()
