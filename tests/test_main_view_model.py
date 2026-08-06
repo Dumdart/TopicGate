@@ -278,6 +278,7 @@ def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
             ]
         )
         default_profile.workspace.subscriptions = (Subscription("home/status"),)
+        repository.subscriptions = default_profile.workspace.subscriptions
         local_profile.workspace.model = ObserverModel(
             root_stats=[
                 TopicNode(
@@ -421,6 +422,42 @@ def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> 
             MqttMessage(subscription.topic_filter, b"open", 1, False)
         )
         view_model = MainViewModel(repository, subscription.topic_filter)
+
+        await view_model.remove_subscription(subscription)
+
+        assert view_model.topic == ""
+        assert view_model.topic_paths == []
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        subscription = Subscription("SmartHome/kitchen/status")
+        repository.subscriptions = (subscription,)
+        broker_repository = FakeBrokerRepository(
+            MqttConfig("default", 1883, "", "")
+        )
+        profile = broker_repository.get_profile()
+        profile.workspace.model = ObserverModel(
+            root_stats=[
+                TopicNode(
+                    segment="SmartHome",
+                    children={
+                        "kitchen": TopicNode(
+                            segment="kitchen",
+                            children={"status": TopicNode(segment="status")},
+                        )
+                    },
+                )
+            ]
+        )
+        view_model = MainViewModel(
+            repository,
+            subscription.topic_filter,
+            broker_repository=broker_repository,
+        )
 
         await view_model.remove_subscription(subscription)
 

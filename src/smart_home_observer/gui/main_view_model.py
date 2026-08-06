@@ -147,11 +147,12 @@ class MainViewModel(QObject):
             if self._broker_repository is not None
             else self._repository.get()
         )
-        paths = set(ObserverModelService.get_all_topics(model))
-        paths.update(subscription.topic_filter for subscription in subscriptions)
+        paths = {subscription.topic_filter for subscription in subscriptions}
+        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics.update(model.topic_states)
         paths.update(
             topic
-            for topic in model.topic_states
+            for topic in observed_topics
             if any(
                 mqtt_filter_matches(subscription.topic_filter, topic)
                 for subscription in subscriptions
