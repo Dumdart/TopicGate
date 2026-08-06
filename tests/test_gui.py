@@ -74,7 +74,7 @@ class FakeGuiRepository:
         self.broker_configurations.append(mqtt_config)
 
 
-class FakeConfigRepository:
+class FakeBrokerRepository:
     def __init__(self, mqtt_config: MqttConfig) -> None:
         self._mqtt_config = mqtt_config
         self.updated_mqtt: list[MqttConfig] = []
@@ -261,7 +261,7 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     mqtt_config = MqttConfig("broker.local", 1883, "", "", False)
     view_model = MainViewModel(
         repository,
-        config_repository=FakeConfigRepository(mqtt_config),
+        broker_repository=FakeBrokerRepository(mqtt_config),
     )
     dialog = BrokerSettingsDialog(view_model)
 
@@ -300,7 +300,7 @@ def test_tls_defaults_port_only_until_the_user_changes_it() -> None:
     repository = FakeGuiRepository()
     view_model = MainViewModel(
         repository,
-        config_repository=FakeConfigRepository(MqttConfig("broker", 1883, "", "")),
+        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
     )
     dialog = BrokerSettingsDialog(view_model)
     port_edit = dialog.findChild(QLineEdit, "brokerPortEdit")
@@ -325,8 +325,8 @@ def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> 
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
-        config_repository = FakeConfigRepository(MqttConfig("old", 1883, "", ""))
-        view_model = MainViewModel(repository, config_repository=config_repository)
+        broker_repository = FakeBrokerRepository(MqttConfig("old", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
         window = MainWindow(view_model)
         window.findChild(QAction, "brokerSettingsAction").trigger()
         dialog = window.findChild(BrokerSettingsDialog, "brokerSettingsDialog")
@@ -340,7 +340,7 @@ def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> 
 
         expected = MqttConfig("new-broker", 8883, "", "", True)
         assert repository.broker_configurations == [expected]
-        assert config_repository.updated_mqtt == [expected]
+        assert broker_repository.updated_mqtt == [expected]
         assert dialog.result() == QDialog.DialogCode.Accepted
         assert not dialog.isVisible()
         window.close()
@@ -356,10 +356,10 @@ def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
 
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
-        config_repository = FakeConfigRepository(MqttConfig("old", 1883, "", ""))
+        broker_repository = FakeBrokerRepository(MqttConfig("old", 1883, "", ""))
         view_model = MainViewModel(
             FailingGuiRepository(),
-            config_repository=config_repository,
+            broker_repository=broker_repository,
         )
         window = MainWindow(view_model)
         window.findChild(QAction, "brokerSettingsAction").trigger()
@@ -374,7 +374,7 @@ def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
 
         assert dialog.isVisible()
         assert dialog.result() == QDialog.DialogCode.Rejected
-        assert config_repository.updated_mqtt == []
+        assert broker_repository.updated_mqtt == []
         warning.assert_called_once_with(
             window,
             "Broker update failed",

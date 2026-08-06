@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject, Signal
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.observer_model import TopicState
 from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.gui.config_state_reader import ConfigStateReader
+from smart_home_observer.gui.broker_state_reader import BrokerStateReader
 from smart_home_observer.gui.observer_state_reader import ObserverStateReader
 
 
@@ -47,11 +47,11 @@ class MainViewModel(QObject):
         repository: ObserverStateReader,
         topic: str = "",
         *,
-        config_repository: ConfigStateReader | None = None,
+        broker_repository: BrokerStateReader | None = None,
     ) -> None:
         super().__init__()
         self._repository = repository
-        self._config_repository = config_repository
+        self._broker_repository = broker_repository
         self._topic = topic
         self._state: TopicState | None = None
         self._message_task: asyncio.Task[None] | None = None
@@ -115,9 +115,9 @@ class MainViewModel(QObject):
 
     @property
     def mqtt_config(self) -> MqttConfig:
-        if self._config_repository is None:
-            raise RuntimeError("MainViewModel requires a configuration repository.")
-        return self._config_repository.get_mqtt()
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        return self._broker_repository.get_mqtt()
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
@@ -243,8 +243,8 @@ class MainViewModel(QObject):
 
     async def update_mqtt_config(self, mqtt_config: MqttConfig) -> None:
         """Apply broker settings before retaining them in application settings."""
-        if self._config_repository is None:
-            raise RuntimeError("MainViewModel requires a configuration repository.")
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
 
         self.log_message.emit(
             f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
@@ -254,7 +254,7 @@ class MainViewModel(QObject):
         except Exception as error:
             self.log_message.emit(f"Broker update failed: {error}")
             raise
-        self._config_repository.update_mqtt(mqtt_config)
+        self._broker_repository.update_mqtt(mqtt_config)
         self.configuration_changed.emit()
         self.log_message.emit(
             f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"

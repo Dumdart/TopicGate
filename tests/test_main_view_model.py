@@ -58,7 +58,7 @@ class FakeObserverRepository:
         )
 
 
-class FakeConfigRepository:
+class FakeBrokerRepository:
     def __init__(self, mqtt: MqttConfig) -> None:
         self._mqtt = mqtt
         self.updated_mqtt: list[MqttConfig] = []
@@ -166,10 +166,10 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         initial = MqttConfig("old", 1883, "", "")
-        config_repository = FakeConfigRepository(initial)
+        broker_repository = FakeBrokerRepository(initial)
         view_model = MainViewModel(
             repository,
-            config_repository=config_repository,
+            broker_repository=broker_repository,
         )
         replacement = MqttConfig("new", 8883, "observer", "password", True)
         logs: list[str] = []
@@ -181,7 +181,7 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
 
         assert view_model.mqtt_config == replacement
         assert repository.broker_configurations == [replacement]
-        assert config_repository.updated_mqtt == [replacement]
+        assert broker_repository.updated_mqtt == [replacement]
         assert changes == [True]
         assert logs == [
             "Connecting to MQTT broker: new:8883",
@@ -198,10 +198,10 @@ def test_failed_mqtt_configuration_is_not_stored() -> None:
 
     async def scenario() -> None:
         initial = MqttConfig("old", 1883, "", "")
-        config_repository = FakeConfigRepository(initial)
+        broker_repository = FakeBrokerRepository(initial)
         view_model = MainViewModel(
             FailingObserverRepository(),
-            config_repository=config_repository,
+            broker_repository=broker_repository,
         )
         logs: list[str] = []
         view_model.log_message.connect(logs.append)
@@ -214,7 +214,7 @@ def test_failed_mqtt_configuration_is_not_stored() -> None:
             raise AssertionError("Expected the broker update to fail")
 
         assert view_model.mqtt_config == initial
-        assert config_repository.updated_mqtt == []
+        assert broker_repository.updated_mqtt == []
         assert logs == [
             "Connecting to MQTT broker: new:8883",
             "Broker update failed: broker unavailable",

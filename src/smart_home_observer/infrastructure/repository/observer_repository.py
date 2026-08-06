@@ -22,8 +22,13 @@ from smart_home_observer.services.observer_model_service import ObserverModelSer
 class ObserverRepository(MqttRepository[ObserverModel]):
     """Observe messages matching the supplied absolute MQTT topic filters."""
 
-    def __init__(self, config: MqttConfig, topic_filters: list[str]) -> None:
-        self._state = ObserverModel(root_stats=[])
+    def __init__(
+        self,
+        config: MqttConfig,
+        topic_filters: list[str],
+        model: ObserverModel | None = None,
+    ) -> None:
+        self._state = model if model is not None else ObserverModel(root_stats=[])
         self._message_processor = ObserverModelMqttMessageProcessor()
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue()
         self.connection_status_queue: asyncio.Queue[ConnectionStatus] = asyncio.Queue()

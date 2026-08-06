@@ -2,24 +2,25 @@ from unittest.mock import MagicMock
 
 from smart_home_observer.core.config.app_config import AppConfig
 from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.infrastructure.repository.config_repository import (
-    ConfigRepository,
+from smart_home_observer.core.models.observer_model import ObserverModel
+from smart_home_observer.infrastructure.repository.broker_repository import (
+    BrokerRepository,
 )
 
 
-def test_config_repository_returns_initial_settings() -> None:
+def test_broker_repository_returns_initial_settings() -> None:
     config = AppConfig(
         mqtt=MqttConfig("broker", 1883, "observer", "password")
     )
 
-    repository = ConfigRepository(config)
+    repository = BrokerRepository(config)
 
     assert repository.get() is config
     assert repository.get_mqtt() == config.mqtt
 
 
-def test_config_repository_updates_complete_settings_and_saves() -> None:
-    repository = ConfigRepository(AppConfig(MqttConfig("old", 1883, "", "")))
+def test_broker_repository_updates_complete_settings_and_saves() -> None:
+    repository = BrokerRepository(AppConfig(MqttConfig("old", 1883, "", "")))
     repository.save = MagicMock()
     replacement = AppConfig(MqttConfig("new", 8883, "observer", "password", True))
 
@@ -29,9 +30,9 @@ def test_config_repository_updates_complete_settings_and_saves() -> None:
     repository.save.assert_called_once_with()
 
 
-def test_config_repository_updates_mqtt_settings_and_saves() -> None:
+def test_broker_repository_updates_mqtt_settings_and_saves() -> None:
     initial = AppConfig(MqttConfig("old", 1883, "", ""))
-    repository = ConfigRepository(initial)
+    repository = BrokerRepository(initial)
     repository.save = MagicMock()
     replacement = MqttConfig("new", 8883, "observer", "password", True)
 
@@ -39,4 +40,20 @@ def test_config_repository_updates_mqtt_settings_and_saves() -> None:
 
     assert repository.get_mqtt() == replacement
     assert repository.get().mqtt == replacement
+    repository.save.assert_called_once_with()
+
+
+def test_broker_repository_links_observer_model_to_active_profile() -> None:
+    repository = BrokerRepository(AppConfig(MqttConfig("broker", 1883, "", "")))
+    replacement = ObserverModel(root_stats=[])
+    repository.save = MagicMock()
+
+    repository.update_observer_model(replacement)
+
+    profile = repository.get_profile()
+    workspace = repository.get_observer_workspace()
+    assert repository.get_observer_model() is replacement
+    assert workspace.model is replacement
+    assert workspace.profile_id == profile.id
+    assert profile.workspace_id == workspace.id
     repository.save.assert_called_once_with()

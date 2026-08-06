@@ -7,8 +7,6 @@ from qasync import QEventLoop
 
 from smart_home_observer.app.app_dependencies import AppDependencies
 from smart_home_observer.app.service_container import ServiceContainer
-from smart_home_observer.core.config.app_config import AppConfig
-from smart_home_observer.core.config.config_loader import ConfigLoader
 from smart_home_observer.gui.main_window import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
 
@@ -18,9 +16,9 @@ class App:
         self._dependencies = AppDependencies()
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
-            self._dependencies.observer_model_repository,
-            "",
-            config_repository=self._dependencies.config_repository,
+            repository=self._dependencies.observer_model_repository,
+            broker_repository=self._dependencies.broker_repository,
+            topic="",
         )
         self._window = MainWindow(self._view_model)
 

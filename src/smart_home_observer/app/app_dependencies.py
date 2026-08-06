@@ -1,6 +1,5 @@
 from smart_home_observer.app.service_item import ServiceItem
-from smart_home_observer.core.config.app_config import AppConfig
-from smart_home_observer.infrastructure.repository.config_repository import ConfigRepository
+from smart_home_observer.infrastructure.repository.broker_repository import BrokerRepository
 from smart_home_observer.infrastructure.repository.observer_repository import ObserverRepository
 from smart_home_observer.services.topic_service import TopicService
 
@@ -10,10 +9,13 @@ class AppDependencies:
 
     def __init__(self) -> None:
         # Load configuration
-        self.config_repository = ConfigRepository()
-        config = self.config_repository.get()
+        self.broker_repository = BrokerRepository()
+
+        profile = self.broker_repository.get_profile()
 
         self.observer_model_repository = ObserverRepository(
-            config.mqtt, TopicService.get_topic_filters()
+            profile.config,
+            TopicService.get_topic_filters(),
+            self.broker_repository.get_observer_model(),
         )
         self.service_items: tuple[ServiceItem, ...] = (self.observer_model_repository,)

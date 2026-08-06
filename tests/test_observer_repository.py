@@ -4,13 +4,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.connection_status import ConnectionStatus
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.observer_model import ObserverModel
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.repository.observer_repository import (
     ObserverRepository,
 )
 
 
-def build_repository() -> tuple[ObserverRepository, MagicMock]:
+def build_repository(
+    model: ObserverModel | None = None,
+) -> tuple[ObserverRepository, MagicMock]:
     manager = MagicMock()
     manager.activate = AsyncMock()
     manager.deactivate = AsyncMock()
@@ -28,6 +31,7 @@ def build_repository() -> tuple[ObserverRepository, MagicMock]:
         repository = ObserverRepository(
             MqttConfig(host="broker", port=1883, username="", password=""),
             ["SmartHome/#"],
+            model,
         )
 
     return repository, manager
@@ -48,6 +52,16 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
     assert repository.get_value(message.topic) == b"open"
     assert repository.get_state("SmartHome/Huehnerstall/door/missing") is None
     assert repository.get_value("SmartHome/missing") is None
+
+
+def test_repository_updates_the_broker_profile_observer_model() -> None:
+    profile_model = ObserverModel(root_stats=[])
+    repository, _ = build_repository(profile_model)
+    message = MqttMessage("SmartHome/door/status", b"open", qos=1, retain=False)
+
+    repository.handle_message(None, None, message)
+
+    assert profile_model.topic_states[message.topic].payload == b"open"
 
 
 def test_repository_updates_topic_state_before_publishing_message() -> None:
