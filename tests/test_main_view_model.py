@@ -97,6 +97,17 @@ class FakeBrokerRepository:
     def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
         return tuple(self._profiles.values())
 
+    def create_profile(self, name: str, mqtt: MqttConfig) -> BrokerProfile:
+        profile = self._profile(name.strip(), mqtt)
+        self._profiles[profile.id] = profile
+        return profile
+
+    def update_profile(self, profile: BrokerProfile) -> None:
+        self._profiles[profile.id] = profile
+
+    def delete_profile(self, profile_id: UUID) -> BrokerProfile:
+        return self._profiles.pop(profile_id)
+
     def activate_profile(self, profile_id: UUID, mqtt: MqttConfig | None = None) -> None:
         profile = self.get_profile(profile_id)
         if mqtt is not None:
@@ -289,6 +300,51 @@ def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
 
         assert view_model.topic_paths == ["bridge/connected"]
         assert repository.subscriptions == (Subscription("bridge/connected"),)
+
+    asyncio.run(scenario())
+
+
+def test_view_model_creates_and_renames_broker_profiles() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        changes: list[bool] = []
+        logs: list[str] = []
+        view_model.configuration_changed.connect(lambda: changes.append(True))
+        view_model.log_message.connect(logs.append)
+
+        created = view_model.create_broker_profile(
+            "Remote",
+            MqttConfig("remote", 1883, "", ""),
+        )
+        await view_model.update_broker_profile(
+            created.id,
+            MqttConfig("remote-new", 8883, "user", "secret", True),
+            "Remote TLS",
+        )
+
+        assert view_model.active_broker_profile.name == "Remote TLS"
+        assert view_model.active_broker_profile.config.host == "remote-new"
+        assert changes == [True, True]
+        assert logs[0] == "Created broker profile: Remote"
+
+    asyncio.run(scenario())
+
+
+def test_deleting_active_profile_switches_before_removing_it() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        deleted_profile = view_model.active_broker_profile
+        replacement = view_model.broker_profiles[1]
+
+        await view_model.delete_broker_profile(deleted_profile.id)
+
+        assert view_model.active_broker_profile.id == replacement.id
+        assert deleted_profile not in view_model.broker_profiles
+        assert repository.broker_configurations == [replacement.config]
 
     asyncio.run(scenario())
 

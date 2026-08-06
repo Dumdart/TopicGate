@@ -27,6 +27,9 @@ class ObserverTreePane(WorkspacePane):
     add_filter_requested = Signal()
     remove_filter_requested = Signal(object)
     broker_profile_selected = Signal(object)
+    add_broker_profile_requested = Signal()
+    edit_broker_profile_requested = Signal()
+    delete_broker_profile_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__("Observer Tree")
@@ -150,6 +153,19 @@ class ObserverTreePane(WorkspacePane):
                     self.broker_profile_selected.emit(profile_id)
                 )
             )
+        self._broker_profile_menu.addSeparator()
+        add_action = self._broker_profile_menu.addAction("Add profile...")
+        add_action.setObjectName("addBrokerProfileAction")
+        add_action.triggered.connect(self.add_broker_profile_requested.emit)
+        edit_action = self._broker_profile_menu.addAction("Edit current profile...")
+        edit_action.setObjectName("editBrokerProfileAction")
+        edit_action.triggered.connect(self.edit_broker_profile_requested.emit)
+        delete_action = self._broker_profile_menu.addAction(
+            "Delete current profile..."
+        )
+        delete_action.setObjectName("deleteBrokerProfileAction")
+        delete_action.setEnabled(len(profiles) > 1)
+        delete_action.triggered.connect(self.delete_broker_profile_requested.emit)
 
     def set_profile_switching(self, switching: bool) -> None:
         """Prevent duplicate profile switches while the broker reconnects."""

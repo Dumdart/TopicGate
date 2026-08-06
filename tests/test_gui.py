@@ -107,6 +107,21 @@ class FakeBrokerRepository:
     def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
         return tuple(self._profiles.values())
 
+    def create_profile(
+        self,
+        name: str,
+        mqtt_config: MqttConfig,
+    ) -> BrokerProfile:
+        profile = self._profile(name.strip(), mqtt_config)
+        self._profiles[profile.id] = profile
+        return profile
+
+    def update_profile(self, profile: BrokerProfile) -> None:
+        self._profiles[profile.id] = profile
+
+    def delete_profile(self, profile_id: UUID) -> BrokerProfile:
+        return self._profiles.pop(profile_id)
+
     def activate_profile(
         self,
         profile_id: UUID,
@@ -374,7 +389,14 @@ def test_observer_tree_renders_a_broker_profile_dropdown() -> None:
     assert button is not None
     assert button.text() == "Default"
     actions = button.menu().actions()
-    assert [action.text() for action in actions] == ["Default", "Local MQTT"]
+    assert [action.text() for action in actions] == [
+        "Default",
+        "Local MQTT",
+        "",
+        "Add profile...",
+        "Edit current profile...",
+        "Delete current profile...",
+    ]
     assert actions[0].isChecked()
     assert not actions[0].isEnabled()
 
@@ -383,6 +405,83 @@ def test_observer_tree_renders_a_broker_profile_dropdown() -> None:
     assert selected == [broker_repository.get_all_profiles()[1].id]
     pane.deleteLater()
     application.processEvents()
+
+
+def test_profile_menu_creates_a_new_broker_profile() -> None:
+    application = QApplication.instance() or QApplication([])
+    broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
+    view_model = MainViewModel(
+        FakeGuiRepository(),
+        broker_repository=broker_repository,
+    )
+    window = MainWindow(view_model)
+    button = window.findChild(QToolButton, "brokerProfileButton")
+    assert button is not None
+    add_action = next(
+        action
+        for action in button.menu().actions()
+        if action.objectName() == "addBrokerProfileAction"
+    )
+
+    add_action.trigger()
+    dialog = window.findChild(BrokerSettingsDialog, "createBrokerProfileDialog")
+    assert dialog is not None
+    name_edit = dialog.findChild(QLineEdit, "brokerProfileNameEdit")
+    host_edit = dialog.findChild(QLineEdit, "brokerHostEdit")
+    apply_button = dialog.findChild(QPushButton, "applyBrokerSettingsButton")
+    assert name_edit is not None
+    assert host_edit is not None
+    assert apply_button is not None
+    assert not apply_button.isEnabled()
+
+    name_edit.setText("Remote")
+    host_edit.setText("remote.local")
+    apply_button.click()
+
+    assert [profile.name for profile in view_model.broker_profiles] == [
+        "Default",
+        "Local MQTT",
+        "Remote",
+    ]
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    window.close()
+    application.processEvents()
+
+
+def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
+    async def scenario() -> None:
+        application = QApplication.instance() or QApplication([])
+        repository = FakeGuiRepository()
+        broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        window = MainWindow(view_model)
+        button = window.findChild(QToolButton, "brokerProfileButton")
+        assert button is not None
+        delete_action = next(
+            action
+            for action in button.menu().actions()
+            if action.objectName() == "deleteBrokerProfileAction"
+        )
+
+        with patch(
+            "smart_home_observer.gui.main_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            delete_action.trigger()
+            await asyncio.sleep(0)
+
+        assert [profile.name for profile in view_model.broker_profiles] == [
+            "Local MQTT"
+        ]
+        assert view_model.active_broker_profile.name == "Local MQTT"
+        assert not window.findChild(
+            QAction,
+            "deleteBrokerProfileAction",
+        ).isEnabled()
+        window.close()
+        application.processEvents()
+
+    asyncio.run(scenario())
 
 
 def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:

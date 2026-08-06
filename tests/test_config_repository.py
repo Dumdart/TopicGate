@@ -86,3 +86,47 @@ def test_broker_repository_provides_two_independent_profiles() -> None:
         subscription.topic_filter
         for subscription in local_profile.workspace.subscriptions
     ] == ["bridge"]
+
+
+def test_broker_repository_creates_updates_and_deletes_profiles() -> None:
+    repository = BrokerRepository(AppConfig(MqttConfig("broker", 1883, "", "")))
+    repository.save = MagicMock()
+
+    profile = repository.create_profile(
+        "  Remote  ",
+        MqttConfig("remote", 8883, "user", "secret", True),
+    )
+
+    assert profile.name == "Remote"
+    assert profile.workspace.profile_id == profile.id
+    assert profile.workspace.model == ObserverModel(root_stats=[])
+    assert profile.workspace.subscriptions == ()
+
+    profile.name = "Remote TLS"
+    profile.config = MqttConfig("remote-new", 8883, "user", "secret", True)
+    repository.update_profile(profile)
+
+    assert repository.get_profile(profile.id).name == "Remote TLS"
+    deleted = repository.delete_profile(profile.id)
+    assert deleted is profile
+    assert profile not in repository.get_all_profiles()
+    assert repository.save.call_count == 3
+
+
+def test_broker_repository_rejects_duplicate_names_and_active_deletion() -> None:
+    repository = BrokerRepository(AppConfig(MqttConfig("broker", 1883, "", "")))
+    active_profile = repository.get_profile()
+
+    try:
+        repository.create_profile(" default ", MqttConfig("other", 1883, "", ""))
+    except ValueError as error:
+        assert str(error) == "A broker profile with that name already exists."
+    else:
+        raise AssertionError("Expected a duplicate profile name to be rejected")
+
+    try:
+        repository.delete_profile(active_profile.id)
+    except ValueError as error:
+        assert str(error) == "The active broker profile cannot be deleted."
+    else:
+        raise AssertionError("Expected active profile deletion to be rejected")

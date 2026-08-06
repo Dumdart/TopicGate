@@ -68,6 +68,15 @@ class MainWindow(QMainWindow):
         self._observer_tree.broker_profile_selected.connect(
             self._confirm_broker_profile_switch
         )
+        self._observer_tree.add_broker_profile_requested.connect(
+            self._show_create_broker_profile_dialog
+        )
+        self._observer_tree.edit_broker_profile_requested.connect(
+            self._show_broker_settings_dialog
+        )
+        self._observer_tree.delete_broker_profile_requested.connect(
+            self._confirm_delete_broker_profile
+        )
         self._subscription_settings.apply_requested.connect(
             self._apply_subscription
         )
@@ -96,11 +105,26 @@ class MainWindow(QMainWindow):
         self._connection_controls.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
         )
-        self._broker_settings_action = QAction("Broker settings...", self)
+        self._broker_settings_action = QAction("Edit broker profile...", self)
         self._broker_settings_action.setObjectName("brokerSettingsAction")
-        self._broker_settings_action.setToolTip("Edit MQTT broker settings")
+        self._broker_settings_action.setToolTip("Edit the active broker profile")
         self._broker_settings_action.triggered.connect(
             self._show_broker_settings_dialog
+        )
+        self._add_broker_profile_action = QAction("Add broker profile...", self)
+        self._add_broker_profile_action.setObjectName("addBrokerProfileAction")
+        self._add_broker_profile_action.triggered.connect(
+            self._show_create_broker_profile_dialog
+        )
+        self._delete_broker_profile_action = QAction(
+            "Delete broker profile...",
+            self,
+        )
+        self._delete_broker_profile_action.setObjectName(
+            "deleteBrokerProfileAction"
+        )
+        self._delete_broker_profile_action.triggered.connect(
+            self._confirm_delete_broker_profile
         )
 
         self._add_filter_action = QAction("Add filter", self)
@@ -140,7 +164,9 @@ class MainWindow(QMainWindow):
         connection_menu = self.menuBar().addMenu("&Connection")
         connection_menu.addActions(self._connection_controls.actions)
         connection_menu.addSeparator()
+        connection_menu.addAction(self._add_broker_profile_action)
         connection_menu.addAction(self._broker_settings_action)
+        connection_menu.addAction(self._delete_broker_profile_action)
 
         self._view_menu: QMenu = self.menuBar().addMenu("&View")
         self._view_menu.addAction(self._expand_action)
@@ -218,6 +244,9 @@ class MainWindow(QMainWindow):
             self._view_model.broker_profiles,
             self._view_model.active_broker_profile.id,
         )
+        self._delete_broker_profile_action.setEnabled(
+            len(self._view_model.broker_profiles) > 1
+        )
 
     def _apply_subscription(
         self,
@@ -242,6 +271,27 @@ class MainWindow(QMainWindow):
             lambda: self._apply_broker_settings(dialog)
         )
         dialog.open()
+
+    def _show_create_broker_profile_dialog(self) -> None:
+        dialog = BrokerSettingsDialog(self._view_model, self, creating=True)
+        dialog.apply_requested.connect(
+            lambda: self._apply_create_broker_profile(dialog)
+        )
+        dialog.open()
+
+    def _apply_create_broker_profile(
+        self,
+        dialog: BrokerSettingsDialog,
+    ) -> None:
+        try:
+            self._view_model.create_broker_profile(
+                dialog.profile_name,
+                dialog.mqtt_config,
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Profile creation failed", str(error))
+            return
+        dialog.accept()
 
     def _confirm_broker_profile_switch(self, profile_id: UUID) -> None:
         current_profile = self._view_model.active_broker_profile
@@ -278,16 +328,43 @@ class MainWindow(QMainWindow):
         finally:
             self._observer_tree.set_profile_switching(False)
 
+    def _confirm_delete_broker_profile(self) -> None:
+        profile = self._view_model.active_broker_profile
+        if len(self._view_model.broker_profiles) == 1:
+            return
+        result = QMessageBox.question(
+            self,
+            "Delete broker profile?",
+            f"Delete '{profile.name}' and its observer workspace?\n\n"
+            "The application will connect to another broker profile first.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result == QMessageBox.StandardButton.Yes:
+            self._observer_tree.set_profile_switching(True)
+            self._run_async(self._delete_broker_profile(profile.id))
+
+    async def _delete_broker_profile(self, profile_id: UUID) -> None:
+        try:
+            await self._view_model.delete_broker_profile(profile_id)
+        finally:
+            self._observer_tree.set_profile_switching(False)
+
     def _apply_broker_settings(self, dialog: BrokerSettingsDialog) -> None:
         try:
+            profile_name = dialog.profile_name
             mqtt_config = dialog.mqtt_config
         except ValueError:
+            return
+        profile_id = dialog.profile_id
+        if profile_id is None:
             return
         dialog.set_applying(True)
         self._run_async(
             self._apply_broker_settings_async(
                 dialog,
-                dialog.profile_id,
+                profile_id,
+                profile_name,
                 mqtt_config,
             )
         )
@@ -296,10 +373,15 @@ class MainWindow(QMainWindow):
         self,
         dialog: BrokerSettingsDialog,
         profile_id: UUID,
+        profile_name: str,
         mqtt_config: MqttConfig,
     ) -> None:
         try:
-            await self._view_model.update_broker_profile(profile_id, mqtt_config)
+            await self._view_model.update_broker_profile(
+                profile_id,
+                mqtt_config,
+                profile_name,
+            )
         except Exception as error:
             dialog.set_applying(False)
             QMessageBox.warning(self, "Broker update failed", str(error))

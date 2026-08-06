@@ -58,12 +58,42 @@ class BrokerRepository:
         """Return every available broker profile in display order."""
         return tuple(self._profiles.values())
 
+    def create_profile(self, name: str, config: MqttConfig) -> BrokerProfile:
+        """Create a broker profile with an independent, empty workspace."""
+        normalized_name = self._validate_profile_name(name)
+        profile = self._create_profile(
+            normalized_name,
+            config,
+            ObserverModel(root_stats=[]),
+        )
+        self._profiles[profile.id] = profile
+        self.save()
+        return profile
+
     def update_profile(self, profile: BrokerProfile) -> None:
         """Replace a broker profile while retaining its linked workspace."""
+        if profile.id not in self._profiles:
+            raise KeyError(f"Unknown broker profile: {profile.id}")
+        profile.name = self._validate_profile_name(profile.name, profile.id)
+        if (
+            profile.workspace.profile_id != profile.id
+            or profile.workspace_id != profile.workspace.id
+        ):
+            raise ValueError("The workspace must belong to the broker profile.")
         self._profiles[profile.id] = profile
         if profile.id == self._active_profile_id:
             self._settings.mqtt = profile.config
         self.save()
+
+    def delete_profile(self, profile_id: UUID) -> BrokerProfile:
+        """Delete an inactive profile while retaining at least one profile."""
+        if profile_id == self._active_profile_id:
+            raise ValueError("The active broker profile cannot be deleted.")
+        if len(self._profiles) == 1:
+            raise ValueError("At least one broker profile is required.")
+        profile = self._profiles.pop(profile_id)
+        self.save()
+        return profile
 
     def activate_profile(self, profile_id: UUID, mqtt: MqttConfig | None = None) -> None:
         """Make a profile active after its MQTT connection has been updated."""
@@ -127,3 +157,19 @@ class BrokerRepository:
             workspace_id=workspace.id,
             workspace=workspace,
         )
+
+    def _validate_profile_name(
+        self,
+        name: str,
+        profile_id: UUID | None = None,
+    ) -> str:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("A broker profile name is required.")
+        if any(
+            profile.id != profile_id
+            and profile.name.casefold() == normalized_name.casefold()
+            for profile in self._profiles.values()
+        ):
+            raise ValueError("A broker profile with that name already exists.")
+        return normalized_name

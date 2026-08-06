@@ -274,6 +274,7 @@ class MainViewModel(QObject):
         self,
         profile_id: UUID,
         mqtt_config: MqttConfig,
+        profile_name: str | None = None,
     ) -> None:
         """Reconnect using a profile before making it the active profile."""
         if self._broker_repository is None:
@@ -281,6 +282,11 @@ class MainViewModel(QObject):
 
         profile = self._broker_repository.get_profile(profile_id)
         profile_changed = profile.id != self.active_broker_profile.id
+        normalized_name = (
+            self._validated_profile_name(profile_name, profile_id)
+            if profile_name is not None
+            else profile.name
+        )
 
         self.log_message.emit(
             f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
@@ -294,6 +300,9 @@ class MainViewModel(QObject):
         except Exception as error:
             self.log_message.emit(f"Broker update failed: {error}")
             raise
+        profile.name = normalized_name
+        profile.config = mqtt_config
+        self._broker_repository.update_profile(profile)
         self._broker_repository.activate_profile(profile_id, mqtt_config)
         if profile_changed:
             self._topic = ""
@@ -304,6 +313,34 @@ class MainViewModel(QObject):
         self.log_message.emit(
             f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
         )
+
+    def create_broker_profile(
+        self,
+        name: str,
+        mqtt_config: MqttConfig,
+    ) -> BrokerProfile:
+        """Create a selectable broker profile without changing connections."""
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        profile = self._broker_repository.create_profile(name, mqtt_config)
+        self.configuration_changed.emit()
+        self.log_message.emit(f"Created broker profile: {profile.name}")
+        return profile
+
+    async def delete_broker_profile(self, profile_id: UUID) -> None:
+        """Delete a profile, switching away first when it is active."""
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        profile = self._broker_repository.get_profile(profile_id)
+        profiles = self.broker_profiles
+        if len(profiles) == 1:
+            raise ValueError("At least one broker profile is required.")
+        if profile.id == self.active_broker_profile.id:
+            replacement = next(item for item in profiles if item.id != profile.id)
+            await self.update_broker_profile(replacement.id, replacement.config)
+        self._broker_repository.delete_profile(profile.id)
+        self.configuration_changed.emit()
+        self.log_message.emit(f"Deleted broker profile: {profile.name}")
 
     def _store_active_profile_subscriptions(self) -> None:
         """Persist the active broker's subscriptions with its workspace."""
@@ -319,6 +356,18 @@ class MainViewModel(QObject):
         )
         if update_workspace is not None:
             update_workspace(workspace)
+
+    def _validated_profile_name(self, name: str, profile_id: UUID) -> str:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("A broker profile name is required.")
+        if any(
+            profile.id != profile_id
+            and profile.name.casefold() == normalized_name.casefold()
+            for profile in self.broker_profiles
+        ):
+            raise ValueError("A broker profile with that name already exists.")
+        return normalized_name
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():

@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QWidget,
@@ -17,7 +16,7 @@ from smart_home_observer.gui.main_view_model import MainViewModel
 
 
 class BrokerSettingsDialog(QDialog):
-    """Edit global MQTT broker settings before reconnecting."""
+    """Create or edit a broker profile and its MQTT configuration."""
 
     apply_requested = Signal()
 
@@ -25,16 +24,32 @@ class BrokerSettingsDialog(QDialog):
         self,
         view_model: MainViewModel,
         parent: QWidget | None = None,
+        *,
+        creating: bool = False,
     ) -> None:
         super().__init__(parent)
+        self._view_model = view_model
         self._port_was_changed = False
-        self.setWindowTitle("Broker settings")
-        self.setObjectName("brokerSettingsDialog")
+        self.setWindowTitle(
+            "Add broker profile" if creating else "Edit broker profile"
+        )
+        self.setObjectName(
+            "createBrokerProfileDialog" if creating else "brokerSettingsDialog"
+        )
 
-        active_profile = view_model.active_broker_profile
-        self._profile_id = active_profile.id
-        mqtt_config = active_profile.config
+        active_profile = None if creating else view_model.active_broker_profile
+        self._profile_id = None if active_profile is None else active_profile.id
+        mqtt_config = (
+            MqttConfig("localhost", 1883, "", "")
+            if active_profile is None
+            else active_profile.config
+        )
         layout = QFormLayout(self)
+        self._name_edit = QLineEdit(
+            "" if active_profile is None else active_profile.name
+        )
+        self._name_edit.setObjectName("brokerProfileNameEdit")
+        self._name_edit.setPlaceholderText("Home broker")
         self._host_edit = QLineEdit(mqtt_config.host)
         self._host_edit.setObjectName("brokerHostEdit")
         self._host_edit.setPlaceholderText("mqtt.example.com")
@@ -49,7 +64,7 @@ class BrokerSettingsDialog(QDialog):
         self._use_tls_checkbox.setObjectName("brokerUseTlsCheckbox")
         self._use_tls_checkbox.setChecked(mqtt_config.use_tls)
 
-        layout.addRow("Profile", QLabel(active_profile.name))
+        layout.addRow("Profile", self._name_edit)
         layout.addRow("Host", self._host_edit)
         layout.addRow("Port", self._port_edit)
         layout.addRow("Username", self._username_edit)
@@ -59,7 +74,7 @@ class BrokerSettingsDialog(QDialog):
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self._buttons.setObjectName("brokerSettingsButtons")
         self._apply_button = self._buttons.addButton(
-            "Apply & reconnect",
+            "Add profile" if creating else "Apply & reconnect",
             QDialogButtonBox.ButtonRole.ApplyRole,
         )
         self._apply_button.setObjectName("applyBrokerSettingsButton")
@@ -68,6 +83,7 @@ class BrokerSettingsDialog(QDialog):
         )
         layout.addRow(self._buttons)
 
+        self._name_edit.textChanged.connect(self._update_apply_enabled)
         self._host_edit.textChanged.connect(self._update_apply_enabled)
         self._port_edit.textChanged.connect(self._update_apply_enabled)
         self._port_edit.textEdited.connect(self._mark_port_changed)
@@ -98,13 +114,28 @@ class BrokerSettingsDialog(QDialog):
         )
 
     @property
-    def profile_id(self) -> UUID:
+    def profile_id(self) -> UUID | None:
         """Return the profile selected for the pending broker update."""
         return self._profile_id
+
+    @property
+    def profile_name(self) -> str:
+        """Return the validated broker profile name entered by the user."""
+        name = self._name_edit.text().strip()
+        if not name:
+            raise ValueError("A broker profile name is required.")
+        if any(
+            profile.id != self._profile_id
+            and profile.name.casefold() == name.casefold()
+            for profile in self._view_model.broker_profiles
+        ):
+            raise ValueError("A broker profile with that name already exists.")
+        return name
 
     def set_applying(self, applying: bool) -> None:
         """Prevent edits while a broker update is reconnecting."""
         for control in (
+            self._name_edit,
             self._host_edit,
             self._port_edit,
             self._username_edit,
@@ -117,7 +148,7 @@ class BrokerSettingsDialog(QDialog):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self._host_edit.setFocus()
+        self._name_edit.setFocus()
 
     def _mark_port_changed(self, _port: str) -> None:
         self._port_was_changed = True
@@ -131,6 +162,7 @@ class BrokerSettingsDialog(QDialog):
 
     def _is_valid(self) -> bool:
         try:
+            self.profile_name
             self.mqtt_config
         except ValueError:
             return False
