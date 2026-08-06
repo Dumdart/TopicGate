@@ -14,6 +14,7 @@ class FakeObserverRepository:
         self._messages: asyncio.Queue[MqttMessage] = asyncio.Queue()
         self.subscriptions: tuple[Subscription, ...] = ()
         self.connection_operations: list[str] = []
+        self.removed_subscriptions: list[Subscription] = []
 
     def get(self) -> ObserverModel:
         return ObserverModel(root_stats=[], topic_states=dict(self._states))
@@ -44,6 +45,12 @@ class FakeObserverRepository:
 
     async def disconnect(self) -> None:
         self.connection_operations.append("disconnect")
+
+    async def remove_subscription(self, subscription: Subscription) -> None:
+        self.removed_subscriptions.append(subscription)
+        self.subscriptions = tuple(
+            item for item in self.subscriptions if item != subscription
+        )
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -98,6 +105,18 @@ def test_topic_paths_include_configured_filters_and_discovered_topics() -> None:
     ]
 
 
+def test_topic_paths_exclude_discovered_topics_without_an_active_filter() -> None:
+    repository = FakeObserverRepository()
+    repository.subscriptions = (Subscription("SmartHome/#"),)
+    repository.publish(MqttMessage("SmartHome/kitchen/status", b"open", 1, False))
+    repository.publish(MqttMessage("Other/device/status", b"open", 1, False))
+
+    assert MainViewModel(repository).topic_paths == [
+        "SmartHome/#",
+        "SmartHome/kitchen/status",
+    ]
+
+
 def test_mqtt_filter_matching_supports_wildcards_and_system_topic_rules() -> None:
     assert mqtt_filter_matches("home/+/temperature", "home/kitchen/temperature")
     assert mqtt_filter_matches("home/#", "home/kitchen/temperature")
@@ -120,6 +139,70 @@ def test_connection_commands_are_forwarded_to_the_repository() -> None:
             "connect",
             "reconnect",
             "disconnect",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_updates_topics_and_clears_stale_selection() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        subscription = Subscription("SmartHome/#")
+        repository.subscriptions = (subscription,)
+        view_model = MainViewModel(repository, subscription.topic_filter)
+        changed: list[str] = []
+        logs: list[str] = []
+        view_model.state_changed.connect(lambda: changed.append("state"))
+        view_model.topics_changed.connect(lambda: changed.append("topics"))
+        view_model.subscriptions_changed.connect(
+            lambda: changed.append("subscriptions")
+        )
+        view_model.log_message.connect(logs.append)
+
+        await view_model.remove_subscription(subscription)
+
+        assert repository.removed_subscriptions == [subscription]
+        assert repository.subscriptions == ()
+        assert view_model.topic == ""
+        assert changed == ["state", "topics", "subscriptions"]
+        assert logs == ["Removed subscription: SmartHome/#"]
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        subscription = Subscription("SmartHome/kitchen/status")
+        repository.subscriptions = (subscription,)
+        repository.publish(
+            MqttMessage(subscription.topic_filter, b"open", 1, False)
+        )
+        view_model = MainViewModel(repository, subscription.topic_filter)
+
+        await view_model.remove_subscription(subscription)
+
+        assert view_model.topic == ""
+        assert view_model.topic_paths == []
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_keeps_topics_covered_by_another_filter() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        removed = Subscription("SmartHome/kitchen/status")
+        remaining = Subscription("SmartHome/#")
+        repository.subscriptions = (removed, remaining)
+        repository.publish(MqttMessage(removed.topic_filter, b"open", 1, False))
+        view_model = MainViewModel(repository, removed.topic_filter)
+
+        await view_model.remove_subscription(removed)
+
+        assert view_model.topic == removed.topic_filter
+        assert view_model.topic_paths == [
+            remaining.topic_filter,
+            removed.topic_filter,
         ]
 
     asyncio.run(scenario())

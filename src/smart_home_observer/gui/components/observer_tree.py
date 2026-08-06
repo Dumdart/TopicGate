@@ -1,4 +1,4 @@
-from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtCore import QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -7,8 +7,10 @@ from PySide6.QtWidgets import (
     QStyle,
     QToolButton,
     QTreeView,
+    QWidget,
 )
 
+from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.workspace_pane import WorkspacePane
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -19,6 +21,7 @@ class ObserverTreePane(WorkspacePane):
 
     topic_selected = Signal(str)
     add_filter_requested = Signal()
+    remove_filter_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__("Observer Tree")
@@ -56,7 +59,7 @@ class ObserverTreePane(WorkspacePane):
         self.content_layout.addLayout(controls)
 
         self._model = QStandardItemModel(self)
-        self._model.setHorizontalHeaderLabels(["Topic"])
+        self._model.setHorizontalHeaderLabels(["Topic", ""])
         self._proxy = QSortFilterProxyModel(self)
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -72,13 +75,24 @@ class ObserverTreePane(WorkspacePane):
             0,
             QHeaderView.ResizeMode.Stretch,
         )
+        self._tree.header().setStretchLastSection(False)
+        self._tree.header().setSectionResizeMode(
+            1,
+            QHeaderView.ResizeMode.Fixed,
+        )
+        self._tree.header().resizeSection(1, 34)
         self._tree.selectionModel().currentChanged.connect(
             self._selection_changed
         )
         self._search_edit.textChanged.connect(self._proxy.setFilterFixedString)
         self.content_layout.addWidget(self._tree, 1)
 
-    def render(self, topic_paths: list[str], selected_topic: str) -> None:
+    def render(
+        self,
+        topic_paths: list[str],
+        selected_topic: str,
+        subscriptions: tuple[Subscription, ...] = (),
+    ) -> None:
         expanded_paths = {
             path
             for path, item in self._items.items()
@@ -89,6 +103,9 @@ class ObserverTreePane(WorkspacePane):
 
         for topic in topic_paths:
             self._add_topic(topic)
+
+        for subscription in subscriptions:
+            self._add_remove_button(subscription)
 
         if expanded_paths:
             self._restore_expanded_paths(expanded_paths)
@@ -122,9 +139,60 @@ class ObserverTreePane(WorkspacePane):
                 item = QStandardItem(segment or "/")
                 item.setEditable(False)
                 item.setData(path, TOPIC_ROLE)
-                parent.appendRow(item)
+                action_item = QStandardItem()
+                action_item.setEditable(False)
+                parent.appendRow([item, action_item])
                 self._items[path] = item
             parent = item
+
+    def _add_remove_button(self, subscription: Subscription) -> None:
+        item = self._items.get(subscription.topic_filter)
+        if item is None:
+            return
+
+        action_widget = QWidget()
+        action_layout = QHBoxLayout(action_widget)
+        action_layout.setContentsMargins(5, 0, 5, 0)
+        action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        button = QToolButton(action_widget)
+        button.setObjectName("removeSubscriptionButton")
+        button.setFixedSize(24, 18)
+        button.setIconSize(QSize(12, 12))
+        button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon)
+        )
+        button.setStyleSheet(
+            "QToolButton {"
+            " background-color: #7f1d1d;"
+            " border: 1px solid #b91c1c;"
+            " border-radius: 4px;"
+            " padding: 0;"
+            "}"
+            "QToolButton:hover {"
+            " background-color: #b91c1c;"
+            " border-color: #ef4444;"
+            "}"
+            "QToolButton:pressed {"
+            " background-color: #450a0a;"
+            " border-color: #991b1b;"
+            "}"
+        )
+        button.setToolTip(f"Remove subscription {subscription.topic_filter}")
+        button.setAccessibleName(
+            f"Remove subscription {subscription.topic_filter}"
+        )
+        button.clicked.connect(
+            lambda _checked=False, subscription=subscription: (
+                self.remove_filter_requested.emit(subscription)
+            )
+        )
+        action_layout.addWidget(button)
+        action_index = item.index().siblingAtColumn(1)
+        self._tree.setIndexWidget(
+            self._proxy.mapFromSource(action_index),
+            action_widget,
+        )
 
     def _restore_expanded_paths(self, expanded_paths: set[str]) -> None:
         for path in expanded_paths:

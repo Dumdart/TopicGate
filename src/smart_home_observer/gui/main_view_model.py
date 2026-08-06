@@ -110,10 +110,18 @@ class MainViewModel(QObject):
 
     @property
     def topic_paths(self) -> list[str]:
-        paths = {subscription.topic_filter for subscription in self.subscriptions}
+        subscriptions = self.subscriptions
+        paths = {subscription.topic_filter for subscription in subscriptions}
         get_snapshot = getattr(self._repository, "get", None)
         if get_snapshot is not None:
-            paths.update(get_snapshot().topic_states)
+            paths.update(
+                topic
+                for topic in get_snapshot().topic_states
+                if any(
+                    mqtt_filter_matches(subscription.topic_filter, topic)
+                    for subscription in subscriptions
+                )
+            )
         return sorted(paths, key=str.casefold)
 
     @property
@@ -182,11 +190,12 @@ class MainViewModel(QObject):
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 
-    async def remove_suscrioption(
-        self, subscription: Subscription
-    ) -> None:
-        # await self._repository.remove_subscription(subscription)
+    async def remove_subscription(self, subscription: Subscription) -> None:
+        await self._repository.remove_subscription(subscription)
         self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
+        if self._topic not in self.topic_paths:
+            self._topic = ""
+            self.refresh()
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 

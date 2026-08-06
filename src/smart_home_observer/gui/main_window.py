@@ -56,6 +56,9 @@ class MainWindow(QMainWindow):
         self._observer_tree.add_filter_requested.connect(
             self._show_add_filter_dialog
         )
+        self._observer_tree.remove_filter_requested.connect(
+            self._remove_subscription
+        )
         self._subscription_settings.apply_requested.connect(
             self._apply_subscription
         )
@@ -174,6 +177,7 @@ class MainWindow(QMainWindow):
         self._observer_tree.render(
             self._view_model.topic_paths,
             self._view_model.topic,
+            self._view_model.subscriptions,
         )
 
     def _render_details(self) -> None:
@@ -204,6 +208,9 @@ class MainWindow(QMainWindow):
         subscription = AddSubscriptionDialog(self).subscription()
         if subscription is not None:
             self._run_async(self._view_model.add_subscription(subscription))
+
+    def _remove_subscription(self, subscription: Subscription) -> None:
+        self._run_async(self._view_model.remove_subscription(subscription))
 
     def _run_async(self, operation: Coroutine[Any, Any, None]) -> None:
         task = asyncio.create_task(operation)

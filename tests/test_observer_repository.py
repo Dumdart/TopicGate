@@ -272,3 +272,35 @@ def test_updating_a_subscription_replaces_the_active_broker_filter() -> None:
             await repository.stop()
 
     asyncio.run(scenario())
+
+
+def test_removing_a_subscription_updates_the_active_broker_filters() -> None:
+    async def scenario() -> None:
+        removed = Subscription("SmartHome/old/#")
+        remaining = Subscription("SmartHome/+/status", qos=2)
+        with patch(
+            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            repository = ObserverRepository(
+                MqttConfig(host="broker", port=1883, username="", password=""),
+                [removed, remaining],
+            )
+            await repository.start()
+            fake_client = repository._mqtt_gate.client.client
+
+            await repository.remove_subscription(removed)
+
+            assert repository.subscriptions == (remaining,)
+            assert [
+                event[1] for event in fake_client.events if event[0] == "unsubscribe"
+            ] == [[removed.topic_filter, remaining.topic_filter]]
+            assert [
+                topic
+                for topic, _ in [
+                    event for event in fake_client.events if event[0] == "subscribe"
+                ][-1][1]
+            ] == [remaining.topic_filter]
+            await repository.stop()
+
+    asyncio.run(scenario())

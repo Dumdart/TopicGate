@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QEvent, QSettings, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
@@ -14,12 +15,15 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QToolBar,
+    QToolButton,
+    QTreeView,
 )
 
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.connection_controls import ConnectionControls
+from smart_home_observer.gui.components.observer_tree import ObserverTreePane
 from smart_home_observer.gui.gui import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
 
@@ -29,6 +33,8 @@ class FakeGuiRepository:
     subscriptions = (Subscription("home/+/temperature"),)
 
     def __init__(self) -> None:
+        self.subscriptions = type(self).subscriptions
+        self.removed_subscriptions: list[Subscription] = []
         self.state = TopicState(
             name="temperature",
             topic="home/kitchen/temperature",
@@ -47,6 +53,12 @@ class FakeGuiRepository:
     async def messages(self) -> AsyncIterator[MqttMessage]:
         if False:
             yield MqttMessage("", b"", 0, False)
+
+    async def remove_subscription(self, subscription: Subscription) -> None:
+        self.removed_subscriptions.append(subscription)
+        self.subscriptions = tuple(
+            item for item in self.subscriptions if item != subscription
+        )
 
 
 def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
@@ -147,3 +159,71 @@ def test_unmatched_dynamic_topic_leaves_settings_disabled() -> None:
     assert not apply_button.isEnabled()
     window.close()
     application.processEvents()
+
+
+def test_observer_tree_adds_trash_buttons_only_to_subscription_filters() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = ObserverTreePane()
+    subscription = Subscription("home/+/temperature")
+    requested: list[Subscription] = []
+    pane.remove_filter_requested.connect(requested.append)
+
+    pane.render(
+        [subscription.topic_filter, "home/kitchen/temperature"],
+        "",
+        (subscription,),
+    )
+
+    buttons = pane.findChildren(QToolButton, "removeSubscriptionButton")
+    tree = pane.findChild(QTreeView, "observerTree")
+    assert len(buttons) == 1
+    assert tree is not None
+    assert tree.header().sectionSize(1) == 34
+    assert buttons[0].size().width() == 24
+    assert buttons[0].size().height() == 18
+    assert "background-color: #7f1d1d" in buttons[0].styleSheet()
+    assert "QToolButton:hover" in buttons[0].styleSheet()
+    assert buttons[0].toolTip() == (
+        "Remove subscription home/+/temperature"
+    )
+
+    buttons[0].click()
+
+    assert requested == [subscription]
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_subscription_trash_button_runs_the_removal_workflow() -> None:
+    async def scenario() -> None:
+        application = QApplication.instance() or QApplication([])
+        repository = FakeGuiRepository()
+        view_model = MainViewModel(repository, repository.state.topic)
+        settings = QSettings(
+            str(Path(".pytest_cache/gui-remove.ini").resolve()),
+            QSettings.Format.IniFormat,
+        )
+        settings.clear()
+        window = MainWindow(view_model, settings)
+        button = window.findChild(QToolButton, "removeSubscriptionButton")
+
+        assert button is not None
+        button.click()
+        await asyncio.sleep(0)
+
+        assert repository.removed_subscriptions == [
+            Subscription("home/+/temperature")
+        ]
+        assert repository.subscriptions == ()
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        application.processEvents()
+        assert window.findChild(
+            QToolButton, "removeSubscriptionButton"
+        ) is None
+        tree = window.findChild(QTreeView, "observerTree")
+        assert tree is not None
+        assert tree.model().rowCount() == 0
+        window.close()
+        application.processEvents()
+
+    asyncio.run(scenario())
