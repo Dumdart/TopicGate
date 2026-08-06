@@ -5,7 +5,11 @@ from uuid import UUID, uuid4
 
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.broker_profile import BrokerProfile
-from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
+from smart_home_observer.core.models.observer_model import (
+    ObserverModel,
+    TopicNode,
+    TopicState,
+)
 from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.core.config.mqtt_config import MqttConfig
@@ -55,8 +59,13 @@ class FakeObserverRepository:
         self,
         new_config: MqttConfig,
         model: ObserverModel | None = None,
+        subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         self.broker_configurations.append(new_config)
+        if model is not None:
+            self._states = model.topic_states
+        if subscriptions is not None:
+            self.subscriptions = subscriptions
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         self.removed_subscriptions.append(subscription)
@@ -242,12 +251,55 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
     asyncio.run(scenario())
 
 
+def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(
+            MqttConfig("default", 1883, "", "")
+        )
+        default_profile, local_profile = broker_repository.get_all_profiles()
+        default_profile.workspace.model = ObserverModel(
+            root_stats=[
+                TopicNode(
+                    "home",
+                    children={"status": TopicNode("status")},
+                )
+            ]
+        )
+        default_profile.workspace.subscriptions = (Subscription("home/status"),)
+        local_profile.workspace.model = ObserverModel(
+            root_stats=[
+                TopicNode(
+                    "bridge",
+                    children={"connected": TopicNode("connected")},
+                )
+            ]
+        )
+        local_profile.workspace.subscriptions = (
+            Subscription("bridge/connected"),
+        )
+        view_model = MainViewModel(repository, broker_repository=broker_repository)
+
+        assert view_model.topic_paths == ["home/status"]
+
+        await view_model.update_broker_profile(
+            local_profile.id,
+            local_profile.config,
+        )
+
+        assert view_model.topic_paths == ["bridge/connected"]
+        assert repository.subscriptions == (Subscription("bridge/connected"),)
+
+    asyncio.run(scenario())
+
+
 def test_failed_mqtt_configuration_is_not_stored() -> None:
     class FailingObserverRepository(FakeObserverRepository):
         async def update_broker(
             self,
             new_config: MqttConfig,
             model: ObserverModel | None = None,
+            subscriptions: tuple[Subscription, ...] | None = None,
         ) -> None:
             raise ConnectionError("broker unavailable")
 

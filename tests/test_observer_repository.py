@@ -228,6 +228,38 @@ def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> N
     asyncio.run(scenario())
 
 
+def test_update_broker_replaces_subscriptions_for_the_selected_profile() -> None:
+    async def scenario() -> None:
+        repository, previous_manager = build_repository()
+        previous_manager.subscriptions = (Subscription("SmartHome/default/#"),)
+        profile_subscriptions = (Subscription("bridge/#", qos=2),)
+        replacement_gate = MagicMock()
+        replacement_gate.is_started = False
+        replacement_gate.start = AsyncMock()
+        replacement_gate.stop = AsyncMock()
+        replacement_manager = MagicMock()
+        replacement_manager.activate = AsyncMock()
+
+        with (
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                return_value=replacement_gate,
+            ) as mqtt_gate,
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                return_value=replacement_manager,
+            ),
+        ):
+            await repository.update_broker(
+                MqttConfig("local", 1883, "", ""),
+                subscriptions=profile_subscriptions,
+            )
+
+        assert mqtt_gate.call_args.args[2] == list(profile_subscriptions)
+
+    asyncio.run(scenario())
+
+
 def test_update_broker_connects_when_previously_disconnected() -> None:
     async def scenario() -> None:
         repository, _ = build_repository()

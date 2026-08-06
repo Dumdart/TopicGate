@@ -25,7 +25,7 @@ class ObserverRepository(MqttRepository[ObserverModel]):
     def __init__(
         self,
         config: MqttConfig,
-        topic_filters: list[str],
+        topic_filters: list[str] | list[Subscription],
         model: ObserverModel | None = None,
     ) -> None:
         self._state = model if model is not None else ObserverModel(root_stats=[])
@@ -99,6 +99,7 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         self,
         new_config: MqttConfig,
         model: ObserverModel | None = None,
+        subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         """Replace the MQTT connection with one configured for a new broker."""
         async with self._lifecycle_lock:
@@ -106,13 +107,17 @@ class ObserverRepository(MqttRepository[ObserverModel]):
             previous_manager = self._subscription_manager
             previous_model = self._state
             was_running = self._is_running
-            subscriptions = list(self.subscriptions)
+            active_subscriptions = list(
+                self.subscriptions if subscriptions is None else subscriptions
+            )
 
             if was_running or self._mqtt_gate.is_started:
                 await self._stop()
 
             self._mqtt_gate = MqttGate(
-                new_config, ObserverRepositoryCallbacks(self), subscriptions
+                new_config,
+                ObserverRepositoryCallbacks(self),
+                active_subscriptions,
             )
             self._subscription_manager = SubscriptionManager(
                 self._mqtt_gate, self.handle_message

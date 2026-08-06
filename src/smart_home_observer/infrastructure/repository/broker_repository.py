@@ -6,6 +6,8 @@ from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.observer_model import ObserverModel
 from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
+from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.services.observer_model_service import ObserverModelService
 from smart_home_observer.services.topic_service import TopicService
 
 
@@ -14,10 +16,15 @@ class BrokerRepository:
 
     def __init__(self, settings: AppConfig | None = None) -> None:
         self._settings = settings or ConfigLoader().load_config()
-        default_profile = self._create_profile("Default", self._settings.mqtt)
+        default_profile = self._create_profile(
+            "Default",
+            self._settings.mqtt,
+            TopicService.get_topics(),
+        )
         local_profile = self._create_profile(
             "Local MQTT",
             MqttConfig("localhost", 1883, "", ""),
+            TopicService.get_topics2(),
         )
         self._profiles = {
             default_profile.id: default_profile,
@@ -96,12 +103,22 @@ class BrokerRepository:
         return self._profiles[self._active_profile_id]
 
     @staticmethod
-    def _create_profile(name: str, config: MqttConfig) -> BrokerProfile:
+    def _create_profile(
+        name: str,
+        config: MqttConfig,
+        observer_model: ObserverModel,
+    ) -> BrokerProfile:
         profile_id = uuid4()
         workspace = ObserverWorkspace(
             id=uuid4(),
             profile_id=profile_id,
-            model=TopicService.get_topics(),
+            model=observer_model,
+            subscriptions=tuple(
+                Subscription(topic_filter)
+                for topic_filter in ObserverModelService.get_all_topics(
+                    observer_model
+                )
+            ),
         )
         return BrokerProfile(
             id=profile_id,

@@ -38,4 +38,5 @@ class ObserverStateReader(Protocol):
         self,
         new_config: MqttConfig,
         model: ObserverModel | None = None,
+        subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None: ...

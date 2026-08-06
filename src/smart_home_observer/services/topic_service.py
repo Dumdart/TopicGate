@@ -10,6 +10,7 @@ class TopicService:
         """Return the catalogue's absolute MQTT filters."""
         return ObserverModelService.get_all_topics(TopicService.get_topics())
 
+
     @staticmethod
     def get_topics() -> ObserverModel:
         return ObserverModel(
@@ -35,6 +36,15 @@ class TopicService:
                             }
                         )
                     },
+                )
+            ]
+        )
+    @staticmethod
+    def get_topics2() -> ObserverModel:
+        return ObserverModel(
+            root_stats=[
+                TopicNode(
+                    segment="bridge",
                 )
             ]
         )

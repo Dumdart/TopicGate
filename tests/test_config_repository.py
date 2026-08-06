@@ -70,3 +70,19 @@ def test_broker_repository_provides_two_independent_profiles() -> None:
     ]
     assert local_profile.config == MqttConfig("localhost", 1883, "", "")
     assert default_profile.workspace.model is not local_profile.workspace.model
+    assert [
+        subscription.topic_filter
+        for subscription in default_profile.workspace.subscriptions
+    ] == [
+        "SmartHome/Huehnerstall/door/command",
+        "SmartHome/Huehnerstall/door/status",
+        "SmartHome/Huehnerstall/door/status_code",
+        "SmartHome/Huehnerstall/door/fault",
+        "SmartHome/Huehnerstall/door/connected",
+        "SmartHome/Huehnerstall/door/battery",
+        "SmartHome/Huehnerstall/door/light_level",
+    ]
+    assert [
+        subscription.topic_filter
+        for subscription in local_profile.workspace.subscriptions
+    ] == ["bridge"]

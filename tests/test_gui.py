@@ -79,6 +79,7 @@ class FakeGuiRepository:
         self,
         mqtt_config: MqttConfig,
         model: ObserverModel | None = None,
+        subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         self.broker_configurations.append(mqtt_config)
 
@@ -472,6 +473,7 @@ def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
             self,
             mqtt_config: MqttConfig,
             model: ObserverModel | None = None,
+            subscriptions: tuple[Subscription, ...] | None = None,
         ) -> None:
             raise ConnectionError("broker unavailable")
 

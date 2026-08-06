@@ -11,6 +11,7 @@ from smart_home_observer.core.models.observer_model import ObserverModel, TopicS
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.broker_state_reader import BrokerStateReader
 from smart_home_observer.gui.observer_state_reader import ObserverStateReader
+from smart_home_observer.services.observer_model_service import ObserverModelService
 
 
 def mqtt_filter_matches(topic_filter: str, topic: str) -> bool:
@@ -141,17 +142,21 @@ class MainViewModel(QObject):
     @property
     def topic_paths(self) -> list[str]:
         subscriptions = self.subscriptions
-        paths = {subscription.topic_filter for subscription in subscriptions}
-        get_snapshot = getattr(self._repository, "get", None)
-        if get_snapshot is not None:
-            paths.update(
-                topic
-                for topic in get_snapshot().topic_states
-                if any(
-                    mqtt_filter_matches(subscription.topic_filter, topic)
-                    for subscription in subscriptions
-                )
+        model = (
+            self.active_broker_profile.workspace.model
+            if self._broker_repository is not None
+            else self._repository.get()
+        )
+        paths = set(ObserverModelService.get_all_topics(model))
+        paths.update(subscription.topic_filter for subscription in subscriptions)
+        paths.update(
+            topic
+            for topic in model.topic_states
+            if any(
+                mqtt_filter_matches(subscription.topic_filter, topic)
+                for subscription in subscriptions
             )
+        )
         return sorted(paths, key=str.casefold)
 
     @property
@@ -216,12 +221,14 @@ class MainViewModel(QObject):
 
     async def add_subscription(self, subscription: Subscription) -> None:
         await self._repository.add_subscription(subscription)
+        self._store_active_profile_subscriptions()
         self.log_message.emit(f"Added subscription: {subscription.topic_filter}")
         self.topics_changed.emit()
         self.subscriptions_changed.emit()
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         await self._repository.remove_subscription(subscription)
+        self._store_active_profile_subscriptions()
         self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
         if self._topic not in self.topic_paths:
             self._topic = ""
@@ -233,6 +240,7 @@ class MainViewModel(QObject):
         self, original_filter: str, subscription: Subscription
     ) -> None:
         await self._repository.update_subscription(original_filter, subscription)
+        self._store_active_profile_subscriptions()
         self.log_message.emit(
             f"Updated subscription: {original_filter} -> {subscription.topic_filter}"
         )
@@ -278,7 +286,11 @@ class MainViewModel(QObject):
             f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
         )
         try:
-            await self._repository.update_broker(mqtt_config, profile.workspace.model)
+            await self._repository.update_broker(
+                mqtt_config,
+                profile.workspace.model,
+                profile.workspace.subscriptions,
+            )
         except Exception as error:
             self.log_message.emit(f"Broker update failed: {error}")
             raise
@@ -292,6 +304,21 @@ class MainViewModel(QObject):
         self.log_message.emit(
             f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
         )
+
+    def _store_active_profile_subscriptions(self) -> None:
+        """Persist the active broker's subscriptions with its workspace."""
+        if self._broker_repository is None:
+            return
+
+        workspace = self.active_broker_profile.workspace
+        workspace.subscriptions = self.subscriptions
+        update_workspace = getattr(
+            self._broker_repository,
+            "update_observer_workspace",
+            None,
+        )
+        if update_workspace is not None:
+            update_workspace(workspace)
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():

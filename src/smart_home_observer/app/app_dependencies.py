@@ -1,7 +1,6 @@
 from smart_home_observer.app.service_item import ServiceItem
 from smart_home_observer.infrastructure.repository.broker_repository import BrokerRepository
 from smart_home_observer.infrastructure.repository.observer_repository import ObserverRepository
-from smart_home_observer.services.topic_service import TopicService
 
 
 class AppDependencies:
@@ -15,7 +14,7 @@ class AppDependencies:
 
         self.observer_model_repository = ObserverRepository(
             profile.config,
-            TopicService.get_topic_filters(),
+            list(profile.workspace.subscriptions),
             self.broker_repository.get_observer_model(),
         )
         self.service_items: tuple[ServiceItem, ...] = (self.observer_model_repository,)
