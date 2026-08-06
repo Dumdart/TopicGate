@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.gui.main_view_model import MainViewModel, mqtt_filter_matches
 
 
@@ -15,6 +16,7 @@ class FakeObserverRepository:
         self.subscriptions: tuple[Subscription, ...] = ()
         self.connection_operations: list[str] = []
         self.removed_subscriptions: list[Subscription] = []
+        self.broker_configurations: list[MqttConfig] = []
 
     def get(self) -> ObserverModel:
         return ObserverModel(root_stats=[], topic_states=dict(self._states))
@@ -46,11 +48,27 @@ class FakeObserverRepository:
     async def disconnect(self) -> None:
         self.connection_operations.append("disconnect")
 
+    async def update_broker(self, new_config: MqttConfig) -> None:
+        self.broker_configurations.append(new_config)
+
     async def remove_subscription(self, subscription: Subscription) -> None:
         self.removed_subscriptions.append(subscription)
         self.subscriptions = tuple(
             item for item in self.subscriptions if item != subscription
         )
+
+
+class FakeConfigRepository:
+    def __init__(self, mqtt: MqttConfig) -> None:
+        self._mqtt = mqtt
+        self.updated_mqtt: list[MqttConfig] = []
+
+    def get_mqtt(self) -> MqttConfig:
+        return self._mqtt
+
+    def update_mqtt(self, mqtt: MqttConfig) -> None:
+        self._mqtt = mqtt
+        self.updated_mqtt.append(mqtt)
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -139,6 +157,67 @@ def test_connection_commands_are_forwarded_to_the_repository() -> None:
             "connect",
             "reconnect",
             "disconnect",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_mqtt_configuration_is_applied_then_stored() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        initial = MqttConfig("old", 1883, "", "")
+        config_repository = FakeConfigRepository(initial)
+        view_model = MainViewModel(
+            repository,
+            config_repository=config_repository,
+        )
+        replacement = MqttConfig("new", 8883, "observer", "password", True)
+        logs: list[str] = []
+        changes: list[bool] = []
+        view_model.log_message.connect(logs.append)
+        view_model.configuration_changed.connect(lambda: changes.append(True))
+
+        await view_model.update_mqtt_config(replacement)
+
+        assert view_model.mqtt_config == replacement
+        assert repository.broker_configurations == [replacement]
+        assert config_repository.updated_mqtt == [replacement]
+        assert changes == [True]
+        assert logs == [
+            "Connecting to MQTT broker: new:8883",
+            "Updated MQTT broker: new:8883",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_failed_mqtt_configuration_is_not_stored() -> None:
+    class FailingObserverRepository(FakeObserverRepository):
+        async def update_broker(self, new_config: MqttConfig) -> None:
+            raise ConnectionError("broker unavailable")
+
+    async def scenario() -> None:
+        initial = MqttConfig("old", 1883, "", "")
+        config_repository = FakeConfigRepository(initial)
+        view_model = MainViewModel(
+            FailingObserverRepository(),
+            config_repository=config_repository,
+        )
+        logs: list[str] = []
+        view_model.log_message.connect(logs.append)
+
+        try:
+            await view_model.update_mqtt_config(MqttConfig("new", 8883, "", ""))
+        except ConnectionError:
+            pass
+        else:
+            raise AssertionError("Expected the broker update to fail")
+
+        assert view_model.mqtt_config == initial
+        assert config_repository.updated_mqtt == []
+        assert logs == [
+            "Connecting to MQTT broker: new:8883",
+            "Broker update failed: broker unavailable",
         ]
 
     asyncio.run(scenario())

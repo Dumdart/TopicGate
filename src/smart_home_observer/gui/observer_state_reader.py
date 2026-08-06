@@ -4,6 +4,7 @@ from typing import Protocol
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.core.config.mqtt_config import MqttConfig
 
 
 class ObserverStateReader(Protocol):
@@ -32,3 +33,5 @@ class ObserverStateReader(Protocol):
     async def connect(self) -> None: ...
 
     async def disconnect(self) -> None: ...
+
+    async def update_broker(self, new_config: MqttConfig) -> None: ...

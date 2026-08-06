@@ -13,8 +13,12 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
+from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.add_subscription_dialog import AddSubscriptionDialog
+from smart_home_observer.gui.components.broker_settings_dialog import (
+    BrokerSettingsDialog,
+)
 from smart_home_observer.gui.components.connection_controls import ConnectionControls
 from smart_home_observer.gui.components.log_console import LogConsoleDock
 from smart_home_observer.gui.components.observer_tree import ObserverTreePane
@@ -87,6 +91,12 @@ class MainWindow(QMainWindow):
         self._connection_controls.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
         )
+        self._broker_settings_action = QAction("Broker settings…", self)
+        self._broker_settings_action.setObjectName("brokerSettingsAction")
+        self._broker_settings_action.setToolTip("Edit MQTT broker settings")
+        self._broker_settings_action.triggered.connect(
+            self._show_broker_settings_dialog
+        )
 
         self._add_filter_action = QAction("Add filter", self)
         self._add_filter_action.setToolTip("Add an MQTT subscription filter")
@@ -124,6 +134,8 @@ class MainWindow(QMainWindow):
 
         connection_menu = self.menuBar().addMenu("&Connection")
         connection_menu.addActions(self._connection_controls.actions)
+        connection_menu.addSeparator()
+        connection_menu.addAction(self._broker_settings_action)
 
         self._view_menu: QMenu = self.menuBar().addMenu("&View")
         self._view_menu.addAction(self._expand_action)
@@ -142,6 +154,8 @@ class MainWindow(QMainWindow):
         toolbar.setObjectName("observerToolbar")
         toolbar.setMovable(False)
         toolbar.addActions(self._connection_controls.actions)
+        toolbar.addSeparator()
+        toolbar.addAction(self._broker_settings_action)
         toolbar.addSeparator()
         toolbar.addAction(self._add_filter_action)
         toolbar.addSeparator()
@@ -208,6 +222,34 @@ class MainWindow(QMainWindow):
         subscription = AddSubscriptionDialog(self).subscription()
         if subscription is not None:
             self._run_async(self._view_model.add_subscription(subscription))
+
+    def _show_broker_settings_dialog(self) -> None:
+        dialog = BrokerSettingsDialog(self._view_model, self)
+        dialog.apply_requested.connect(
+            lambda: self._apply_broker_settings(dialog)
+        )
+        dialog.open()
+
+    def _apply_broker_settings(self, dialog: BrokerSettingsDialog) -> None:
+        try:
+            mqtt_config = dialog.mqtt_config
+        except ValueError:
+            return
+        dialog.set_applying(True)
+        self._run_async(self._apply_broker_settings_async(dialog, mqtt_config))
+
+    async def _apply_broker_settings_async(
+        self,
+        dialog: BrokerSettingsDialog,
+        mqtt_config: MqttConfig,
+    ) -> None:
+        try:
+            await self._view_model.update_mqtt_config(mqtt_config)
+        except Exception as error:
+            dialog.set_applying(False)
+            QMessageBox.warning(self, "Broker update failed", str(error))
+            return
+        dialog.accept()
 
     def _remove_subscription(self, subscription: Subscription) -> None:
         self._run_async(self._view_model.remove_subscription(subscription))

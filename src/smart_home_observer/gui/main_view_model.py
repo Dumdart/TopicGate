@@ -4,8 +4,10 @@ from contextlib import suppress
 
 from PySide6.QtCore import QObject, Signal
 
+from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.observer_model import TopicState
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.gui.config_state_reader import ConfigStateReader
 from smart_home_observer.gui.observer_state_reader import ObserverStateReader
 
 
@@ -37,11 +39,19 @@ class MainViewModel(QObject):
     topics_changed = Signal()
     subscriptions_changed = Signal()
     connection_changed = Signal()
+    configuration_changed = Signal()
     log_message = Signal(str)
 
-    def __init__(self, repository: ObserverStateReader, topic: str = "") -> None:
+    def __init__(
+        self,
+        repository: ObserverStateReader,
+        topic: str = "",
+        *,
+        config_repository: ConfigStateReader | None = None,
+    ) -> None:
         super().__init__()
         self._repository = repository
+        self._config_repository = config_repository
         self._topic = topic
         self._state: TopicState | None = None
         self._message_task: asyncio.Task[None] | None = None
@@ -102,6 +112,12 @@ class MainViewModel(QObject):
     @property
     def connection_status(self) -> str:
         return self._connection_status
+
+    @property
+    def mqtt_config(self) -> MqttConfig:
+        if self._config_repository is None:
+            raise RuntimeError("MainViewModel requires a configuration repository.")
+        return self._config_repository.get_mqtt()
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
@@ -224,6 +240,25 @@ class MainViewModel(QObject):
     async def disconnect_from_broker(self) -> None:
         self.log_message.emit("Disconnect requested")
         await self._repository.disconnect()
+
+    async def update_mqtt_config(self, mqtt_config: MqttConfig) -> None:
+        """Apply broker settings before retaining them in application settings."""
+        if self._config_repository is None:
+            raise RuntimeError("MainViewModel requires a configuration repository.")
+
+        self.log_message.emit(
+            f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
+        )
+        try:
+            await self._repository.update_broker(mqtt_config)
+        except Exception as error:
+            self.log_message.emit(f"Broker update failed: {error}")
+            raise
+        self._config_repository.update_mqtt(mqtt_config)
+        self.configuration_changed.emit()
+        self.log_message.emit(
+            f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
+        )
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():

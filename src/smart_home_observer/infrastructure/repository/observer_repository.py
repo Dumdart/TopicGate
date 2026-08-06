@@ -8,13 +8,15 @@ from smart_home_observer.core.models.connection_status import ConnectionStatus
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.mqtt.callbacks.observer_repository_callbacks import ObserverRepositoryCallbacks
-from smart_home_observer.processors.subscription_manager import SubscriptionManager
-from smart_home_observer.services.observer_model_service import ObserverModelService
+from smart_home_observer.infrastructure.mqtt.callbacks.observer_repository_callbacks import (
+    ObserverRepositoryCallbacks,
+)
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
 from smart_home_observer.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
+from smart_home_observer.processors.subscription_manager import SubscriptionManager
+from smart_home_observer.services.observer_model_service import ObserverModelService
 
 
 class ObserverRepository(MqttRepository[ObserverModel]):
@@ -28,6 +30,7 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         self.connection_status = ConnectionStatus.DISCONNECTED
         self._is_running = False
         self._is_stopping = False
+        self._lifecycle_lock = asyncio.Lock()
         self._mqtt_gate = MqttGate(
             config, ObserverRepositoryCallbacks(self), topic_filters
         )
@@ -36,6 +39,10 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         )
 
     async def start(self) -> None:
+        async with self._lifecycle_lock:
+            await self._start()
+
+    async def _start(self) -> None:
         if self._is_running:
             return
 
@@ -56,10 +63,14 @@ class ObserverRepository(MqttRepository[ObserverModel]):
                 self._is_stopping = False
                 self._set_connection_status(ConnectionStatus.DISCONNECTED)
             raise ConnectionError(
-                "ObserverRepository could not start the MQTT connection."
+                f"ObserverRepository could not start the MQTT connection: {ex}"
             ) from ex
 
     async def stop(self) -> None:
+        async with self._lifecycle_lock:
+            await self._stop()
+
+    async def _stop(self) -> None:
         if not self._is_running and not self._mqtt_gate.is_started:
             self._set_connection_status(ConnectionStatus.DISCONNECTED)
             return
@@ -79,6 +90,38 @@ class ObserverRepository(MqttRepository[ObserverModel]):
             self._is_stopping = False
             self._set_connection_status(ConnectionStatus.DISCONNECTED)
 
+    async def update_broker(self, new_config: MqttConfig) -> None:
+        """Replace the MQTT connection with one configured for a new broker."""
+        async with self._lifecycle_lock:
+            previous_gate = self._mqtt_gate
+            previous_manager = self._subscription_manager
+            was_running = self._is_running
+            subscriptions = list(self.subscriptions)
+
+            if was_running or self._mqtt_gate.is_started:
+                await self._stop()
+
+            self._mqtt_gate = MqttGate(
+                new_config, ObserverRepositoryCallbacks(self), subscriptions
+            )
+            self._subscription_manager = SubscriptionManager(
+                self._mqtt_gate, self.handle_message
+            )
+
+            try:
+                await self._start()
+            except Exception:
+                # Check that a failed broker change leaves the repository using
+                # the previous, known configuration rather than the failed one.
+                self._mqtt_gate = previous_gate
+                self._subscription_manager = previous_manager
+                if was_running:
+                    try:
+                        await self._start()
+                    except Exception:
+                        pass
+                raise
+
     def get(self) -> ObserverModel:
         return ObserverModelService.deep_copy(self._state)
 
@@ -89,9 +132,7 @@ class ObserverRepository(MqttRepository[ObserverModel]):
     def get_state(self, topic: str) -> TopicState | None:
         return self._state.topic_states.get(topic)
 
-    def handle_message(
-        self, _client: Any, _userdata: Any, msg: MqttMessage
-    ) -> None:
+    def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
         self._message_processor.process(self._state, msg)
         self.message_queue.put_nowait(msg)
 
@@ -100,22 +141,26 @@ class ObserverRepository(MqttRepository[ObserverModel]):
         return self._subscription_manager.subscriptions
 
     async def add_subscription(self, subscription: Subscription) -> None:
-        await self._subscription_manager.add(subscription)
+        async with self._lifecycle_lock:
+            await self._subscription_manager.add(subscription)
 
     async def remove_subscription(self, subscription: Subscription) -> None:
-        await self._subscription_manager.remove(subscription)
+        async with self._lifecycle_lock:
+            await self._subscription_manager.remove(subscription)
 
     async def update_subscription(
         self,
         original_filter: str,
         subscription: Subscription,
     ) -> None:
-        await self._subscription_manager.update(original_filter, subscription)
+        async with self._lifecycle_lock:
+            await self._subscription_manager.update(original_filter, subscription)
 
     async def reconnect(self) -> None:
         """Reconnect and restore all active subscriptions."""
-        await self.stop()
-        await self.start()
+        async with self._lifecycle_lock:
+            await self._stop()
+            await self._start()
 
     async def disconnect(self) -> None:
         """Disconnect from MQTT while preserving configured subscriptions."""

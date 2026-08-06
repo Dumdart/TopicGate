@@ -162,3 +162,123 @@ def test_startup_failure_stops_gate_and_leaves_repository_disconnected() -> None
         assert repository.connection_status == ConnectionStatus.DISCONNECTED
 
     asyncio.run(scenario())
+
+
+def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> None:
+    async def scenario() -> None:
+        repository, previous_manager = build_repository()
+        subscription = Subscription("SmartHome/door/#", qos=2)
+        previous_manager.subscriptions = (subscription,)
+        repository._is_running = True
+        previous_gate = repository._mqtt_gate
+        previous_gate.stop = AsyncMock()
+
+        replacement_gate = MagicMock()
+        replacement_gate.is_started = False
+        replacement_gate.start = AsyncMock()
+        replacement_gate.stop = AsyncMock()
+        replacement_manager = MagicMock()
+        replacement_manager.activate = AsyncMock()
+
+        new_config = MqttConfig(
+            host="new-broker",
+            port=8883,
+            username="observer",
+            password="secret",
+            use_tls=True,
+        )
+        with (
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                return_value=replacement_gate,
+            ) as mqtt_gate,
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                return_value=replacement_manager,
+            ) as subscription_manager,
+        ):
+            await repository.update_broker(new_config)
+
+        previous_manager.deactivate.assert_awaited_once()
+        previous_gate.stop.assert_awaited_once()
+        mqtt_gate.assert_called_once()
+        assert mqtt_gate.call_args.args[0] == new_config
+        assert mqtt_gate.call_args.args[2] == [subscription]
+        subscription_manager.assert_called_once_with(
+            replacement_gate,
+            repository.handle_message,
+        )
+        replacement_gate.start.assert_awaited_once()
+        replacement_manager.activate.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_update_broker_connects_when_previously_disconnected() -> None:
+    async def scenario() -> None:
+        repository, _ = build_repository()
+        replacement_gate = MagicMock()
+        replacement_gate.is_started = False
+        replacement_gate.start = AsyncMock()
+        replacement_gate.stop = AsyncMock()
+        replacement_manager = MagicMock()
+        replacement_manager.activate = AsyncMock()
+
+        with (
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                return_value=replacement_gate,
+            ),
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                return_value=replacement_manager,
+            ),
+        ):
+            await repository.update_broker(
+                MqttConfig("new-broker", 1883, "", "")
+            )
+
+        replacement_gate.start.assert_awaited_once()
+        replacement_manager.activate.assert_awaited_once()
+        assert repository.connection_status == ConnectionStatus.CONNECTED
+
+    asyncio.run(scenario())
+
+
+def test_failed_broker_update_restores_the_previous_connection() -> None:
+    async def scenario() -> None:
+        repository, previous_manager = build_repository()
+        repository._is_running = True
+        previous_gate = repository._mqtt_gate
+        previous_gate.start = AsyncMock()
+        previous_gate.stop = AsyncMock()
+        replacement_gate = MagicMock()
+        replacement_gate.is_started = False
+        replacement_gate.start = AsyncMock(side_effect=RuntimeError("unavailable"))
+        replacement_gate.stop = AsyncMock()
+        replacement_manager = MagicMock()
+        replacement_manager.activate = AsyncMock()
+
+        with (
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                return_value=replacement_gate,
+            ),
+            patch(
+                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                return_value=replacement_manager,
+            ),
+        ):
+            try:
+                await repository.update_broker(MqttConfig("new-broker", 1883, "", ""))
+            except ConnectionError:
+                pass
+            else:
+                raise AssertionError("Expected the broker update to fail")
+
+        assert repository._mqtt_gate is previous_gate
+        assert repository._subscription_manager is previous_manager
+        previous_gate.start.assert_awaited_once()
+        assert repository.connection_status == ConnectionStatus.CONNECTED
+
+    asyncio.run(scenario())

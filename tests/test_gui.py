@@ -3,15 +3,20 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QSettings, Qt
 from PySide6.QtGui import QAction
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDialog,
     QDockWidget,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSplitter,
     QToolBar,
@@ -19,10 +24,14 @@ from PySide6.QtWidgets import (
     QTreeView,
 )
 
+from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.gui.components.connection_controls import ConnectionControls
+from smart_home_observer.gui.components.broker_settings_dialog import (
+    BrokerSettingsDialog,
+)
 from smart_home_observer.gui.components.observer_tree import ObserverTreePane
 from smart_home_observer.gui.gui import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
@@ -35,6 +44,7 @@ class FakeGuiRepository:
     def __init__(self) -> None:
         self.subscriptions = type(self).subscriptions
         self.removed_subscriptions: list[Subscription] = []
+        self.broker_configurations: list[MqttConfig] = []
         self.state = TopicState(
             name="temperature",
             topic="home/kitchen/temperature",
@@ -59,6 +69,22 @@ class FakeGuiRepository:
         self.subscriptions = tuple(
             item for item in self.subscriptions if item != subscription
         )
+
+    async def update_broker(self, mqtt_config: MqttConfig) -> None:
+        self.broker_configurations.append(mqtt_config)
+
+
+class FakeConfigRepository:
+    def __init__(self, mqtt_config: MqttConfig) -> None:
+        self._mqtt_config = mqtt_config
+        self.updated_mqtt: list[MqttConfig] = []
+
+    def get_mqtt(self) -> MqttConfig:
+        return self._mqtt_config
+
+    def update_mqtt(self, mqtt_config: MqttConfig) -> None:
+        self._mqtt_config = mqtt_config
+        self.updated_mqtt.append(mqtt_config)
 
 
 def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
@@ -223,6 +249,137 @@ def test_subscription_trash_button_runs_the_removal_workflow() -> None:
         tree = window.findChild(QTreeView, "observerTree")
         assert tree is not None
         assert tree.model().rowCount() == 0
+        window.close()
+        application.processEvents()
+
+    asyncio.run(scenario())
+
+
+def test_broker_settings_dialog_loads_current_configuration_and_validates_input() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    mqtt_config = MqttConfig("broker.local", 1883, "", "", False)
+    view_model = MainViewModel(
+        repository,
+        config_repository=FakeConfigRepository(mqtt_config),
+    )
+    dialog = BrokerSettingsDialog(view_model)
+
+    host_edit = dialog.findChild(QLineEdit, "brokerHostEdit")
+    port_edit = dialog.findChild(QLineEdit, "brokerPortEdit")
+    password_edit = dialog.findChild(QLineEdit, "brokerPasswordEdit")
+    tls_checkbox = dialog.findChild(QCheckBox, "brokerUseTlsCheckbox")
+    apply_button = dialog.findChild(QPushButton, "applyBrokerSettingsButton")
+    assert host_edit is not None
+    assert port_edit is not None
+    assert password_edit is not None
+    assert tls_checkbox is not None
+    assert apply_button is not None
+    assert host_edit.text() == "broker.local"
+    assert port_edit.text() == "1883"
+    assert password_edit.echoMode() == QLineEdit.EchoMode.Password
+    assert not tls_checkbox.isChecked()
+    assert apply_button.isEnabled()
+
+    host_edit.setText(" ")
+    assert not apply_button.isEnabled()
+    host_edit.setText("broker.local")
+    port_edit.setText("not-a-port")
+    assert not apply_button.isEnabled()
+    port_edit.setText("65536")
+    assert not apply_button.isEnabled()
+    port_edit.setText("1883")
+    assert apply_button.isEnabled()
+
+    dialog.close()
+    application.processEvents()
+
+
+def test_tls_defaults_port_only_until_the_user_changes_it() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    view_model = MainViewModel(
+        repository,
+        config_repository=FakeConfigRepository(MqttConfig("broker", 1883, "", "")),
+    )
+    dialog = BrokerSettingsDialog(view_model)
+    port_edit = dialog.findChild(QLineEdit, "brokerPortEdit")
+    tls_checkbox = dialog.findChild(QCheckBox, "brokerUseTlsCheckbox")
+    assert port_edit is not None
+    assert tls_checkbox is not None
+
+    tls_checkbox.setChecked(True)
+    assert port_edit.text() == "8883"
+    port_edit.setFocus()
+    port_edit.selectAll()
+    QTest.keyClicks(port_edit, "1884")
+    tls_checkbox.setChecked(False)
+    tls_checkbox.setChecked(True)
+    assert port_edit.text() == "1884"
+
+    dialog.close()
+    application.processEvents()
+
+
+def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> None:
+    async def scenario() -> None:
+        application = QApplication.instance() or QApplication([])
+        repository = FakeGuiRepository()
+        config_repository = FakeConfigRepository(MqttConfig("old", 1883, "", ""))
+        view_model = MainViewModel(repository, config_repository=config_repository)
+        window = MainWindow(view_model)
+        window.findChild(QAction, "brokerSettingsAction").trigger()
+        dialog = window.findChild(BrokerSettingsDialog, "brokerSettingsDialog")
+        assert dialog is not None
+        dialog.findChild(QLineEdit, "brokerHostEdit").setText("new-broker")
+        dialog.findChild(QLineEdit, "brokerPortEdit").setText("8883")
+        dialog.findChild(QCheckBox, "brokerUseTlsCheckbox").setChecked(True)
+
+        dialog.findChild(QPushButton, "applyBrokerSettingsButton").click()
+        await asyncio.sleep(0)
+
+        expected = MqttConfig("new-broker", 8883, "", "", True)
+        assert repository.broker_configurations == [expected]
+        assert config_repository.updated_mqtt == [expected]
+        assert dialog.result() == QDialog.DialogCode.Accepted
+        assert not dialog.isVisible()
+        window.close()
+        application.processEvents()
+
+    asyncio.run(scenario())
+
+
+def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
+    class FailingGuiRepository(FakeGuiRepository):
+        async def update_broker(self, mqtt_config: MqttConfig) -> None:
+            raise ConnectionError("broker unavailable")
+
+    async def scenario() -> None:
+        application = QApplication.instance() or QApplication([])
+        config_repository = FakeConfigRepository(MqttConfig("old", 1883, "", ""))
+        view_model = MainViewModel(
+            FailingGuiRepository(),
+            config_repository=config_repository,
+        )
+        window = MainWindow(view_model)
+        window.findChild(QAction, "brokerSettingsAction").trigger()
+        dialog = window.findChild(BrokerSettingsDialog, "brokerSettingsDialog")
+        assert dialog is not None
+
+        with patch(
+            "smart_home_observer.gui.main_window.QMessageBox.warning"
+        ) as warning:
+            dialog.findChild(QPushButton, "applyBrokerSettingsButton").click()
+            await asyncio.sleep(0)
+
+        assert dialog.isVisible()
+        assert dialog.result() == QDialog.DialogCode.Rejected
+        assert config_repository.updated_mqtt == []
+        warning.assert_called_once_with(
+            window,
+            "Broker update failed",
+            "broker unavailable",
+        )
         window.close()
         application.processEvents()
 

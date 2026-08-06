@@ -13,13 +13,14 @@ from smart_home_observer.gui.main_window import MainWindow
 from smart_home_observer.gui.main_view_model import MainViewModel
 
 class App:
-    def __init__(self, config: AppConfig, qt_application: QApplication):
+    def __init__(self, qt_application: QApplication):
         self._qt_application = qt_application
-        self._dependencies = AppDependencies(config)
+        self._dependencies = AppDependencies()
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
             self._dependencies.observer_model_repository,
             "",
+            config_repository=self._dependencies.config_repository,
         )
         self._window = MainWindow(self._view_model)
 
@@ -47,7 +48,7 @@ def run() -> int:
     event_loop = QEventLoop(qt_application)
     asyncio.set_event_loop(event_loop)
 
-    app = App(ConfigLoader().load_config(), qt_application)
+    app = App(qt_application)
 
     with event_loop:
         return event_loop.run_until_complete(app.run())
