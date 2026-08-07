@@ -6,14 +6,14 @@ from smart_home_observer.core.models.connection_status import ConnectionStatus
 from smart_home_observer.core.models.mqtt_message import MqttMessage
 from smart_home_observer.core.models.observer_model import ObserverModel
 from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.repository.observer_repository import (
-    ObserverRepository,
+from smart_home_observer.infrastructure.repository.observer_mqtt_repository import (
+    ObserverMqttRepository,
 )
 
 
 def build_repository(
     model: ObserverModel | None = None,
-) -> tuple[ObserverRepository, MagicMock]:
+) -> tuple[ObserverMqttRepository, MagicMock]:
     manager = MagicMock()
     manager.activate = AsyncMock()
     manager.deactivate = AsyncMock()
@@ -25,10 +25,10 @@ def build_repository(
     manager.subscriptions = ()
 
     with patch(
-        "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+        "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
         return_value=manager,
     ):
-        repository = ObserverRepository(
+        repository = ObserverMqttRepository(
             MqttConfig(host="broker", port=1883, username="", password=""),
             ["SmartHome/#"],
             model,
@@ -203,11 +203,11 @@ def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> N
         )
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ) as mqtt_gate,
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ) as subscription_manager,
         ):
@@ -242,11 +242,11 @@ def test_update_broker_replaces_subscriptions_for_the_selected_profile() -> None
 
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ) as mqtt_gate,
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ),
         ):
@@ -272,11 +272,11 @@ def test_update_broker_connects_when_previously_disconnected() -> None:
 
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ),
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ),
         ):
@@ -307,11 +307,11 @@ def test_failed_broker_update_restores_the_previous_connection() -> None:
 
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.MqttGate",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ),
             patch(
-                "smart_home_observer.infrastructure.repository.observer_repository.SubscriptionManager",
+                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ),
         ):

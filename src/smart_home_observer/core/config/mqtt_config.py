@@ -7,3 +7,4 @@ class MqttConfig:
     username: str
     password: str
     use_tls: bool = False
+    id: int | None = None

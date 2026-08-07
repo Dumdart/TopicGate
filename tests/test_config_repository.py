@@ -3,9 +3,49 @@ from unittest.mock import MagicMock
 from smart_home_observer.core.config.app_config import AppConfig
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.observer_model import ObserverModel
+from smart_home_observer.infrastructure.database.database_context import DatabaseContext
+from smart_home_observer.infrastructure.repository.config_repository import (
+    ConfigRepository,
+)
 from smart_home_observer.infrastructure.repository.broker_repository import (
     BrokerRepository,
 )
+
+
+def test_config_repository_updates_the_linked_mqtt_configuration() -> None:
+    database = DatabaseContext("sqlite:///:memory:")
+    repository = ConfigRepository(
+        database,
+        AppConfig(MqttConfig("old-broker", 1883, "old-user", "password")),
+    )
+    original = repository.get_app_config(1)
+
+    assert original is not None
+
+    replacement = AppConfig(
+        id=original.id,
+        mqtt=MqttConfig(
+            "new-broker",
+            8883,
+            "new-user",
+            "password",
+            use_tls=True,
+            id=original.mqtt.id,
+        ),
+    )
+
+    repository.update_app_config(replacement)
+    persisted = ConfigRepository(database, None).get_app_config(replacement.id)
+
+    assert persisted is not None
+    assert persisted.id == replacement.id
+    assert persisted.mqtt.host == replacement.mqtt.host
+    assert persisted.mqtt.port == replacement.mqtt.port
+    assert persisted.mqtt.username == replacement.mqtt.username
+    assert persisted.mqtt.use_tls == replacement.mqtt.use_tls
+    assert persisted.mqtt.id == replacement.mqtt.id
+    assert repository.is_updated
+    database.dispose()
 
 
 def test_broker_repository_returns_initial_settings() -> None:
