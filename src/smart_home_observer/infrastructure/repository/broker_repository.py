@@ -1,5 +1,7 @@
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
+
 from smart_home_observer.core.config.app_config import AppConfig
 from smart_home_observer.core.config.config_loader import ConfigLoader
 from smart_home_observer.core.config.mqtt_config import MqttConfig
@@ -7,15 +9,44 @@ from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.observer_model import ObserverModel
 from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.infrastructure.database.database_context import DatabaseContext
+from smart_home_observer.infrastructure.database.mappers.broker_profile_mapper import (
+    BrokerProfileMapper,
+)
+from smart_home_observer.infrastructure.database.models.broker_profile_row import (
+    BrokerProfileRow,
+)
 from smart_home_observer.services.observer_model_service import ObserverModelService
 from smart_home_observer.services.topic_service import TopicService
 
 
 class BrokerRepository:
-    """Temporary in-memory store for broker profiles and their workspaces."""
+    """Persists broker profiles, workspaces, and workspace subscriptions."""
 
-    def __init__(self, settings: AppConfig | None = None) -> None:
-        self._settings = settings or ConfigLoader().load_config()
+    def __init__(
+        self,
+        settings: AppConfig | DatabaseContext | None = None,
+        db: DatabaseContext | AppConfig | None = None,
+    ) -> None:
+        # Check both argument orders while retaining the original settings-only API.
+        if isinstance(settings, DatabaseContext):
+            self._db = settings
+            supplied_settings = db if isinstance(db, AppConfig) else None
+        else:
+            self._db = db if isinstance(db, DatabaseContext) else DatabaseContext(
+                "sqlite:///:memory:"
+            )
+            supplied_settings = settings
+
+        profiles, active_profile_id = self._load_profiles()
+        if profiles:
+            self._profiles = {profile.id: profile for profile in profiles}
+            self._active_profile_id = active_profile_id or profiles[0].id
+            self._settings = supplied_settings or AppConfig(self._active_profile.config)
+            self._settings.mqtt = self._active_profile.config
+            return
+
+        self._settings = supplied_settings or ConfigLoader().load_config()
         default_profile = self._create_profile(
             "Default",
             self._settings.mqtt,
@@ -31,6 +62,7 @@ class BrokerRepository:
             local_profile.id: local_profile,
         }
         self._active_profile_id = default_profile.id
+        self.save()
 
     def get(self) -> AppConfig:
         """Return the temporary application configuration for the active profile."""
@@ -121,12 +153,38 @@ class BrokerRepository:
         return self._active_profile.workspace.model
 
     def update_observer_model(self, model: ObserverModel) -> None:
-        """Replace the active profile's observer model."""
+        """Replace runtime state; only its derived subscriptions are persisted."""
         self._active_profile.workspace.model = model
         self.save()
 
     def save(self) -> None:
-        """Persist profiles and workspaces when durable storage is introduced."""
+        """Persist profiles and subscription lists, excluding runtime topic state."""
+        with self._db.session() as session:
+            existing_rows = session.scalars(select(BrokerProfileRow)).all()
+            for row in existing_rows:
+                session.delete(row)
+            session.flush()
+            session.add_all(
+                BrokerProfileMapper.to_broker_profile_row(
+                    profile,
+                    position=position,
+                    is_active=profile.id == self._active_profile_id,
+                )
+                for position, profile in enumerate(self._profiles.values())
+            )
+            session.commit()
+
+    def _load_profiles(self) -> tuple[list[BrokerProfile], UUID | None]:
+        with self._db.session() as session:
+            rows = session.scalars(
+                select(BrokerProfileRow).order_by(BrokerProfileRow.position)
+            ).all()
+            profiles = [BrokerProfileMapper.to_broker_profile(row) for row in rows]
+            active_profile_id = next(
+                (row.id for row in rows if row.is_active),
+                None,
+            )
+            return profiles, active_profile_id
 
     @property
     def _active_profile(self) -> BrokerProfile:

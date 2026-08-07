@@ -3,6 +3,7 @@ from contextlib import contextmanager
 
 from collections.abc import Iterator
 from smart_home_observer.infrastructure.database.base import Base
+import smart_home_observer.infrastructure.database.models  # noqa: F401 
 from sqlalchemy.engine.create import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
