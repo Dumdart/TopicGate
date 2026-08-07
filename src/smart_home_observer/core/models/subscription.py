@@ -9,6 +9,7 @@ class Subscription:
     qos: int = 1
     retain_as_published: bool = False
     retain_handling: int = 0
+    id: int | None = None
 
     def __post_init__(self) -> None:
         if not self.topic_filter:

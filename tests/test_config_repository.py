@@ -14,13 +14,10 @@ from smart_home_observer.infrastructure.repository.broker_repository import (
 
 def test_config_repository_updates_the_linked_mqtt_configuration() -> None:
     database = DatabaseContext("sqlite:///:memory:")
-    repository = ConfigRepository(
-        database,
+    repository = ConfigRepository(database)
+    original = repository.create_app_config(
         AppConfig(MqttConfig("old-broker", 1883, "old-user", "password")),
     )
-    original = repository.get_app_config(1)
-
-    assert original is not None
 
     replacement = AppConfig(
         id=original.id,
@@ -35,7 +32,7 @@ def test_config_repository_updates_the_linked_mqtt_configuration() -> None:
     )
 
     repository.update_app_config(replacement)
-    persisted = ConfigRepository(database, None).get_app_config(replacement.id)
+    persisted = ConfigRepository(database).get_app_config(replacement.id)
 
     assert persisted is not None
     assert persisted.id == replacement.id
@@ -45,6 +42,36 @@ def test_config_repository_updates_the_linked_mqtt_configuration() -> None:
     assert persisted.mqtt.use_tls == replacement.mqtt.use_tls
     assert persisted.mqtt.id == replacement.mqtt.id
     assert repository.is_updated
+    database.dispose()
+
+
+def test_config_repository_reads_each_configuration_from_the_database() -> None:
+    database = DatabaseContext("sqlite:///:memory:")
+    repository = ConfigRepository(database)
+    first = repository.create_app_config(
+        AppConfig(MqttConfig("first", 1883, "one", "password"))
+    )
+    second = repository.create_app_config(
+        AppConfig(MqttConfig("second", 8883, "two", "password", use_tls=True))
+    )
+
+    assert repository.get_all_app_configs() == [
+        AppConfig(
+            id=first.id,
+            mqtt=MqttConfig("first", 1883, "one", "", id=first.mqtt.id),
+        ),
+        AppConfig(
+            id=second.id,
+            mqtt=MqttConfig(
+                "second",
+                8883,
+                "two",
+                "",
+                use_tls=True,
+                id=second.mqtt.id,
+            ),
+        ),
+    ]
     database.dispose()
 
 
