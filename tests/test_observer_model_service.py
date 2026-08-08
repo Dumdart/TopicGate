@@ -1,26 +1,35 @@
 from datetime import datetime, timezone
 
-from smart_home_observer.core.models.observer_model import TopicState
+from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.services.observer_model_service import ObserverModelService
-from smart_home_observer.services.topic_service import TopicService
+
+
+TOPIC_PATHS = [
+    "SmartHome/Huehnerstall/door/command",
+    "SmartHome/Huehnerstall/door/status",
+    "SmartHome/Huehnerstall/door/status_code",
+    "SmartHome/Huehnerstall/door/fault",
+    "SmartHome/Huehnerstall/door/connected",
+    "SmartHome/Huehnerstall/door/battery",
+    "SmartHome/Huehnerstall/door/light_level",
+]
+
+
+def build_model() -> ObserverModel:
+    return ObserverModelService.add_topics(
+        ObserverModel(root_stats=[]),
+        TOPIC_PATHS,
+    )
 
 
 def test_get_all_topics_returns_configured_leaf_topic_paths() -> None:
-    model = TopicService.get_topics()
+    model = build_model()
 
-    assert ObserverModelService.get_all_topics(model) == [
-        "SmartHome/Huehnerstall/door/command",
-        "SmartHome/Huehnerstall/door/status",
-        "SmartHome/Huehnerstall/door/status_code",
-        "SmartHome/Huehnerstall/door/fault",
-        "SmartHome/Huehnerstall/door/connected",
-        "SmartHome/Huehnerstall/door/battery",
-        "SmartHome/Huehnerstall/door/light_level",
-    ]
+    assert ObserverModelService.get_all_topics(model) == TOPIC_PATHS
 
 
 def test_get_all_nodes_returns_branches_and_leaf_nodes() -> None:
-    model = TopicService.get_topics()
+    model = build_model()
 
     nodes = ObserverModelService.get_all_nodes(model)
 
@@ -34,7 +43,7 @@ def test_get_all_nodes_returns_branches_and_leaf_nodes() -> None:
 
 
 def test_get_all_states_and_find_node_scan_the_same_tree() -> None:
-    model = TopicService.get_topics()
+    model = build_model()
     state = TopicState(
         name="Door status",
         topic="SmartHome/Huehnerstall/door/status",
@@ -53,7 +62,7 @@ def test_get_all_states_and_find_node_scan_the_same_tree() -> None:
 
 
 def test_deep_copy_returns_an_independent_observer_model() -> None:
-    original = TopicService.get_topics()
+    original = build_model()
 
     copied = ObserverModelService.deep_copy(original)
     copied.root_stats[0].children["Huehnerstall"].children["door"].children[
@@ -68,3 +77,33 @@ def test_deep_copy_returns_an_independent_observer_model() -> None:
         ].segment
         == "status"
     )
+
+
+def test_add_topics_builds_shared_observer_tree_paths() -> None:
+    model = ObserverModel(root_stats=[])
+
+    result = ObserverModelService.add_topics(
+        model,
+        [
+            "SmartHome/kitchen/status",
+            "SmartHome/kitchen/temperature",
+            "bridge/#",
+        ],
+    )
+
+    assert result is model
+    assert ObserverModelService.get_all_topics(model) == [
+        "SmartHome/kitchen/status",
+        "SmartHome/kitchen/temperature",
+        "bridge/#",
+    ]
+    assert len(model.root_stats) == 2
+
+
+def test_add_topics_does_not_duplicate_existing_nodes() -> None:
+    model = ObserverModel(root_stats=[])
+
+    ObserverModelService.add_topics(model, ["home/status", "home/status"])
+
+    assert ObserverModelService.get_all_topics(model) == ["home/status"]
+    assert len(ObserverModelService.get_all_nodes(model)) == 2

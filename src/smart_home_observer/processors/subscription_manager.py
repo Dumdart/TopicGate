@@ -4,6 +4,7 @@ from typing import Any
 
 from smart_home_observer.core.models.subscription import Subscription
 from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
+
 class SubscriptionManager:
     def __init__(self, mqtt_gate: MqttGate, message_handler: Callable[..., Any]):
         self._mqtt_gate = mqtt_gate

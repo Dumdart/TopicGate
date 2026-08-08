@@ -28,7 +28,7 @@ class ObserverTreePane(WorkspacePane):
     remove_filter_requested = Signal(object)
     broker_profile_selected = Signal(object)
     add_broker_profile_requested = Signal()
-    edit_broker_profile_requested = Signal()
+    edit_broker_profile_requested = Signal(object)
     delete_broker_profile_requested = Signal()
 
     def __init__(self) -> None:
@@ -157,9 +157,15 @@ class ObserverTreePane(WorkspacePane):
         add_action = self._broker_profile_menu.addAction("Add profile...")
         add_action.setObjectName("addBrokerProfileAction")
         add_action.triggered.connect(self.add_broker_profile_requested.emit)
-        edit_action = self._broker_profile_menu.addAction("Edit current profile...")
-        edit_action.setObjectName("editBrokerProfileAction")
-        edit_action.triggered.connect(self.edit_broker_profile_requested.emit)
+        edit_menu = self._broker_profile_menu.addMenu("Edit profile...")
+        edit_menu.menuAction().setObjectName("editBrokerProfileAction")
+        for profile in profiles:
+            edit_action = edit_menu.addAction(profile.name)
+            edit_action.triggered.connect(
+                lambda _checked=False, profile_id=profile.id: (
+                    self.edit_broker_profile_requested.emit(profile_id)
+                )
+            )
         delete_action = self._broker_profile_menu.addAction(
             "Delete current profile..."
         )

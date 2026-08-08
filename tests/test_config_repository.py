@@ -3,9 +3,76 @@ from unittest.mock import MagicMock
 from smart_home_observer.core.config.app_config import AppConfig
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.observer_model import ObserverModel
+from smart_home_observer.infrastructure.database.database_context import DatabaseContext
+from smart_home_observer.infrastructure.repository.config_repository import (
+    ConfigRepository,
+)
 from smart_home_observer.infrastructure.repository.broker_repository import (
     BrokerRepository,
 )
+
+
+def test_config_repository_updates_the_linked_mqtt_configuration() -> None:
+    database = DatabaseContext("sqlite:///:memory:")
+    repository = ConfigRepository(database)
+    original = repository.create_app_config(
+        AppConfig(MqttConfig("old-broker", 1883, "old-user", "password")),
+    )
+
+    replacement = AppConfig(
+        id=original.id,
+        mqtt=MqttConfig(
+            "new-broker",
+            8883,
+            "new-user",
+            "password",
+            use_tls=True,
+            id=original.mqtt.id,
+        ),
+    )
+
+    repository.update_app_config(replacement)
+    persisted = ConfigRepository(database).get_app_config(replacement.id)
+
+    assert persisted is not None
+    assert persisted.id == replacement.id
+    assert persisted.mqtt.host == replacement.mqtt.host
+    assert persisted.mqtt.port == replacement.mqtt.port
+    assert persisted.mqtt.username == replacement.mqtt.username
+    assert persisted.mqtt.use_tls == replacement.mqtt.use_tls
+    assert persisted.mqtt.id == replacement.mqtt.id
+    assert repository.is_updated
+    database.dispose()
+
+
+def test_config_repository_reads_each_configuration_from_the_database() -> None:
+    database = DatabaseContext("sqlite:///:memory:")
+    repository = ConfigRepository(database)
+    first = repository.create_app_config(
+        AppConfig(MqttConfig("first", 1883, "one", "password"))
+    )
+    second = repository.create_app_config(
+        AppConfig(MqttConfig("second", 8883, "two", "password", use_tls=True))
+    )
+
+    assert repository.get_all_app_configs() == [
+        AppConfig(
+            id=first.id,
+            mqtt=MqttConfig("first", 1883, "one", "", id=first.mqtt.id),
+        ),
+        AppConfig(
+            id=second.id,
+            mqtt=MqttConfig(
+                "second",
+                8883,
+                "two",
+                "",
+                use_tls=True,
+                id=second.mqtt.id,
+            ),
+        ),
+    ]
+    database.dispose()
 
 
 def test_broker_repository_returns_initial_settings() -> None:
@@ -59,7 +126,7 @@ def test_broker_repository_links_observer_model_to_active_profile() -> None:
     repository.save.assert_called_once_with()
 
 
-def test_broker_repository_provides_two_independent_profiles() -> None:
+def test_broker_repository_provides_two_empty_independent_profiles() -> None:
     repository = BrokerRepository(AppConfig(MqttConfig("broker", 1883, "", "")))
 
     default_profile, local_profile = repository.get_all_profiles()
@@ -70,22 +137,8 @@ def test_broker_repository_provides_two_independent_profiles() -> None:
     ]
     assert local_profile.config == MqttConfig("localhost", 1883, "", "")
     assert default_profile.workspace.model is not local_profile.workspace.model
-    assert [
-        subscription.topic_filter
-        for subscription in default_profile.workspace.subscriptions
-    ] == [
-        "SmartHome/Huehnerstall/door/command",
-        "SmartHome/Huehnerstall/door/status",
-        "SmartHome/Huehnerstall/door/status_code",
-        "SmartHome/Huehnerstall/door/fault",
-        "SmartHome/Huehnerstall/door/connected",
-        "SmartHome/Huehnerstall/door/battery",
-        "SmartHome/Huehnerstall/door/light_level",
-    ]
-    assert [
-        subscription.topic_filter
-        for subscription in local_profile.workspace.subscriptions
-    ] == ["bridge"]
+    assert default_profile.workspace.subscriptions == ()
+    assert local_profile.workspace.subscriptions == ()
 
 
 def test_broker_repository_creates_updates_and_deletes_profiles() -> None:

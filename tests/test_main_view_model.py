@@ -262,6 +262,27 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
     asyncio.run(scenario())
 
 
+def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> None:
+    repository = FakeObserverRepository()
+    broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+    view_model = MainViewModel(repository, broker_repository=broker_repository)
+    active_profile = broker_repository.get_profile()
+    inactive_profile = broker_repository.get_all_profiles()[1]
+    replacement = MqttConfig("fixed", 8883, "observer", "secret", True)
+
+    saved = view_model.save_broker_profile(
+        inactive_profile.id,
+        replacement,
+        "Fixed local",
+    )
+
+    assert repository.broker_configurations == []
+    assert broker_repository.get_profile().id == active_profile.id
+    assert broker_repository.updated_mqtt == []
+    assert saved.name == "Fixed local"
+    assert saved.config == replacement
+
+
 def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()

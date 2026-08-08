@@ -19,7 +19,7 @@ from smart_home_observer.processors.subscription_manager import SubscriptionMana
 from smart_home_observer.services.observer_model_service import ObserverModelService
 
 
-class ObserverRepository(MqttRepository[ObserverModel]):
+class ObserverMqttRepository(MqttRepository[ObserverModel]):
     """Observe messages matching the supplied absolute MQTT topic filters."""
 
     def __init__(

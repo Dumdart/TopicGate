@@ -1,13 +1,20 @@
 from smart_home_observer.core.models.mqtt_message import MqttMessage
+from smart_home_observer.core.models.observer_model import ObserverModel
 from smart_home_observer.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
 from smart_home_observer.services.observer_model_service import ObserverModelService
-from smart_home_observer.services.topic_service import TopicService
+
+
+def build_model(*topics: str) -> ObserverModel:
+    return ObserverModelService.add_topics(
+        ObserverModel(root_stats=[]),
+        topics,
+    )
 
 
 def test_process_stores_message_state_on_the_matching_topic_node() -> None:
-    model = TopicService.get_topics()
+    model = build_model("SmartHome/Huehnerstall/door/status")
     message = MqttMessage(
         "SmartHome/Huehnerstall/door/status", b"open", qos=1, retain=True
     )
@@ -27,7 +34,7 @@ def test_process_stores_message_state_on_the_matching_topic_node() -> None:
 
 
 def test_process_stores_messages_for_discovered_topics() -> None:
-    model = TopicService.get_topics()
+    model = build_model()
     message = MqttMessage("SmartHome/unknown", b"value", qos=0, retain=False)
 
     ObserverModelMqttMessageProcessor().process(model, message)
@@ -37,7 +44,7 @@ def test_process_stores_messages_for_discovered_topics() -> None:
 
 
 def test_process_counts_messages_per_topic() -> None:
-    model = TopicService.get_topics()
+    model = build_model()
     processor = ObserverModelMqttMessageProcessor()
 
     processor.process(model, MqttMessage("SmartHome/device/value", b"1", 0, False))

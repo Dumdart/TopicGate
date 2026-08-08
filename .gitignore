@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# Database
+smart_observer.db
+
 # Distribution / build artifacts
 *.egg-info/
 __pycache__/
