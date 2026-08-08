@@ -24,10 +24,6 @@ from smart_home_observer.infrastructure.database.models.broker_profile_row impor
 from smart_home_observer.infrastructure.database.models.observer_workspace_row import (
     ObserverWorkspaceRow,
 )
-from smart_home_observer.services.observer_model_service import ObserverModelService
-from smart_home_observer.services.topic_service import TopicService
-
-
 class BrokerRepository:
     """Persist broker profiles and use the database as their source of truth."""
 
@@ -63,12 +59,10 @@ class BrokerRepository:
         default_profile = self._create_profile(
             "Default",
             self._settings.mqtt,
-            TopicService.get_topics(),
         )
         local_profile = self._create_profile(
             "Local MQTT",
             MqttConfig("localhost", 1883, "", ""),
-            TopicService.get_topics2(),
         )
         self._runtime_configs[default_profile.id] = default_profile.config
         self._runtime_configs[local_profile.id] = local_profile.config
@@ -138,7 +132,6 @@ class BrokerRepository:
         profile = self._create_profile(
             normalized_name,
             config,
-            ObserverModel(root_stats=[]),
         )
         with self._db.session() as session:
             positions = session.scalars(select(BrokerProfileRow.position)).all()
@@ -315,17 +308,13 @@ class BrokerRepository:
     def _create_profile(
         name: str,
         config: MqttConfig,
-        observer_model: ObserverModel,
     ) -> BrokerProfile:
         profile_id = uuid4()
         workspace = ObserverWorkspace(
             id=uuid4(),
             profile_id=profile_id,
-            model=observer_model,
-            subscriptions=tuple(
-                Subscription(topic_filter)
-                for topic_filter in ObserverModelService.get_all_topics(observer_model)
-            ),
+            model=ObserverModel(root_stats=[]),
+            subscriptions=(),
         )
         return BrokerProfile(
             id=profile_id,

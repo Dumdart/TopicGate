@@ -126,7 +126,7 @@ def test_broker_repository_links_observer_model_to_active_profile() -> None:
     repository.save.assert_called_once_with()
 
 
-def test_broker_repository_provides_two_independent_profiles() -> None:
+def test_broker_repository_provides_two_empty_independent_profiles() -> None:
     repository = BrokerRepository(AppConfig(MqttConfig("broker", 1883, "", "")))
 
     default_profile, local_profile = repository.get_all_profiles()
@@ -137,22 +137,8 @@ def test_broker_repository_provides_two_independent_profiles() -> None:
     ]
     assert local_profile.config == MqttConfig("localhost", 1883, "", "")
     assert default_profile.workspace.model is not local_profile.workspace.model
-    assert [
-        subscription.topic_filter
-        for subscription in default_profile.workspace.subscriptions
-    ] == [
-        "SmartHome/Huehnerstall/door/command",
-        "SmartHome/Huehnerstall/door/status",
-        "SmartHome/Huehnerstall/door/status_code",
-        "SmartHome/Huehnerstall/door/fault",
-        "SmartHome/Huehnerstall/door/connected",
-        "SmartHome/Huehnerstall/door/battery",
-        "SmartHome/Huehnerstall/door/light_level",
-    ]
-    assert [
-        subscription.topic_filter
-        for subscription in local_profile.workspace.subscriptions
-    ] == ["bridge"]
+    assert default_profile.workspace.subscriptions == ()
+    assert local_profile.workspace.subscriptions == ()
 
 
 def test_broker_repository_creates_updates_and_deletes_profiles() -> None:
