@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.gui.components.about_dialog import AboutDialog
 from smart_home_observer.gui.components.add_subscription_dialog import AddSubscriptionDialog
 from smart_home_observer.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
@@ -143,14 +144,8 @@ class MainWindow(QMainWindow):
         )
 
         self._about_action = QAction("About Smart Home Observer", self)
-        self._about_action.triggered.connect(
-            lambda: QMessageBox.about(
-                self,
-                "About Smart Home Observer",
-                "Smart Home Observer\n\n"
-                "Browse live MQTT topics and manage subscriptions.",
-            )
-        )
+        self._about_action.setObjectName("aboutAction")
+        self._about_action.triggered.connect(self._show_about_dialog)
 
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -188,6 +183,9 @@ class MainWindow(QMainWindow):
         self._log_dock.visibilityChanged.connect(self._console_action.setChecked)
         self._view_menu.addSeparator()
         self._view_menu.addAction(self._console_action)
+
+    def _show_about_dialog(self) -> None:
+        AboutDialog(self).open()
 
     def _connect_view_model(self) -> None:
         self._view_model.state_changed.connect(self._render_details)

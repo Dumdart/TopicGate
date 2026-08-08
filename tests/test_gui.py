@@ -33,6 +33,7 @@ from smart_home_observer.core.models.broker_profile import BrokerProfile
 from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
 from smart_home_observer.core.models.subscription import Subscription
+from smart_home_observer.gui.components.about_dialog import AboutDialog
 from smart_home_observer.gui.components.connection_controls import ConnectionControls
 from smart_home_observer.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
@@ -449,6 +450,33 @@ def test_profile_menu_creates_a_new_broker_profile() -> None:
         "Remote",
     ]
     assert dialog.result() == QDialog.DialogCode.Accepted
+    window.close()
+    application.processEvents()
+
+
+def test_about_action_opens_the_project_about_view() -> None:
+    application = QApplication.instance() or QApplication([])
+    window = MainWindow(
+        MainViewModel(
+            FakeGuiRepository(),
+            broker_repository=FakeBrokerRepository(
+                MqttConfig("broker", 1883, "", "")
+            ),
+        )
+    )
+
+    window.findChild(QAction, "aboutAction").trigger()
+
+    dialog = window.findChild(AboutDialog, "aboutDialog")
+    assert dialog is not None
+    assert dialog.findChild(QLabel, "aboutTitle").text() == "Smart Home Observer"
+    assert dialog.findChild(QLabel, "aboutVersion").text().startswith("Version ")
+    assert "SQLite" in dialog.findChild(QLabel, "aboutStorageText").text()
+    assert "github.com/Dumdart/SmartHomeObserver" in dialog.findChild(
+        QLabel,
+        "aboutProjectLink",
+    ).text()
+    dialog.reject()
     window.close()
     application.processEvents()
 
