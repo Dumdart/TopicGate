@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from topicgate.core.config.config_loader import AppConfig
+from topicgate.core.config.app_config import AppConfig
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.config_mapper import (
     ConfigMapper,

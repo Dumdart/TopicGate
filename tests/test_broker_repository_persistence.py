@@ -9,10 +9,14 @@ from topicgate.infrastructure.repository.broker_repository import BrokerReposito
 from topicgate.services.observer_model_service import ObserverModelService
 
 
-def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree() -> None:
+def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
+    credential_store,
+) -> None:
     database = DatabaseContext("sqlite:///:memory:")
     settings = AppConfig(MqttConfig("default", 1883, "user", "secret"))
-    repository = BrokerRepository(database, settings)
+    repository = BrokerRepository(
+        database, settings, credential_store=credential_store
+    )
     profile = repository.create_profile(
         "Remote",
         MqttConfig("remote", 8883, "observer", "secret", use_tls=True),
@@ -32,7 +36,7 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree() -> No
     repository.update_profile(profile)
     repository.activate_profile(profile.id)
 
-    reloaded = BrokerRepository(database)
+    reloaded = BrokerRepository(database, credential_store=credential_store)
     persisted = reloaded.get_profile(profile.id)
 
     assert reloaded.get_profile().id == profile.id
@@ -41,7 +45,7 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree() -> No
         "remote",
         8883,
         "observer",
-        "",
+        "secret",
         use_tls=True,
         id=persisted.config.id,
     )
@@ -54,11 +58,13 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree() -> No
     database.dispose()
 
 
-def test_broker_repository_reads_changes_made_by_another_instance() -> None:
+def test_broker_repository_reads_changes_made_by_another_instance(
+    credential_store,
+) -> None:
     database = DatabaseContext("sqlite:///:memory:")
     settings = AppConfig(MqttConfig("default", 1883, "user", "secret"))
-    first = BrokerRepository(database, settings)
-    second = BrokerRepository(database)
+    first = BrokerRepository(database, settings, credential_store=credential_store)
+    second = BrokerRepository(database, credential_store=credential_store)
 
     profile = first.create_profile(
         "Remote",
@@ -78,21 +84,52 @@ def test_broker_repository_reads_changes_made_by_another_instance() -> None:
     database.dispose()
 
 
-def test_broker_repository_hydrates_the_active_password_from_runtime_settings() -> None:
+def test_broker_repository_prefers_a_stored_password_to_supplied_settings(
+    credential_store,
+) -> None:
     database = DatabaseContext("sqlite:///:memory:")
     persisted_settings = AppConfig(
         MqttConfig("broker", 1883, "observer", "initial-secret")
     )
-    BrokerRepository(database, persisted_settings)
+    BrokerRepository(
+        database, persisted_settings, credential_store=credential_store
+    )
     runtime_settings = AppConfig(
         MqttConfig("ignored-host", 9999, "ignored-user", "runtime-secret")
     )
 
-    reloaded = BrokerRepository(database, runtime_settings)
+    reloaded = BrokerRepository(
+        database, runtime_settings, credential_store=credential_store
+    )
 
     config = reloaded.get_mqtt()
     assert config.host == "broker"
     assert config.port == 1883
     assert config.username == "observer"
-    assert config.password == "runtime-secret"
+    assert config.password == "initial-secret"
+    database.dispose()
+
+
+def test_broker_repository_imports_a_supplied_password_when_store_is_empty(
+    credential_store,
+) -> None:
+    database = DatabaseContext("sqlite:///:memory:")
+    BrokerRepository(
+        database,
+        AppConfig(MqttConfig("broker", 1883, "observer", "")),
+        credential_store=credential_store,
+    )
+    runtime_settings = AppConfig(
+        MqttConfig("ignored-host", 9999, "ignored-user", "runtime-secret")
+    )
+
+    reloaded = BrokerRepository(
+        database,
+        runtime_settings,
+        credential_store=credential_store,
+    )
+
+    profile = reloaded.get_profile()
+    assert profile.config.password == "runtime-secret"
+    assert credential_store.get_password(profile.id) == "runtime-secret"
     database.dispose()

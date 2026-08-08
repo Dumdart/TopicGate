@@ -62,7 +62,8 @@ class AboutDialog(QDialog):
         storage_title.setStyleSheet("font-weight: 700;")
         storage_text = QLabel(
             "Broker profiles and subscriptions are stored in SQLite. "
-            "Passwords and live MQTT message values are not persisted."
+            "Passwords are stored in your operating system's credential store. "
+            "Live MQTT message values are not persisted."
         )
         storage_text.setObjectName("aboutStorageText")
         storage_text.setWordWrap(True)

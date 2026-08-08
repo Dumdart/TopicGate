@@ -11,11 +11,11 @@ license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "paho-mqtt",
-    "python-dotenv",
     "pytest",
     "pyside6",
     "qasync",
     "sqlalchemy",
+    "keyring",
 ]
 
 [project.scripts]

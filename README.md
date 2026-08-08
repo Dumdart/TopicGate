@@ -11,7 +11,8 @@ TopicGate provides secure local access to MQTT topics through TopicGate Desktop,
 - Edit any profile without connecting to it first.
 - Save broker settings without interrupting the active connection, or save and connect in one action.
 - Retain profiles, active selection, and subscriptions in a local SQLite database.
-- Keep passwords and live message values out of the database.
+- Store passwords in the operating system's secure credential store and keep
+  live message values out of the database.
 
 ## Requirements
 
@@ -32,7 +33,6 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e .
-Copy-Item .env.example .env
 ```
 
 ### Linux or macOS
@@ -44,24 +44,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-cp .env.example .env
 ```
 
 ## Configuration
 
-Edit `.env` before the first launch:
-
-```dotenv
-MQTT_HOST=192.168.1.20
-MQTT_PORT=1883
-MQTT_USERNAME=smart_home_bridge
-MQTT_PASSWORD=change-me-mqtt-password
-MQTT_USE_TLS=false
-```
-
-For a new database, these values initialize the default broker profile. After initialization, SQLite is the source of truth for the broker host, port, username, TLS setting, active profile, and subscriptions.
-
-The application asks for the active broker password at launch. The entered value is held in memory only. Submitting an empty password uses `MQTT_PASSWORD` from `.env` as a fallback. The `.env` file and both supported database filenames are ignored by Git.
+No configuration file is required. A new installation starts with a local MQTT profile using `localhost:1883`. Edit that profile in TopicGate to set the broker host, port, username, password, and TLS option. SQLite stores the non-secret profile settings, while passwords are stored in Windows Credential Locker, macOS Keychain, or the available Linux Secret Service/KWallet backend.
 
 ## Running TopicGate Desktop
 
@@ -78,13 +65,12 @@ If the initial MQTT connection fails, the application remains open in a disconne
 
 ## First-use workflow
 
-1. Enter the active broker password when prompted.
-2. Check the MQTT connection indicator in the top-right corner.
-3. Open the broker profile menu above the observer tree.
-4. Use **Edit profile...** to correct an existing profile, including an inactive one.
-5. Choose **Save** to persist settings without connecting, or **Save & connect** to activate that profile.
-6. Select **Add filter** and enter an MQTT subscription such as `home/+/temperature` or `devices/#`.
-7. Select an observed topic to inspect its decoded and raw payload details.
+1. Check the MQTT connection indicator in the top-right corner.
+2. Open the broker profile menu above the observer tree.
+3. Use **Edit profile...** to enter credentials or correct an existing profile, including an inactive one.
+4. Choose **Save** to persist settings without connecting, or **Save & connect** to activate that profile.
+5. Select **Add filter** and enter an MQTT subscription such as `home/+/temperature` or `devices/#`.
+6. Select an observed topic to inspect its decoded and raw payload details.
 
 ## MQTT filters
 
@@ -103,7 +89,7 @@ TopicGate stores `topicgate.db` in the platform application-data directory:
 - Linux: `~/.local/share/TopicGate`
 - macOS: `~/Library/Application Support/TopicGate`
 
-Set `TOPICGATE_DATA_DIR` to use an explicit location. The database stores broker profile names and connection settings (excluding passwords), the active profile, and each profile's subscription filters and options. Live MQTT payloads, message counters, timestamps, and passwords remain runtime-only.
+Set `TOPICGATE_DATA_DIR` to use an explicit location. The database stores broker profile names and connection settings (excluding passwords), the active profile, and each profile's subscription filters and options. Passwords remain in the operating system credential store. Live MQTT payloads, message counters, and timestamps remain runtime-only.
 
 To start with a new configuration, close TopicGate and move or delete `topicgate.db`. This permanently removes saved profiles and subscriptions unless the file is backed up first.
 
