@@ -136,17 +136,18 @@ class MainViewModel(QObject):
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
-        subscriptions = getattr(self._repository, "subscriptions", ())
+        subscriptions = (
+            self.active_broker_profile.workspace.subscriptions
+            if self._broker_repository is not None
+            and hasattr(self._broker_repository, "update_observer_workspace")
+            else getattr(self._repository, "subscriptions", ())
+        )
         return tuple(subscriptions)
 
     @property
     def topic_paths(self) -> list[str]:
         subscriptions = self.subscriptions
-        model = (
-            self.active_broker_profile.workspace.model
-            if self._broker_repository is not None
-            else self._repository.get()
-        )
+        model = self._repository.get()
         paths = {subscription.topic_filter for subscription in subscriptions}
         observed_topics = set(ObserverModelService.get_all_topics(model))
         observed_topics.update(model.topic_states)
@@ -349,7 +350,9 @@ class MainViewModel(QObject):
             return
 
         workspace = self.active_broker_profile.workspace
-        workspace.subscriptions = self.subscriptions
+        workspace.subscriptions = tuple(
+            getattr(self._repository, "subscriptions", ())
+        )
         update_workspace = getattr(
             self._broker_repository,
             "update_observer_workspace",

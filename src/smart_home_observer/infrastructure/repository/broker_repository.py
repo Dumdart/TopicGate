@@ -1,6 +1,8 @@
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from smart_home_observer.core.config.app_config import AppConfig
 from smart_home_observer.core.config.config_loader import ConfigLoader
@@ -13,22 +15,27 @@ from smart_home_observer.infrastructure.database.database_context import Databas
 from smart_home_observer.infrastructure.database.mappers.broker_profile_mapper import (
     BrokerProfileMapper,
 )
+from smart_home_observer.infrastructure.database.mappers.subscription_mapper import (
+    SubscriptionMapper,
+)
 from smart_home_observer.infrastructure.database.models.broker_profile_row import (
     BrokerProfileRow,
+)
+from smart_home_observer.infrastructure.database.models.observer_workspace_row import (
+    ObserverWorkspaceRow,
 )
 from smart_home_observer.services.observer_model_service import ObserverModelService
 from smart_home_observer.services.topic_service import TopicService
 
 
 class BrokerRepository:
-    """Persists broker profiles, workspaces, and workspace subscriptions."""
+    """Persist broker profiles and use the database as their source of truth."""
 
     def __init__(
         self,
         settings: AppConfig | DatabaseContext | None = None,
         db: DatabaseContext | AppConfig | None = None,
     ) -> None:
-        # Check both argument orders while retaining the original settings-only API.
         if isinstance(settings, DatabaseContext):
             self._db = settings
             supplied_settings = db if isinstance(db, AppConfig) else None
@@ -38,12 +45,18 @@ class BrokerRepository:
             )
             supplied_settings = settings
 
-        profiles, active_profile_id = self._load_profiles()
+        self._runtime_configs: dict[UUID, MqttConfig] = {}
+        self._runtime_models: dict[UUID, ObserverModel] = {}
+        self._profile_handles: dict[UUID, BrokerProfile] = {}
+
+        profiles = self.get_all_profiles()
         if profiles:
-            self._profiles = {profile.id: profile for profile in profiles}
-            self._active_profile_id = active_profile_id or profiles[0].id
-            self._settings = supplied_settings or AppConfig(self._active_profile.config)
-            self._settings.mqtt = self._active_profile.config
+            active_profile = self.get_profile()
+            if supplied_settings is not None:
+                self._runtime_configs[active_profile.id] = supplied_settings.mqtt
+                self._settings = supplied_settings
+            else:
+                self._settings = AppConfig(active_profile.config)
             return
 
         self._settings = supplied_settings or ConfigLoader().load_config()
@@ -57,38 +70,67 @@ class BrokerRepository:
             MqttConfig("localhost", 1883, "", ""),
             TopicService.get_topics2(),
         )
-        self._profiles = {
-            default_profile.id: default_profile,
-            local_profile.id: local_profile,
-        }
-        self._active_profile_id = default_profile.id
+        self._runtime_configs[default_profile.id] = default_profile.config
+        self._runtime_configs[local_profile.id] = local_profile.config
+        with self._db.session() as session:
+            session.add(
+                BrokerProfileMapper.to_broker_profile_row(
+                    default_profile,
+                    position=0,
+                    is_active=True,
+                )
+            )
+            session.add(
+                BrokerProfileMapper.to_broker_profile_row(
+                    local_profile,
+                    position=1,
+                    is_active=False,
+                )
+            )
+            session.commit()
         self.save()
 
     def get(self) -> AppConfig:
-        """Return the temporary application configuration for the active profile."""
+        """Return application settings backed by the active database profile."""
+        mqtt = self.get_mqtt()
+        if self._settings.mqtt != mqtt:
+            self._settings = AppConfig(mqtt=mqtt, id=self._settings.id)
         return self._settings
 
     def update(self, settings: AppConfig) -> None:
         """Update the active profile's MQTT configuration."""
+        self.update_mqtt(settings.mqtt)
         self._settings = settings
-        self._active_profile.config = settings.mqtt
-        self.save()
 
     def get_mqtt(self) -> MqttConfig:
-        """Return the MQTT configuration required by the existing GUI contract."""
-        return self._active_profile.config
+        """Return the active profile's current MQTT configuration."""
+        return self.get_profile().config
 
     def update_mqtt(self, mqtt: MqttConfig) -> None:
         """Update only the active profile's MQTT configuration."""
-        self.activate_profile(self._active_profile_id, mqtt)
+        self.activate_profile(self.get_profile().id, mqtt)
 
     def get_profile(self, profile_id: UUID | None = None) -> BrokerProfile:
-        """Return the active profile, or the profile identified by ``profile_id``."""
-        return self._profiles[profile_id or self._active_profile_id]
+        """Read the active profile, or a selected profile, from the database."""
+        with self._db.session() as session:
+            statement = self._profile_statement()
+            if profile_id is None:
+                statement = statement.where(BrokerProfileRow.is_active.is_(True))
+            else:
+                statement = statement.where(BrokerProfileRow.id == profile_id)
+            row = session.scalar(statement)
+            if row is None:
+                identifier = "active profile" if profile_id is None else profile_id
+                raise KeyError(f"Unknown broker profile: {identifier}")
+            return self._to_profile(row)
 
     def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
-        """Return every available broker profile in display order."""
-        return tuple(self._profiles.values())
+        """Read every broker profile from the database in display order."""
+        with self._db.session() as session:
+            rows = session.scalars(
+                self._profile_statement().order_by(BrokerProfileRow.position)
+            ).all()
+            return tuple(self._to_profile(row) for row in rows)
 
     def create_profile(self, name: str, config: MqttConfig) -> BrokerProfile:
         """Create a broker profile with an independent, empty workspace."""
@@ -98,97 +140,176 @@ class BrokerRepository:
             config,
             ObserverModel(root_stats=[]),
         )
-        self._profiles[profile.id] = profile
+        with self._db.session() as session:
+            positions = session.scalars(select(BrokerProfileRow.position)).all()
+            session.add(
+                BrokerProfileMapper.to_broker_profile_row(
+                    profile,
+                    position=max(positions, default=-1) + 1,
+                )
+            )
+            session.commit()
+        self._runtime_configs[profile.id] = config
+        self._profile_handles[profile.id] = profile
         self.save()
         return profile
 
     def update_profile(self, profile: BrokerProfile) -> None:
-        """Replace a broker profile while retaining its linked workspace."""
-        if profile.id not in self._profiles:
-            raise KeyError(f"Unknown broker profile: {profile.id}")
-        profile.name = self._validate_profile_name(profile.name, profile.id)
+        """Persist changes to a broker profile and its workspace."""
+        normalized_name = self._validate_profile_name(profile.name, profile.id)
         if (
             profile.workspace.profile_id != profile.id
             or profile.workspace_id != profile.workspace.id
         ):
             raise ValueError("The workspace must belong to the broker profile.")
-        self._profiles[profile.id] = profile
-        if profile.id == self._active_profile_id:
-            self._settings.mqtt = profile.config
+
+        with self._db.session() as session:
+            row = session.scalar(
+                self._profile_statement().where(BrokerProfileRow.id == profile.id)
+            )
+            if row is None:
+                raise KeyError(f"Unknown broker profile: {profile.id}")
+            if row.workspace.id != profile.workspace.id:
+                raise ValueError("A broker profile's workspace cannot be replaced.")
+            row.name = normalized_name
+            self._update_mqtt_row(row, profile.config)
+            self._replace_subscriptions(
+                session,
+                row.workspace,
+                profile.workspace.subscriptions,
+            )
+            session.commit()
+
+        profile.name = normalized_name
+        self._runtime_configs[profile.id] = profile.config
+        self._profile_handles[profile.id] = profile
+        if self.get_profile().id == profile.id:
+            self._settings = AppConfig(profile.config, id=self._settings.id)
         self.save()
 
     def delete_profile(self, profile_id: UUID) -> BrokerProfile:
         """Delete an inactive profile while retaining at least one profile."""
-        if profile_id == self._active_profile_id:
-            raise ValueError("The active broker profile cannot be deleted.")
-        if len(self._profiles) == 1:
-            raise ValueError("At least one broker profile is required.")
-        profile = self._profiles.pop(profile_id)
+        with self._db.session() as session:
+            rows = session.scalars(self._profile_statement()).all()
+            row = next((item for item in rows if item.id == profile_id), None)
+            if row is None:
+                raise KeyError(f"Unknown broker profile: {profile_id}")
+            if row.is_active:
+                raise ValueError("The active broker profile cannot be deleted.")
+            if len(rows) == 1:
+                raise ValueError("At least one broker profile is required.")
+            profile = self._profile_handles.get(profile_id) or self._to_profile(row)
+            session.delete(row)
+            session.commit()
+
+        self._runtime_configs.pop(profile_id, None)
+        self._runtime_models.pop(profile_id, None)
+        self._profile_handles.pop(profile_id, None)
         self.save()
         return profile
 
     def activate_profile(self, profile_id: UUID, mqtt: MqttConfig | None = None) -> None:
-        """Make a profile active after its MQTT connection has been updated."""
-        profile = self.get_profile(profile_id)
+        """Persist the active profile after its MQTT connection was updated."""
+        with self._db.session() as session:
+            rows = session.scalars(self._profile_statement()).all()
+            selected = next((row for row in rows if row.id == profile_id), None)
+            if selected is None:
+                raise KeyError(f"Unknown broker profile: {profile_id}")
+            for row in rows:
+                row.is_active = row.id == profile_id
+            if mqtt is not None:
+                self._update_mqtt_row(selected, mqtt)
+            session.commit()
+
         if mqtt is not None:
-            profile.config = mqtt
-        self._active_profile_id = profile.id
-        self._settings.mqtt = profile.config
+            self._runtime_configs[profile_id] = mqtt
+        active_config = self.get_mqtt()
+        self._settings = AppConfig(active_config, id=self._settings.id)
         self.save()
 
     def get_observer_workspace(self) -> ObserverWorkspace:
-        """Return the workspace associated with the active broker profile."""
-        return self._active_profile.workspace
+        """Read the active profile's workspace from the database."""
+        return self.get_profile().workspace
 
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
-        """Replace the active profile's workspace."""
-        if workspace.profile_id != self._active_profile.id:
+        """Persist the active workspace's subscription list."""
+        active_profile = self.get_profile()
+        if workspace.profile_id != active_profile.id:
             raise ValueError("The workspace must belong to the active broker profile.")
-        self._active_profile.workspace_id = workspace.id
-        self._active_profile.workspace = workspace
+        if workspace.id != active_profile.workspace.id:
+            raise ValueError("The active broker profile's workspace cannot be replaced.")
+
+        with self._db.session() as session:
+            row = session.scalar(
+                select(ObserverWorkspaceRow)
+                .options(selectinload(ObserverWorkspaceRow.subscriptions))
+                .where(ObserverWorkspaceRow.id == workspace.id)
+            )
+            if row is None:
+                raise KeyError(f"Unknown observer workspace: {workspace.id}")
+            self._replace_subscriptions(session, row, workspace.subscriptions)
+            session.commit()
+
         self.save()
 
     def get_observer_model(self) -> ObserverModel:
-        """Return the observer model associated with the active broker profile."""
-        return self._active_profile.workspace.model
+        """Return the active profile's runtime observer model."""
+        return self.get_profile().workspace.model
 
     def update_observer_model(self, model: ObserverModel) -> None:
-        """Replace runtime state; only its derived subscriptions are persisted."""
-        self._active_profile.workspace.model = model
+        """Retain runtime topic state without writing transient messages to SQLite."""
+        active_profile = self.get_profile()
+        self._runtime_models[active_profile.id] = model
         self.save()
 
     def save(self) -> None:
-        """Persist profiles and subscription lists, excluding runtime topic state."""
-        with self._db.session() as session:
-            existing_rows = session.scalars(select(BrokerProfileRow)).all()
-            for row in existing_rows:
-                session.delete(row)
-            session.flush()
-            session.add_all(
-                BrokerProfileMapper.to_broker_profile_row(
-                    profile,
-                    position=position,
-                    is_active=profile.id == self._active_profile_id,
-                )
-                for position, profile in enumerate(self._profiles.values())
-            )
-            session.commit()
+        """Compatibility hook; mutating operations commit their own transaction."""
 
-    def _load_profiles(self) -> tuple[list[BrokerProfile], UUID | None]:
-        with self._db.session() as session:
-            rows = session.scalars(
-                select(BrokerProfileRow).order_by(BrokerProfileRow.position)
-            ).all()
-            profiles = [BrokerProfileMapper.to_broker_profile(row) for row in rows]
-            active_profile_id = next(
-                (row.id for row in rows if row.is_active),
-                None,
-            )
-            return profiles, active_profile_id
+    @staticmethod
+    def _profile_statement():
+        return select(BrokerProfileRow).options(
+            selectinload(BrokerProfileRow.config),
+            selectinload(BrokerProfileRow.workspace).selectinload(
+                ObserverWorkspaceRow.subscriptions
+            ),
+        )
 
-    @property
-    def _active_profile(self) -> BrokerProfile:
-        return self._profiles[self._active_profile_id]
+    def _to_profile(self, row: BrokerProfileRow) -> BrokerProfile:
+        profile = BrokerProfileMapper.to_broker_profile(row)
+        runtime_config = self._runtime_configs.get(profile.id)
+        if runtime_config is not None:
+            profile.config = replace(
+                profile.config,
+                password=runtime_config.password,
+                id=runtime_config.id,
+            )
+        runtime_model = self._runtime_models.get(profile.id)
+        if runtime_model is not None:
+            profile.workspace.model = runtime_model
+        return profile
+
+    @staticmethod
+    def _update_mqtt_row(row: BrokerProfileRow, config: MqttConfig) -> None:
+        row.config.host = config.host
+        row.config.port = config.port
+        row.config.username = config.username
+        row.config.use_tls = config.use_tls
+
+    @staticmethod
+    def _replace_subscriptions(
+        session,
+        workspace: ObserverWorkspaceRow,
+        subscriptions: tuple[Subscription, ...],
+    ) -> None:
+        previous_rows = list(workspace.subscriptions)
+        workspace.subscriptions = []
+        session.flush()
+        for row in previous_rows:
+            session.delete(row)
+        workspace.subscriptions = [
+            SubscriptionMapper.to_subscription_row(subscription)
+            for subscription in subscriptions
+        ]
 
     @staticmethod
     def _create_profile(
@@ -203,9 +324,7 @@ class BrokerRepository:
             model=observer_model,
             subscriptions=tuple(
                 Subscription(topic_filter)
-                for topic_filter in ObserverModelService.get_all_topics(
-                    observer_model
-                )
+                for topic_filter in ObserverModelService.get_all_topics(observer_model)
             ),
         )
         return BrokerProfile(
@@ -224,10 +343,14 @@ class BrokerRepository:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("A broker profile name is required.")
+        with self._db.session() as session:
+            rows = session.execute(
+                select(BrokerProfileRow.id, BrokerProfileRow.name)
+            ).all()
         if any(
-            profile.id != profile_id
-            and profile.name.casefold() == normalized_name.casefold()
-            for profile in self._profiles.values()
+            row.id != profile_id
+            and row.name.casefold() == normalized_name.casefold()
+            for row in rows
         ):
             raise ValueError("A broker profile with that name already exists.")
         return normalized_name
