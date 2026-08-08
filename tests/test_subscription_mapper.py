@@ -1,8 +1,8 @@
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.database.mappers.subscription_mapper import (
+from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.database.mappers.subscription_mapper import (
     SubscriptionMapper,
 )
-from smart_home_observer.infrastructure.database.models.subscription_row import (
+from topicgate.infrastructure.database.models.subscription_row import (
     SubscriptionRow,
 )
 

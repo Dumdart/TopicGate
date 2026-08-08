@@ -3,6 +3,7 @@
 
 # Database
 smart_observer.db
+topicgate.db
 
 # Distribution / build artifacts
 *.egg-info/

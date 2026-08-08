@@ -1,12 +1,12 @@
 from uuid import uuid4
 
-from smart_home_observer.core.models.observer_model import ObserverModel
-from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.database.mappers.observer_workspace_mapper import (
+from topicgate.core.models.observer_model import ObserverModel
+from topicgate.core.models.observer_workspace import ObserverWorkspace
+from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.database.mappers.observer_workspace_mapper import (
     ObserverWorkspaceMapper,
 )
-from smart_home_observer.services.observer_model_service import ObserverModelService
+from topicgate.services.observer_model_service import ObserverModelService
 
 
 def test_workspace_mapper_reconstructs_the_tree_from_subscriptions() -> None:

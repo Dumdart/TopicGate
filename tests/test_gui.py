@@ -27,20 +27,20 @@ from PySide6.QtWidgets import (
     QTreeView,
 )
 
-from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.broker_profile import BrokerProfile
-from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
-from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.gui.components.about_dialog import AboutDialog
-from smart_home_observer.gui.components.connection_controls import ConnectionControls
-from smart_home_observer.gui.components.broker_settings_dialog import (
+from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.observer_workspace import ObserverWorkspace
+from topicgate.core.models.subscription import Subscription
+from topicgate.gui.components.about_dialog import AboutDialog
+from topicgate.gui.components.connection_controls import ConnectionControls
+from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
 )
-from smart_home_observer.gui.components.observer_tree import ObserverTreePane
-from smart_home_observer.gui.gui import MainWindow
-from smart_home_observer.gui.main_view_model import MainViewModel
+from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.gui import MainWindow
+from topicgate.gui.main_view_model import MainViewModel
 
 
 class FakeGuiRepository:
@@ -163,6 +163,8 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
 
     splitter = window.findChild(QSplitter, "workspaceSplitter")
     log_dock = window.findChild(QDockWidget, "logConsoleDock")
+    assert window.windowTitle() == "TopicGate Desktop"
+    assert window.findChild(QAction, "aboutAction").text() == "About TopicGate"
     assert splitter is not None
     assert splitter.count() == 3
     assert log_dock is not None
@@ -469,10 +471,10 @@ def test_about_action_opens_the_project_about_view() -> None:
 
     dialog = window.findChild(AboutDialog, "aboutDialog")
     assert dialog is not None
-    assert dialog.findChild(QLabel, "aboutTitle").text() == "Smart Home Observer"
+    assert dialog.findChild(QLabel, "aboutTitle").text() == "TopicGate"
     assert dialog.findChild(QLabel, "aboutVersion").text().startswith("Version ")
     assert "SQLite" in dialog.findChild(QLabel, "aboutStorageText").text()
-    assert "github.com/Dumdart/SmartHomeObserver" in dialog.findChild(
+    assert "github.com/Dumdart/TopicGate" in dialog.findChild(
         QLabel,
         "aboutProjectLink",
     ).text()
@@ -523,7 +525,7 @@ def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
         )
 
         with patch(
-            "smart_home_observer.gui.main_window.QMessageBox.question",
+            "topicgate.gui.main_window.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
             delete_action.trigger()
@@ -555,7 +557,7 @@ def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
         local_profile = broker_repository.get_all_profiles()[1]
 
         with patch(
-            "smart_home_observer.gui.main_window.QMessageBox.question",
+            "topicgate.gui.main_window.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ) as question:
             button.menu().actions()[1].trigger()
@@ -648,7 +650,7 @@ def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
         assert dialog is not None
 
         with patch(
-            "smart_home_observer.gui.main_window.QMessageBox.warning"
+            "topicgate.gui.main_window.QMessageBox.warning"
         ) as warning:
             dialog.findChild(QPushButton, "applyBrokerSettingsButton").click()
             await asyncio.sleep(0)

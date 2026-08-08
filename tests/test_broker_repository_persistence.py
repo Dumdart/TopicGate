@@ -1,12 +1,12 @@
 from datetime import datetime, timezone
 
-from smart_home_observer.core.config.app_config import AppConfig
-from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.core.models.observer_model import TopicState
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.database.database_context import DatabaseContext
-from smart_home_observer.infrastructure.repository.broker_repository import BrokerRepository
-from smart_home_observer.services.observer_model_service import ObserverModelService
+from topicgate.core.config.app_config import AppConfig
+from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.database.database_context import DatabaseContext
+from topicgate.infrastructure.repository.broker_repository import BrokerRepository
+from topicgate.services.observer_model_service import ObserverModelService
 
 
 def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree() -> None:

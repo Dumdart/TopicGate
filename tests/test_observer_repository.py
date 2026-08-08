@@ -1,12 +1,12 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.core.models.connection_status import ConnectionStatus
-from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.observer_model import ObserverModel
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.repository.observer_mqtt_repository import (
+from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.connection_status import ConnectionStatus
+from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.observer_model import ObserverModel
+from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
 
@@ -25,7 +25,7 @@ def build_repository(
     manager.subscriptions = ()
 
     with patch(
-        "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
+        "topicgate.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
         return_value=manager,
     ):
         repository = ObserverMqttRepository(
@@ -203,11 +203,11 @@ def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> N
         )
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ) as mqtt_gate,
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ) as subscription_manager,
         ):
@@ -242,11 +242,11 @@ def test_update_broker_replaces_subscriptions_for_the_selected_profile() -> None
 
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ) as mqtt_gate,
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ),
         ):
@@ -272,11 +272,11 @@ def test_update_broker_connects_when_previously_disconnected() -> None:
 
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ),
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ),
         ):
@@ -307,11 +307,11 @@ def test_failed_broker_update_restores_the_previous_connection() -> None:
 
         with (
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.MqttGate",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.MqttGate",
                 return_value=replacement_gate,
             ),
             patch(
-                "smart_home_observer.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
+                "topicgate.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
                 return_value=replacement_manager,
             ),
         ):

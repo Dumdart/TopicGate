@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
-from smart_home_observer.services.observer_model_service import ObserverModelService
+from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.services.observer_model_service import ObserverModelService
 
 
 TOPIC_PATHS = [

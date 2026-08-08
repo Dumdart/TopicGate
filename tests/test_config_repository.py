@@ -1,13 +1,13 @@
 from unittest.mock import MagicMock
 
-from smart_home_observer.core.config.app_config import AppConfig
-from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.core.models.observer_model import ObserverModel
-from smart_home_observer.infrastructure.database.database_context import DatabaseContext
-from smart_home_observer.infrastructure.repository.config_repository import (
+from topicgate.core.config.app_config import AppConfig
+from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.observer_model import ObserverModel
+from topicgate.infrastructure.database.database_context import DatabaseContext
+from topicgate.infrastructure.repository.config_repository import (
     ConfigRepository,
 )
-from smart_home_observer.infrastructure.repository.broker_repository import (
+from topicgate.infrastructure.repository.broker_repository import (
     BrokerRepository,
 )
 
