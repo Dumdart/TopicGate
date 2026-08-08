@@ -1,30 +1,43 @@
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel
 
 
 class ConnectionStatusLabel(QLabel):
-    """Compact connection state intended for the menu bar corner."""
+    """Prominent connection state displayed in the menu bar corner."""
 
     _COLORS = {
-        "connected": "#2e7d32",
-        "connecting": "#9a6700",
-        "reconnecting": "#9a6700",
-        "disconnected": "#b3261e",
+        "connected": ("#1b5e20", "#e8f5e9"),
+        "connecting": ("#7a4f00", "#fff4ce"),
+        "reconnecting": ("#7a4f00", "#fff4ce"),
+        "disconnected": ("#9f1c16", "#fdecea"),
     }
 
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("connectionStatus")
         self.setAccessibleName("MQTT connection status")
-        self.setContentsMargins(8, 0, 12, 0)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumSize(164, 34)
+        self.setContentsMargins(12, 2, 12, 2)
 
     def render(self, status: str) -> None:
-        color = self._COLORS.get(status, "#5f6368")
-        self.setText(f"\u25cf  {status.title()}")
-        self.setStyleSheet(f"color: {color}; font-weight: 600;")
+        foreground, background = self._COLORS.get(
+            status,
+            ("#424242", "#eeeeee"),
+        )
+        self.setText(f"\u25cf  MQTT {status.title()}")
+        self.setStyleSheet(
+            f"color: {foreground};"
+            f"background-color: {background};"
+            f"border: 1px solid {foreground};"
+            "border-radius: 8px;"
+            "font-size: 14px;"
+            "font-weight: 700;"
+            "padding: 4px 12px;"
+        )
         self.setToolTip(f"MQTT connection: {status}")
 
 

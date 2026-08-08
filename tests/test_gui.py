@@ -170,18 +170,17 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     )
     connection_status = window.findChild(QLabel, "connectionStatus")
     connection_controls = window.findChild(ConnectionControls)
-    broker_settings_button = window.findChild(
-        QToolButton,
-        "brokerSettingsButton",
-    )
     assert connection_controls is not None
     assert connection_status is not None
-    assert connection_status.text().endswith("Connected")
-    assert broker_settings_button is not None
-    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner).findChild(
-        QLabel,
-        "connectionStatus",
-    ) is connection_status
+    assert connection_status.text() == "\u25cf  MQTT Connected"
+    assert connection_status.minimumWidth() >= 164
+    assert connection_status.minimumHeight() >= 34
+    assert "font-size: 14px" in connection_status.styleSheet()
+    assert window.findChild(QToolButton, "brokerSettingsButton") is None
+    assert (
+        window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
+        is connection_status
+    )
     assert window.findChild(QToolBar, "observerToolbar") is None
     assert not window.findChild(QAction, "connectAction").isEnabled()
     assert window.findChild(QAction, "reconnectAction").isEnabled()
@@ -378,7 +377,9 @@ def test_observer_tree_renders_a_broker_profile_dropdown() -> None:
     broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
     pane = ObserverTreePane()
     selected: list[UUID] = []
+    edited: list[UUID] = []
     pane.broker_profile_selected.connect(selected.append)
+    pane.edit_broker_profile_requested.connect(edited.append)
 
     pane.render_broker_profiles(
         broker_repository.get_all_profiles(),
@@ -394,9 +395,13 @@ def test_observer_tree_renders_a_broker_profile_dropdown() -> None:
         "Local MQTT",
         "",
         "Add profile...",
-        "Edit current profile...",
+        "Edit profile...",
         "Delete current profile...",
     ]
+    edit_actions = actions[4].menu().actions()
+    assert [action.text() for action in edit_actions] == ["Default", "Local MQTT"]
+    edit_actions[1].trigger()
+    assert edited == [broker_repository.get_all_profiles()[1].id]
     assert actions[0].isChecked()
     assert not actions[0].isEnabled()
 
@@ -443,6 +448,32 @@ def test_profile_menu_creates_a_new_broker_profile() -> None:
         "Local MQTT",
         "Remote",
     ]
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    window.close()
+    application.processEvents()
+
+
+def test_profile_menu_edits_an_inactive_profile_without_connecting() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
+    active_profile = broker_repository.get_profile()
+    inactive_profile = broker_repository.get_all_profiles()[1]
+    view_model = MainViewModel(repository, broker_repository=broker_repository)
+    window = MainWindow(view_model)
+    profile_button = window.findChild(QToolButton, "brokerProfileButton")
+    edit_menu = profile_button.menu().actions()[4].menu()
+
+    edit_menu.actions()[1].trigger()
+    dialog = window.findChild(BrokerSettingsDialog, "brokerSettingsDialog")
+    assert dialog is not None
+    assert dialog.profile_id == inactive_profile.id
+    dialog.findChild(QLineEdit, "brokerHostEdit").setText("fixed.local")
+    dialog.findChild(QPushButton, "saveBrokerSettingsButton").click()
+
+    assert repository.broker_configurations == []
+    assert broker_repository.get_profile().id == active_profile.id
+    assert broker_repository.get_profile(inactive_profile.id).config.host == "fixed.local"
     assert dialog.result() == QDialog.DialogCode.Accepted
     window.close()
     application.processEvents()

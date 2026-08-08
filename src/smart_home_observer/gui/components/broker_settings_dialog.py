@@ -19,6 +19,7 @@ class BrokerSettingsDialog(QDialog):
     """Create or edit a broker profile and its MQTT configuration."""
 
     apply_requested = Signal()
+    save_requested = Signal()
 
     def __init__(
         self,
@@ -26,6 +27,7 @@ class BrokerSettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         creating: bool = False,
+        profile_id: UUID | None = None,
     ) -> None:
         super().__init__(parent)
         self._view_model = view_model
@@ -37,16 +39,26 @@ class BrokerSettingsDialog(QDialog):
             "createBrokerProfileDialog" if creating else "brokerSettingsDialog"
         )
 
-        active_profile = None if creating else view_model.active_broker_profile
-        self._profile_id = None if active_profile is None else active_profile.id
+        selected_profile = None
+        if not creating:
+            selected_profile = (
+                view_model.active_broker_profile
+                if profile_id is None
+                else next(
+                    profile
+                    for profile in view_model.broker_profiles
+                    if profile.id == profile_id
+                )
+            )
+        self._profile_id = None if selected_profile is None else selected_profile.id
         mqtt_config = (
             MqttConfig("localhost", 1883, "", "")
-            if active_profile is None
-            else active_profile.config
+            if selected_profile is None
+            else selected_profile.config
         )
         layout = QFormLayout(self)
         self._name_edit = QLineEdit(
-            "" if active_profile is None else active_profile.name
+            "" if selected_profile is None else selected_profile.name
         )
         self._name_edit.setObjectName("brokerProfileNameEdit")
         self._name_edit.setPlaceholderText("Home broker")
@@ -73,8 +85,21 @@ class BrokerSettingsDialog(QDialog):
 
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self._buttons.setObjectName("brokerSettingsButtons")
+        self._save_button: QPushButton | None = None
+        if not creating:
+            self._save_button = self._buttons.addButton(
+                "Save",
+                QDialogButtonBox.ButtonRole.ApplyRole,
+            )
+            self._save_button.setObjectName("saveBrokerSettingsButton")
         self._apply_button = self._buttons.addButton(
-            "Add profile" if creating else "Apply & reconnect",
+            "Add profile"
+            if creating
+            else (
+                "Save & reconnect"
+                if self._profile_id == view_model.active_broker_profile.id
+                else "Save & connect"
+            ),
             QDialogButtonBox.ButtonRole.ApplyRole,
         )
         self._apply_button.setObjectName("applyBrokerSettingsButton")
@@ -88,6 +113,8 @@ class BrokerSettingsDialog(QDialog):
         self._port_edit.textChanged.connect(self._update_apply_enabled)
         self._port_edit.textEdited.connect(self._mark_port_changed)
         self._use_tls_checkbox.toggled.connect(self._update_tls_port)
+        if self._save_button is not None:
+            self._save_button.clicked.connect(self.save_requested.emit)
         self._apply_button.clicked.connect(self.apply_requested.emit)
         self._buttons.rejected.connect(self.reject)
         self._update_apply_enabled()
@@ -144,6 +171,8 @@ class BrokerSettingsDialog(QDialog):
         ):
             control.setEnabled(not applying)
         self._cancel_button.setEnabled(not applying)
+        if self._save_button is not None:
+            self._save_button.setEnabled(not applying and self._is_valid())
         self._apply_button.setEnabled(not applying and self._is_valid())
 
     def showEvent(self, event: QShowEvent) -> None:
@@ -158,7 +187,10 @@ class BrokerSettingsDialog(QDialog):
             self._port_edit.setText("8883")
 
     def _update_apply_enabled(self, *_args: object) -> None:
-        self._apply_button.setEnabled(self._is_valid())
+        is_valid = self._is_valid()
+        if self._save_button is not None:
+            self._save_button.setEnabled(is_valid)
+        self._apply_button.setEnabled(is_valid)
 
     def _is_valid(self) -> bool:
         try:

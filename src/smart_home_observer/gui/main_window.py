@@ -11,9 +11,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSplitter,
-    QHBoxLayout,
-    QToolButton,
-    QWidget,
 )
 
 from smart_home_observer.core.config.mqtt_config import MqttConfig
@@ -175,21 +172,8 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction(self._about_action)
 
-        self._connection_status_area = QWidget()
-        self._connection_status_area.setObjectName("connectionStatusArea")
-        connection_layout = QHBoxLayout(self._connection_status_area)
-        connection_layout.setContentsMargins(0, 0, 4, 0)
-        connection_layout.setSpacing(4)
-        self._broker_settings_button = QToolButton(self._connection_status_area)
-        self._broker_settings_button.setObjectName("brokerSettingsButton")
-        self._broker_settings_button.setDefaultAction(self._broker_settings_action)
-        self._broker_settings_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextOnly
-        )
-        connection_layout.addWidget(self._broker_settings_button)
-        connection_layout.addWidget(self._connection_controls.status_label)
         self.menuBar().setCornerWidget(
-            self._connection_status_area,
+            self._connection_controls.status_label,
             Qt.Corner.TopRightCorner,
         )
 
@@ -265,8 +249,16 @@ class MainWindow(QMainWindow):
         if subscription is not None:
             self._run_async(self._view_model.add_subscription(subscription))
 
-    def _show_broker_settings_dialog(self) -> None:
-        dialog = BrokerSettingsDialog(self._view_model, self)
+    def _show_broker_settings_dialog(self, profile_id: object = None) -> None:
+        selected_profile_id = profile_id if isinstance(profile_id, UUID) else None
+        dialog = BrokerSettingsDialog(
+            self._view_model,
+            self,
+            profile_id=selected_profile_id,
+        )
+        dialog.save_requested.connect(
+            lambda: self._save_broker_settings(dialog)
+        )
         dialog.apply_requested.connect(
             lambda: self._apply_broker_settings(dialog)
         )
@@ -324,7 +316,7 @@ class MainWindow(QMainWindow):
         mqtt_config: MqttConfig,
     ) -> None:
         try:
-            await self._view_model.update_broker_profile(profile_id, mqtt_config)
+            await self._view_model.activate_broker_profile(profile_id, mqtt_config)
         finally:
             self._observer_tree.set_profile_switching(False)
 
@@ -369,6 +361,23 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _save_broker_settings(self, dialog: BrokerSettingsDialog) -> None:
+        try:
+            profile_name = dialog.profile_name
+            mqtt_config = dialog.mqtt_config
+            profile_id = dialog.profile_id
+            if profile_id is None:
+                return
+            self._view_model.save_broker_profile(
+                profile_id,
+                mqtt_config,
+                profile_name,
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Broker update failed", str(error))
+            return
+        dialog.accept()
+
     async def _apply_broker_settings_async(
         self,
         dialog: BrokerSettingsDialog,
@@ -377,7 +386,7 @@ class MainWindow(QMainWindow):
         mqtt_config: MqttConfig,
     ) -> None:
         try:
-            await self._view_model.update_broker_profile(
+            await self._view_model.activate_broker_profile(
                 profile_id,
                 mqtt_config,
                 profile_name,

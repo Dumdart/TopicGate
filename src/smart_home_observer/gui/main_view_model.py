@@ -278,7 +278,20 @@ class MainViewModel(QObject):
         mqtt_config: MqttConfig,
         profile_name: str | None = None,
     ) -> None:
-        """Reconnect using a profile before making it the active profile."""
+        """Backward-compatible alias for activating a broker profile."""
+        await self.activate_broker_profile(
+            profile_id,
+            mqtt_config,
+            profile_name,
+        )
+
+    async def activate_broker_profile(
+        self,
+        profile_id: UUID,
+        mqtt_config: MqttConfig,
+        profile_name: str | None = None,
+    ) -> None:
+        """Connect with a profile and make it active only after success."""
         if self._broker_repository is None:
             raise RuntimeError("MainViewModel requires a broker repository.")
 
@@ -302,9 +315,7 @@ class MainViewModel(QObject):
         except Exception as error:
             self.log_message.emit(f"Broker update failed: {error}")
             raise
-        profile.name = normalized_name
-        profile.config = mqtt_config
-        self._broker_repository.update_profile(profile)
+        self._persist_broker_profile(profile_id, mqtt_config, normalized_name)
         self._broker_repository.activate_profile(profile_id, mqtt_config)
         if profile_changed:
             self._topic = ""
@@ -315,6 +326,43 @@ class MainViewModel(QObject):
         self.log_message.emit(
             f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
         )
+
+    def save_broker_profile(
+        self,
+        profile_id: UUID,
+        mqtt_config: MqttConfig,
+        profile_name: str | None = None,
+    ) -> BrokerProfile:
+        """Persist broker settings without changing the MQTT connection."""
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+
+        profile = self._persist_broker_profile(
+            profile_id,
+            mqtt_config,
+            profile_name,
+        )
+        self.configuration_changed.emit()
+        self.log_message.emit(f"Saved broker profile: {profile.name}")
+        return profile
+
+    def _persist_broker_profile(
+        self,
+        profile_id: UUID,
+        mqtt_config: MqttConfig,
+        profile_name: str | None,
+    ) -> BrokerProfile:
+        if self._broker_repository is None:
+            raise RuntimeError("MainViewModel requires a broker repository.")
+        profile = self._broker_repository.get_profile(profile_id)
+        profile.name = (
+            self._validated_profile_name(profile_name, profile_id)
+            if profile_name is not None
+            else profile.name
+        )
+        profile.config = mqtt_config
+        self._broker_repository.update_profile(profile)
+        return self._broker_repository.get_profile(profile_id)
 
     def create_broker_profile(
         self,

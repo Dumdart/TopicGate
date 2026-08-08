@@ -25,7 +25,12 @@ class App:
 
     async def run(self) -> int:
         try:
-            await self._services.start_services()
+            try:
+                await self._services.start_services()
+            except ConnectionError as error:
+                self._view_model.log_message.emit(
+                    f"Initial MQTT connection failed: {error}"
+                )
             await self._view_model.start()
             stopped = asyncio.get_running_loop().create_future()
             self._qt_application.aboutToQuit.connect(
