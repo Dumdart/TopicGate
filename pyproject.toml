@@ -3,8 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "smart-home-observer"
-version = "0.1.0"
+name = "topicgate"
+version = "0.2.0"
+description = "Secure local access to your MQTT topics"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -18,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-smart-home-observer = "smart_home_observer.__main__:run"
+topicgate = "topicgate.__main__:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

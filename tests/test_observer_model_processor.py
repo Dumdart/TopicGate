@@ -1,9 +1,9 @@
-from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.observer_model import ObserverModel
-from smart_home_observer.processors.observer_model_mqtt_message_processor import (
+from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.observer_model import ObserverModel
+from topicgate.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
-from smart_home_observer.services.observer_model_service import ObserverModelService
+from topicgate.services.observer_model_service import ObserverModelService
 
 
 def build_model(*topics: str) -> ObserverModel:

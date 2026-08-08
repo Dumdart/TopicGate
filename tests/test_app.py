@@ -1,7 +1,18 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from smart_home_observer.__main__ import App
+from PySide6.QtCore import QCoreApplication
+from PySide6.QtGui import QGuiApplication
+
+from topicgate.__main__ import App, configure_application_identity
+
+
+def test_application_uses_topicgate_identity() -> None:
+    configure_application_identity()
+
+    assert QCoreApplication.organizationName() == "Dumdart"
+    assert QCoreApplication.applicationName() == "TopicGate"
+    assert QGuiApplication.applicationDisplayName() == "TopicGate Desktop"
 
 
 def test_app_remains_open_when_initial_mqtt_connection_fails() -> None:

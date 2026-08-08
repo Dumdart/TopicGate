@@ -1,8 +1,6 @@
-# Smart Home Observer
+# TopicGate
 
-Smart Home Observer is a desktop MQTT explorer for watching smart-home topics, inspecting live message values, and managing subscription filters across multiple broker profiles.
-
-The application is designed for people who operate or troubleshoot MQTT-based devices and want a focused graphical view without setting up a general-purpose MQTT development tool.
+TopicGate provides secure local access to MQTT topics through TopicGate Desktop, a focused application for inspecting live messages and managing subscription filters across multiple broker profiles.
 
 ## Features
 
@@ -28,8 +26,8 @@ Clone the repository, create a virtual environment, and install the project in e
 ### Windows PowerShell
 
 ```powershell
-git clone https://github.com/Dumdart/SmartHomeObserver.git
-cd SmartHomeObserver
+git clone https://github.com/Dumdart/TopicGate.git
+cd TopicGate
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -40,8 +38,8 @@ Copy-Item .env.example .env
 ### Linux or macOS
 
 ```bash
-git clone https://github.com/Dumdart/SmartHomeObserver.git
-cd SmartHomeObserver
+git clone https://github.com/Dumdart/TopicGate.git
+cd TopicGate
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -63,19 +61,18 @@ MQTT_USE_TLS=false
 
 For a new database, these values initialize the default broker profile. After initialization, SQLite is the source of truth for the broker host, port, username, TLS setting, active profile, and subscriptions.
 
-The application asks for the active broker password at launch. The entered value is held in memory only. Submitting an empty password uses `MQTT_PASSWORD` from `.env` as a fallback.
+The application asks for the active broker password at launch. The entered value is held in memory only. Submitting an empty password uses `MQTT_PASSWORD` from `.env` as a fallback. The `.env` file and both supported database filenames are ignored by Git.
 
-Both `.env` and `smart_observer.db` are ignored by Git.
+## Running TopicGate Desktop
 
-## Running the application
-
-With the virtual environment active:
+With the virtual environment active, use either entry point:
 
 ```powershell
-smart-home-observer
+topicgate
+python -m topicgate
 ```
 
-On Windows, `smart-home-observer.exe` is equivalent.
+On Windows, the installed command is `topicgate.exe`.
 
 If the initial MQTT connection fails, the application remains open in a disconnected state so the broker profile can be corrected.
 
@@ -100,15 +97,23 @@ Topics discovered through wildcard subscriptions appear in the observer tree whi
 
 ## Local data
 
-The application creates `smart_observer.db` in the directory from which it is launched. The database stores:
+TopicGate stores `topicgate.db` in the platform application-data directory:
 
-- broker profile names and connection settings, excluding passwords;
-- which profile is active;
-- each profile's subscription filters and options.
+- Windows: `%LOCALAPPDATA%\Dumdart\TopicGate`
+- Linux: `~/.local/share/TopicGate`
+- macOS: `~/Library/Application Support/TopicGate`
 
-Live MQTT payloads, message counters, timestamps, and passwords remain runtime-only.
+Set `TOPICGATE_DATA_DIR` to use an explicit location. The database stores broker profile names and connection settings (excluding passwords), the active profile, and each profile's subscription filters and options. Live MQTT payloads, message counters, timestamps, and passwords remain runtime-only.
 
-To start with a new configuration, close the application and move or delete `smart_observer.db`. This permanently removes the saved profiles and subscriptions unless the file is backed up first.
+To start with a new configuration, close TopicGate and move or delete `topicgate.db`. This permanently removes saved profiles and subscriptions unless the file is backed up first.
+
+### Migrating from Smart Home Observer
+
+Existing `smart_observer.db` data in the launch directory is migrated automatically on first TopicGate launch. The original file is retained as a recovery copy. If both old and new databases exist, TopicGate uses `topicgate.db` and does not merge them.
+
+## Roadmap terminology
+
+TopicGate Desktop is the currently available application. TopicGate Service, TopicGate API, and the future `topicgate-client` package are roadmap concepts and are not yet available.
 
 ## Development
 
@@ -122,4 +127,4 @@ The project uses PySide6 and qasync for the desktop interface, paho-mqtt for MQT
 
 ## License
 
-Smart Home Observer is available under the [MIT License](LICENCE).
+TopicGate is available under the [MIT License](LICENCE).

@@ -4,12 +4,12 @@ from unittest.mock import patch
 
 from paho.mqtt.reasoncodes import ReasonCode
 
-from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.mqtt.mqtt_client import MqttClient
-from smart_home_observer.infrastructure.mqtt.mqtt_gate import MqttGate
-from smart_home_observer.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
+from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.mqtt.mqtt_client import MqttClient
+from topicgate.infrastructure.mqtt.mqtt_gate import MqttGate
+from topicgate.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
 
 
 class FakePahoClient:
@@ -108,7 +108,7 @@ def config():
 def test_async_gate_registers_message_callback_before_subscribing():
     async def scenario():
         FakePahoClient.instances.clear()
-        with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+        with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
             gate = MqttGate(config(), TestCallbacks(), ["SmartHome/door/status"])
             await gate.start(timeout=1)
             await gate.subscribe()
@@ -130,7 +130,7 @@ def test_tls_client_can_disconnect_and_reconnect() -> None:
             use_tls=True,
         )
         with patch(
-            "smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client",
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
             FakePahoClient,
         ):
             client = MqttClient(tls_config)
@@ -152,7 +152,7 @@ def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
         async def on_message(client, userdata, message):
             pass
 
-        with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+        with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
             gate = MqttGate(
                 config(),
                 TestCallbacks(),
@@ -215,7 +215,7 @@ def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
             values.extend((mid, properties, reason_codes))
             received.set()
 
-        with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+        with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
             client = MqttClient(config())
             await client.connect(timeout=1)
             await client.unsubscribe("SmartHome/door/status", on_unsubscribe)
@@ -238,7 +238,7 @@ def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
             values.extend((disconnect_flags, reason_code, properties))
             received.set()
 
-        with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+        with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
             client = MqttClient(config())
             await client.connect(timeout=1)
             client._on_disconnect = on_disconnect
@@ -262,7 +262,7 @@ def test_async_message_callback_is_awaited_on_application_loop():
             received_message = message
             received.set()
 
-        with patch("smart_home_observer.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+        with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
             client = MqttClient(config())
             await client.connect(timeout=1)
             client.message_callback_add("SmartHome/door/status", on_message)

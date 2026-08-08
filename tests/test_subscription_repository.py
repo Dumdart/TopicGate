@@ -1,8 +1,8 @@
 import pytest
 
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.infrastructure.database.database_context import DatabaseContext
-from smart_home_observer.infrastructure.repository.subscription_repository import (
+from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.database.database_context import DatabaseContext
+from topicgate.infrastructure.repository.subscription_repository import (
     SubscriptionRepository,
 )
 

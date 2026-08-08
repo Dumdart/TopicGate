@@ -1,8 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.processors.subscription_manager import SubscriptionManager
+from topicgate.core.models.subscription import Subscription
+from topicgate.processors.subscription_manager import SubscriptionManager
 
 
 def build_manager(

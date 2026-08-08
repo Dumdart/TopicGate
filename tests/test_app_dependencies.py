@@ -1,11 +1,14 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from smart_home_observer.app.app_dependencies import AppDependencies
-from smart_home_observer.core.config.app_config import AppConfig
-from smart_home_observer.core.config.mqtt_config import MqttConfig
+from topicgate.app.app_dependencies import AppDependencies
+from topicgate.core.config.app_config import AppConfig
+from topicgate.core.config.mqtt_config import MqttConfig
 
 
-def test_app_dependencies_applies_entered_password_only_to_runtime_settings() -> None:
+def test_app_dependencies_applies_entered_password_only_to_runtime_settings(
+    tmp_path: Path,
+) -> None:
     stored_settings = AppConfig(
         MqttConfig("broker", 1883, "observer", "environment-secret")
     )
@@ -19,21 +22,25 @@ def test_app_dependencies_applies_entered_password_only_to_runtime_settings() ->
 
     with (
         patch(
-            "smart_home_observer.app.app_dependencies.DatabaseContext",
+            "topicgate.app.app_dependencies.DatabaseContext",
             return_value=database,
         ),
         patch(
-            "smart_home_observer.app.app_dependencies.ConfigLoader"
+            "topicgate.app.app_dependencies.ConfigLoader"
         ) as config_loader,
         patch(
-            "smart_home_observer.app.app_dependencies.BrokerRepository",
+            "topicgate.app.app_dependencies.BrokerRepository",
             return_value=broker_repository,
         ) as repository_type,
-        patch("smart_home_observer.app.app_dependencies.ObserverMqttRepository"),
+        patch("topicgate.app.app_dependencies.ObserverMqttRepository"),
     ):
         config_loader.return_value.load_config.return_value = stored_settings
 
-        AppDependencies(password_reader=lambda _prompt: "entered-secret")
+        AppDependencies(
+            password_reader=lambda _prompt: "entered-secret",
+            data_dir=tmp_path,
+            legacy_database=tmp_path / "missing.db",
+        )
 
     runtime_settings = repository_type.call_args.args[1]
     assert runtime_settings.mqtt.host == stored_settings.mqtt.host

@@ -1,6 +1,6 @@
 import asyncio
 
-from smart_home_observer.app.service_container import ServiceContainer
+from topicgate.app.service_container import ServiceContainer
 
 
 class FakeService:

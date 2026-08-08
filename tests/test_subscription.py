@@ -1,6 +1,6 @@
 import pytest
 
-from smart_home_observer.core.models.subscription import Subscription
+from topicgate.core.models.subscription import Subscription
 
 
 def test_subscription_rejects_malformed_wildcards() -> None:

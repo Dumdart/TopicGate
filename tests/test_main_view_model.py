@@ -3,17 +3,17 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from smart_home_observer.core.models.mqtt_message import MqttMessage
-from smart_home_observer.core.models.broker_profile import BrokerProfile
-from smart_home_observer.core.models.observer_model import (
+from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.observer_model import (
     ObserverModel,
     TopicNode,
     TopicState,
 )
-from smart_home_observer.core.models.observer_workspace import ObserverWorkspace
-from smart_home_observer.core.models.subscription import Subscription
-from smart_home_observer.core.config.mqtt_config import MqttConfig
-from smart_home_observer.gui.main_view_model import MainViewModel, mqtt_filter_matches
+from topicgate.core.models.observer_workspace import ObserverWorkspace
+from topicgate.core.models.subscription import Subscription
+from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.gui.main_view_model import MainViewModel, mqtt_filter_matches
 
 
 class FakeObserverRepository:
