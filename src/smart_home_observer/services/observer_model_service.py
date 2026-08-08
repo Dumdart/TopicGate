@@ -1,5 +1,5 @@
 from copy import deepcopy
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 
 from smart_home_observer.core.models.observer_model import (
     ObserverModel,
@@ -70,6 +70,13 @@ class ObserverModelService:
             node = child
 
         return node
+
+    @staticmethod
+    def add_topics(model: ObserverModel, topics: Iterable[str]) -> ObserverModel:
+        """Add topic paths to an observer tree and return the updated model."""
+        for topic in topics:
+            ObserverModelService.find_or_create_node(model, topic)
+        return model
 
     @staticmethod
     def _scan_nodes(model: ObserverModel) -> Iterator[tuple[str, TopicNode]]:

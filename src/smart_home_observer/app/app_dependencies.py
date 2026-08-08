@@ -17,9 +17,9 @@ class AppDependencies:
         # Load configuration
         self._db_context = DatabaseContext("sqlite:///smart_observer.db")
 
+        self.subscription_repository = SubscriptionRepository(self._db_context)
         self.config_repository = ConfigRepository(self._db_context)
         self.broker_repository = BrokerRepository(self._db_context)
-        self.subscription_repository = SubscriptionRepository(self._db_context)
 
         profile = self.broker_repository.get_profile()
 

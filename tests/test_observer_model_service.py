@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from smart_home_observer.core.models.observer_model import TopicState
+from smart_home_observer.core.models.observer_model import ObserverModel, TopicState
 from smart_home_observer.services.observer_model_service import ObserverModelService
 from smart_home_observer.services.topic_service import TopicService
 
@@ -68,3 +68,33 @@ def test_deep_copy_returns_an_independent_observer_model() -> None:
         ].segment
         == "status"
     )
+
+
+def test_add_topics_builds_shared_observer_tree_paths() -> None:
+    model = ObserverModel(root_stats=[])
+
+    result = ObserverModelService.add_topics(
+        model,
+        [
+            "SmartHome/kitchen/status",
+            "SmartHome/kitchen/temperature",
+            "bridge/#",
+        ],
+    )
+
+    assert result is model
+    assert ObserverModelService.get_all_topics(model) == [
+        "SmartHome/kitchen/status",
+        "SmartHome/kitchen/temperature",
+        "bridge/#",
+    ]
+    assert len(model.root_stats) == 2
+
+
+def test_add_topics_does_not_duplicate_existing_nodes() -> None:
+    model = ObserverModel(root_stats=[])
+
+    ObserverModelService.add_topics(model, ["home/status", "home/status"])
+
+    assert ObserverModelService.get_all_topics(model) == ["home/status"]
+    assert len(ObserverModelService.get_all_nodes(model)) == 2

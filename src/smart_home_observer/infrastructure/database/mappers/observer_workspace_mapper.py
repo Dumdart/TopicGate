@@ -30,9 +30,10 @@ class ObserverWorkspaceMapper:
             SubscriptionMapper.to_subscription(subscription)
             for subscription in row.subscriptions
         )
-        model = ObserverModel(root_stats=[])
-        for subscription in subscriptions:
-            ObserverModelService.find_or_create_node(model, subscription.topic_filter)
+        model = ObserverModelService.add_topics(
+            ObserverModel(root_stats=[]),
+            (subscription.topic_filter for subscription in subscriptions),
+        )
         return ObserverWorkspace(
             id=row.id,
             profile_id=row.profile_id,
