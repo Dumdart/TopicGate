@@ -28,6 +28,7 @@ class FakeObserverRepository:
         self.connection_operations: list[str] = []
         self.removed_subscriptions: list[Subscription] = []
         self.broker_configurations: list[MqttConfig] = []
+        self.dropped_message_count = 0
 
     def get(self) -> ObserverModel:
         return ObserverModel(root_stats=[], topic_states=dict(self._states))
@@ -38,6 +39,12 @@ class FakeObserverRepository:
     async def messages(self) -> AsyncIterator[MqttMessage]:
         while True:
             yield await self._messages.get()
+
+    def drain_pending_messages(self) -> tuple[MqttMessage, ...]:
+        messages: list[MqttMessage] = []
+        while not self._messages.empty():
+            messages.append(self._messages.get_nowait())
+        return tuple(messages)
 
     def publish(self, message: MqttMessage) -> None:
         self._states[message.topic] = TopicState(
@@ -149,6 +156,35 @@ def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
         assert view_model.received_at == "2026-08-04T12:00:00+00:00"
 
         await view_model.stop()
+
+    asyncio.run(scenario())
+
+
+def test_view_model_batches_notifications_and_reports_dropped_messages() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        repository.dropped_message_count = 4
+        view_model = MainViewModel(repository, "untrusted/topic")
+        logs: list[str] = []
+        view_model.log_message.connect(logs.append)
+
+        for index in range(3):
+            repository.publish(
+                MqttMessage(
+                    "untrusted/topic", str(index).encode(), 0, False
+                )
+            )
+
+        await view_model.start()
+        await asyncio.sleep(0)
+        await view_model.stop()
+
+        assert view_model.value == "2"
+        assert view_model.dropped_message_count == "4"
+        assert logs == [
+            "Received 3 MQTT messages (latest: untrusted/topic)",
+            "Dropped 4 MQTT messages due to overload (4 total)",
+        ]
 
     asyncio.run(scenario())
 

@@ -7,7 +7,10 @@ from paho.mqtt.reasoncodes import ReasonCode
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.subscription import Subscription
-from topicgate.core.payload_limits import MAX_STORED_PAYLOAD_BYTES
+from topicgate.core.payload_limits import (
+    MAX_PENDING_INGRESS_MESSAGES,
+    MAX_STORED_PAYLOAD_BYTES,
+)
 from topicgate.infrastructure.mqtt.mqtt_client import MqttClient
 from topicgate.infrastructure.mqtt.mqtt_gate import MqttGate
 from topicgate.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
@@ -311,5 +314,76 @@ def test_message_callback_bounds_attacker_controlled_payload() -> None:
 
         assert received_message.payload == payload[:MAX_STORED_PAYLOAD_BYTES]
         assert received_message.payload_size == len(payload)
+
+    asyncio.run(scenario())
+
+
+def test_message_callback_flood_is_bounded_before_loop_scheduling() -> None:
+    async def scenario() -> None:
+        received: list[MqttMessage] = []
+        release_callback = asyncio.Event()
+
+        async def on_message(client, userdata, message):
+            received.append(message)
+            await release_callback.wait()
+
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(config())
+            await client.connect(timeout=1)
+            client.message_callback_add("untrusted/topic", on_message)
+            fake_client = FakePahoClient.instances[-1]
+            overflow = 10
+
+            fake_client.message_callback(
+                fake_client,
+                None,
+                SimpleNamespace(
+                    topic="untrusted/topic",
+                    payload=b"0",
+                    qos=0,
+                    retain=False,
+                ),
+            )
+            while not received:
+                await asyncio.sleep(0)
+
+            loop = asyncio.get_running_loop()
+            with patch.object(
+                loop,
+                "call_soon_threadsafe",
+                wraps=loop.call_soon_threadsafe,
+            ) as schedule:
+                for index in range(
+                    1, MAX_PENDING_INGRESS_MESSAGES + overflow + 1
+                ):
+                    fake_client.message_callback(
+                        fake_client,
+                        None,
+                        SimpleNamespace(
+                            topic="untrusted/topic",
+                            payload=str(index).encode(),
+                            qos=0,
+                            retain=False,
+                        ),
+                    )
+
+                assert schedule.call_count == 0
+
+            assert client.dropped_message_count == overflow
+            assert len(client._pending_messages) == MAX_PENDING_INGRESS_MESSAGES
+            assert [message.payload for message in received] == [b"0"]
+
+            release_callback.set()
+            while len(received) <= MAX_PENDING_INGRESS_MESSAGES:
+                await asyncio.sleep(0)
+            await client.disconnect()
+
+        assert received[1].payload == str(overflow + 1).encode()
+        assert received[-1].payload == str(
+            MAX_PENDING_INGRESS_MESSAGES + overflow
+        ).encode()
 
     asyncio.run(scenario())

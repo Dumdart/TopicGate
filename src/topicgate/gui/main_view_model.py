@@ -66,6 +66,7 @@ class MainViewModel(QObject):
         self._connection_status = self._status_text(
             getattr(repository, "connection_status", "disconnected")
         )
+        self._reported_dropped_messages = 0
 
     @property
     def title(self) -> str:
@@ -150,6 +151,10 @@ class MainViewModel(QObject):
     @property
     def message_count(self) -> str:
         return "0" if self._state is None else str(self._state.message_count)
+
+    @property
+    def dropped_message_count(self) -> str:
+        return str(getattr(self._repository, "dropped_message_count", 0))
 
     @property
     def connection_status(self) -> str:
@@ -462,12 +467,36 @@ class MainViewModel(QObject):
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():
-            self.log_message.emit(
-                f"Received {message.topic} (QoS {message.qos}, "
-                f"retained {'yes' if message.retain else 'no'})"
+            messages = (message,)
+            drain_pending = getattr(
+                self._repository, "drain_pending_messages", None
             )
+            if drain_pending is not None:
+                messages += drain_pending()
+
+            latest = messages[-1]
+            if len(messages) == 1:
+                self.log_message.emit(
+                    f"Received {latest.topic} (QoS {latest.qos}, "
+                    f"retained {'yes' if latest.retain else 'no'})"
+                )
+            else:
+                self.log_message.emit(
+                    f"Received {len(messages)} MQTT messages "
+                    f"(latest: {latest.topic})"
+                )
+
+            dropped = int(self.dropped_message_count)
+            if dropped > self._reported_dropped_messages:
+                newly_dropped = dropped - self._reported_dropped_messages
+                self.log_message.emit(
+                    f"Dropped {newly_dropped} MQTT messages due to overload "
+                    f"({dropped} total)"
+                )
+                self._reported_dropped_messages = dropped
+
             self.topics_changed.emit()
-            if message.topic == self._topic:
+            if any(item.topic == self._topic for item in messages):
                 self.refresh()
 
     async def _observe_connection_statuses(self) -> None:

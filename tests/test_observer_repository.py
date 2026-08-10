@@ -93,6 +93,7 @@ def test_message_notification_backlog_is_bounded() -> None:
         )
 
     assert repository.message_queue.qsize() == MAX_PENDING_MESSAGE_NOTIFICATIONS
+    assert repository.dropped_message_count == 1
     assert repository.message_queue.get_nowait().payload == b"1"
     assert repository.get_value("untrusted/topic") == str(
         MAX_PENDING_MESSAGE_NOTIFICATIONS

@@ -36,6 +36,7 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
         )
         self.connection_status_queue: asyncio.Queue[ConnectionStatus] = asyncio.Queue()
         self.connection_status = ConnectionStatus.DISCONNECTED
+        self._dropped_message_count = 0
         self._is_running = False
         self._is_stopping = False
         self._lifecycle_lock = asyncio.Lock()
@@ -157,7 +158,18 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
         self._message_processor.process(self._state, msg)
         if self.message_queue.full():
             self.message_queue.get_nowait()
+            self._dropped_message_count += 1
         self.message_queue.put_nowait(msg)
+
+    @property
+    def dropped_message_count(self) -> int:
+        return self._dropped_message_count + self._mqtt_gate.dropped_message_count
+
+    def drain_pending_messages(self) -> tuple[MqttMessage, ...]:
+        messages: list[MqttMessage] = []
+        while not self.message_queue.empty():
+            messages.append(self.message_queue.get_nowait())
+        return tuple(messages)
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:

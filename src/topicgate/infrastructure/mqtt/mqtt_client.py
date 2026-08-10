@@ -1,15 +1,21 @@
 import asyncio
 import inspect
 import ssl
+from collections import deque
 from collections.abc import Callable
+from threading import Lock
 from typing import Any
 
 import paho.mqtt.client as paho
 from paho.mqtt.subscribeoptions import SubscribeOptions
 
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.payload_limits import MAX_STORED_PAYLOAD_BYTES
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.payload_limits import (
+    MAX_MESSAGE_CALLBACK_BATCH,
+    MAX_PENDING_INGRESS_MESSAGES,
+    MAX_STORED_PAYLOAD_BYTES,
+)
 
 from ...core.config.mqtt_config import MqttConfig
 
@@ -26,6 +32,11 @@ class MqttClient:
         self._connected = False
         self._loop_started = False
         self._configured = False
+        self._pending_messages: deque[tuple[Callback, tuple[Any, ...]]] = deque()
+        self._pending_messages_lock = Lock()
+        self._message_drain_scheduled = False
+        self._message_drain_task: asyncio.Task[None] | None = None
+        self._dropped_message_count = 0
 
         self._on_connect: Callback | None = None
         self._on_disconnect: Callback | None = None
@@ -44,6 +55,11 @@ class MqttClient:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def dropped_message_count(self) -> int:
+        with self._pending_messages_lock:
+            return self._dropped_message_count
 
     async def connect(
         self,
@@ -188,14 +204,73 @@ class MqttClient:
                 retain=bool(message.retain),
                 payload_size=payload_size,
             )
-            self._call_on_loop(
-                self._run_callback, callback, client, userdata, mqtt_message
+            self._enqueue_message_callback(
+                callback, client, userdata, mqtt_message
             )
 
         self.client.message_callback_add(topic, forward)
 
     def message_callback_remove(self, topic: str) -> None:
         self.client.message_callback_remove(topic)
+
+    def _enqueue_message_callback(self, callback: Callback, *args: Any) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+
+        should_schedule = False
+        # Check and update admission state atomically with the Paho thread.
+        with self._pending_messages_lock:
+            if len(self._pending_messages) >= MAX_PENDING_INGRESS_MESSAGES:
+                self._pending_messages.popleft()
+                self._dropped_message_count += 1
+            self._pending_messages.append((callback, args))
+            if not self._message_drain_scheduled:
+                self._message_drain_scheduled = True
+                should_schedule = True
+
+        if should_schedule:
+            try:
+                loop.call_soon_threadsafe(self._start_message_drain)
+            except RuntimeError:
+                with self._pending_messages_lock:
+                    self._dropped_message_count += len(self._pending_messages)
+                    self._pending_messages.clear()
+                    self._message_drain_scheduled = False
+
+    def _start_message_drain(self) -> None:
+        self._message_drain_task = asyncio.create_task(
+            self._drain_message_callbacks()
+        )
+
+    async def _drain_message_callbacks(self) -> None:
+        processed = 0
+        while True:
+            with self._pending_messages_lock:
+                if not self._pending_messages:
+                    self._message_drain_scheduled = False
+                    self._message_drain_task = None
+                    return
+                callback, args = self._pending_messages.popleft()
+
+            try:
+                result = callback(*args)
+                if inspect.isawaitable(result):
+                    await result
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                asyncio.get_running_loop().call_exception_handler(
+                    {
+                        "message": "MQTT message callback failed",
+                        "exception": ex,
+                    }
+                )
+
+            processed += 1
+            if processed >= MAX_MESSAGE_CALLBACK_BATCH:
+                processed = 0
+                await asyncio.sleep(0)
 
     def _configure(self) -> None:
         if self._configured:
