@@ -175,10 +175,14 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     connection_controls = window.findChild(ConnectionControls)
     assert connection_controls is not None
     assert connection_status is not None
-    assert connection_status.text() == "\u25cf  MQTT Connected"
-    assert connection_status.minimumWidth() >= 164
+    assert connection_status.text() == "MQTT Connected"
+    assert connection_status.status == "connected"
+    assert connection_status.minimumWidth() >= 188
     assert connection_status.minimumHeight() >= 34
-    assert "font-size: 14px" in connection_status.styleSheet()
+    assert connection_status.accessibleDescription() == (
+        "MQTT connection is connected."
+    )
+    assert connection_status.toolTip() == "MQTT broker is connected"
     assert window.findChild(QToolButton, "brokerSettingsButton") is None
     assert (
         window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
