@@ -9,6 +9,10 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.payload_limits import (
+    MAX_FORMATTED_JSON_CHARACTERS,
+    MAX_RENDERED_PAYLOAD_BYTES,
+)
 from topicgate.gui.broker_state_reader import BrokerStateReader
 from topicgate.gui.observer_state_reader import ObserverStateReader
 from topicgate.services.observer_model_service import ObserverModelService
@@ -75,15 +79,16 @@ class MainViewModel(QObject):
     def decoded_payload(self) -> str:
         if self._state is None:
             return "Waiting for a message"
+        payload = self._state.payload[:MAX_RENDERED_PAYLOAD_BYTES]
+        notice = self._payload_truncation_notice()
         try:
-            decoded = self._state.payload.decode("utf-8")
+            decoded = payload.decode("utf-8")
         except UnicodeDecodeError:
-            return "Binary payload (see raw payload below)"
+            return "Binary payload (see raw payload below)" + notice
 
-        try:
-            return json.dumps(json.loads(decoded), indent=2, ensure_ascii=False)
-        except (json.JSONDecodeError, TypeError):
-            return decoded
+        if not notice:
+            decoded = self._format_json(decoded)
+        return decoded + notice
 
     @property
     def value(self) -> str:
@@ -92,7 +97,41 @@ class MainViewModel(QObject):
 
     @property
     def raw_payload(self) -> str:
-        return "-" if self._state is None else self._state.payload.hex(" ")
+        if self._state is None:
+            return "-"
+        payload = self._state.payload[:MAX_RENDERED_PAYLOAD_BYTES]
+        return payload.hex(" ") + self._payload_truncation_notice()
+
+    def _payload_truncation_notice(self) -> str:
+        if self._state is None:
+            return ""
+        payload_size = self._state.payload_size or len(self._state.payload)
+        visible_size = min(len(self._state.payload), MAX_RENDERED_PAYLOAD_BYTES)
+        if payload_size <= visible_size:
+            return ""
+        return (
+            f"\n\n[Payload truncated: showing {visible_size} of "
+            f"{payload_size} bytes]"
+        )
+
+    @staticmethod
+    def _format_json(decoded: str) -> str:
+        try:
+            value = json.loads(decoded)
+            chunks: list[str] = []
+            length = 0
+            encoder = json.JSONEncoder(indent=2, ensure_ascii=False)
+            for chunk in encoder.iterencode(value):
+                remaining = MAX_FORMATTED_JSON_CHARACTERS - length
+                if len(chunk) > remaining:
+                    chunks.append(chunk[:remaining])
+                    chunks.append("\n\n[Formatted JSON truncated]")
+                    break
+                chunks.append(chunk)
+                length += len(chunk)
+            return "".join(chunks)
+        except (json.JSONDecodeError, RecursionError, TypeError):
+            return decoded
 
     @property
     def received_at(self) -> str:

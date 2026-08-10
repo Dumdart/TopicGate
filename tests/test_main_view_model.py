@@ -14,6 +14,10 @@ from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.gui.main_view_model import MainViewModel, mqtt_filter_matches
+from topicgate.core.payload_limits import (
+    MAX_FORMATTED_JSON_CHARACTERS,
+    MAX_RENDERED_PAYLOAD_BYTES,
+)
 
 
 class FakeObserverRepository:
@@ -165,6 +169,43 @@ def test_discovered_topic_updates_details_and_only_matching_filter_is_editable()
 
     assert view_model.decoded_payload == "42"
     assert view_model.selected_subscription is None
+
+
+def test_payload_rendering_is_bounded_and_reports_truncation() -> None:
+    repository = FakeObserverRepository()
+    payload = b'"' + b"x" * (MAX_RENDERED_PAYLOAD_BYTES + 100) + b'"'
+    repository.publish(MqttMessage("untrusted/topic", payload, 0, False))
+    view_model = MainViewModel(repository, "untrusted/topic")
+    view_model.refresh()
+
+    notice = (
+        f"[Payload truncated: showing {MAX_RENDERED_PAYLOAD_BYTES} of "
+        f"{len(payload)} bytes]"
+    )
+    assert view_model.decoded_payload.endswith(notice)
+    assert len(view_model.decoded_payload) < MAX_RENDERED_PAYLOAD_BYTES + 100
+    assert view_model.raw_payload.endswith(notice)
+    assert len(view_model.raw_payload) < MAX_RENDERED_PAYLOAD_BYTES * 3 + 100
+
+
+def test_small_json_payload_is_still_pretty_printed() -> None:
+    repository = FakeObserverRepository()
+    repository.publish(MqttMessage("trusted/topic", b'{"open":true}', 0, False))
+    view_model = MainViewModel(repository, "trusted/topic")
+    view_model.refresh()
+
+    assert view_model.decoded_payload == '{\n  "open": true\n}'
+
+
+def test_size_amplified_json_formatting_is_bounded() -> None:
+    repository = FakeObserverRepository()
+    payload = ("[" * 500 + "0" + "]" * 500).encode()
+    repository.publish(MqttMessage("untrusted/json", payload, 0, False))
+    view_model = MainViewModel(repository, "untrusted/json")
+    view_model.refresh()
+
+    assert view_model.decoded_payload.endswith("[Formatted JSON truncated]")
+    assert len(view_model.decoded_payload) < MAX_FORMATTED_JSON_CHARACTERS + 100
 
 
 def test_topic_paths_include_configured_filters_and_discovered_topics() -> None:

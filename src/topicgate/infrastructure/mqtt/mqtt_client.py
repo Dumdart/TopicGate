@@ -8,6 +8,7 @@ import paho.mqtt.client as paho
 from paho.mqtt.subscribeoptions import SubscribeOptions
 
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.payload_limits import MAX_STORED_PAYLOAD_BYTES
 from topicgate.core.models.subscription import Subscription
 
 from ...core.config.mqtt_config import MqttConfig
@@ -179,11 +180,13 @@ class MqttClient:
 
     def message_callback_add(self, topic: str, callback: Callback):
         def forward(client: Any, userdata: Any, message: Any):
+            payload_size = len(message.payload)
             mqtt_message = MqttMessage(
                 topic=str(message.topic),
-                payload=bytes(message.payload),
+                payload=bytes(message.payload[:MAX_STORED_PAYLOAD_BYTES]),
                 qos=int(message.qos),
                 retain=bool(message.retain),
+                payload_size=payload_size,
             )
             self._call_on_loop(
                 self._run_callback, callback, client, userdata, mqtt_message

@@ -7,6 +7,7 @@ from paho.mqtt.reasoncodes import ReasonCode
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.payload_limits import MAX_STORED_PAYLOAD_BYTES
 from topicgate.infrastructure.mqtt.mqtt_client import MqttClient
 from topicgate.infrastructure.mqtt.mqtt_gate import MqttGate
 from topicgate.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
@@ -277,5 +278,38 @@ def test_async_message_callback_is_awaited_on_application_loop():
         assert received_message == MqttMessage(
             topic="SmartHome/door/status", payload=b"on", qos=1, retain=False
         )
+
+    asyncio.run(scenario())
+
+
+def test_message_callback_bounds_attacker_controlled_payload() -> None:
+    async def scenario() -> None:
+        received = asyncio.Event()
+        received_message = None
+
+        async def on_message(client, userdata, message):
+            nonlocal received_message
+            received_message = message
+            received.set()
+
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(config())
+            await client.connect(timeout=1)
+            client.message_callback_add("untrusted/topic", on_message)
+            fake_client = FakePahoClient.instances[-1]
+            payload = b"x" * (MAX_STORED_PAYLOAD_BYTES + 1)
+            paho_message = SimpleNamespace(
+                topic="untrusted/topic", payload=payload, qos=0, retain=False
+            )
+
+            fake_client.message_callback(fake_client, None, paho_message)
+            await asyncio.wait_for(received.wait(), timeout=1)
+            await client.disconnect()
+
+        assert received_message.payload == payload[:MAX_STORED_PAYLOAD_BYTES]
+        assert received_message.payload_size == len(payload)
 
     asyncio.run(scenario())

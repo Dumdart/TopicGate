@@ -51,3 +51,15 @@ def test_process_counts_messages_per_topic() -> None:
     processor.process(model, MqttMessage("SmartHome/device/value", b"2", 0, False))
 
     assert model.topic_states["SmartHome/device/value"].message_count == 2
+
+
+def test_process_preserves_original_size_of_a_truncated_payload() -> None:
+    model = build_model()
+    message = MqttMessage(
+        "untrusted/topic", b"truncated", 0, False, payload_size=100_000
+    )
+
+    ObserverModelMqttMessageProcessor().process(model, message)
+
+    assert model.topic_states[message.topic].payload == b"truncated"
+    assert model.topic_states[message.topic].payload_size == 100_000

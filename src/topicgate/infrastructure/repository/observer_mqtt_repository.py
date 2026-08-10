@@ -8,6 +8,7 @@ from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.mqtt.callbacks.observer_repository_callbacks import (
     ObserverRepositoryCallbacks,
 )
@@ -30,7 +31,9 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
     ) -> None:
         self._state = model if model is not None else ObserverModel(root_stats=[])
         self._message_processor = ObserverModelMqttMessageProcessor()
-        self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue()
+        self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
+            maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
+        )
         self.connection_status_queue: asyncio.Queue[ConnectionStatus] = asyncio.Queue()
         self.connection_status = ConnectionStatus.DISCONNECTED
         self._is_running = False
@@ -152,6 +155,8 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
         self._message_processor.process(self._state, msg)
+        if self.message_queue.full():
+            self.message_queue.get_nowait()
         self.message_queue.put_nowait(msg)
 
     @property

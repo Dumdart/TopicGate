@@ -6,6 +6,7 @@ from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
@@ -79,6 +80,23 @@ def test_repository_updates_topic_state_before_publishing_message() -> None:
         await stream.aclose()
 
     asyncio.run(scenario())
+
+
+def test_message_notification_backlog_is_bounded() -> None:
+    repository, _ = build_repository()
+
+    for index in range(MAX_PENDING_MESSAGE_NOTIFICATIONS + 1):
+        repository.handle_message(
+            None,
+            None,
+            MqttMessage("untrusted/topic", str(index).encode(), 0, False),
+        )
+
+    assert repository.message_queue.qsize() == MAX_PENDING_MESSAGE_NOTIFICATIONS
+    assert repository.message_queue.get_nowait().payload == b"1"
+    assert repository.get_value("untrusted/topic") == str(
+        MAX_PENDING_MESSAGE_NOTIFICATIONS
+    ).encode()
 
 
 def test_repository_delegates_subscription_operations() -> None:

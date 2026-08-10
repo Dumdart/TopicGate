@@ -17,6 +17,7 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
             qos=message.qos,
             retain=message.retain,
             recieved_at=datetime.now(timezone.utc),
+            payload_size=message.payload_size,
             message_count=(
                 1 if previous_state is None else previous_state.message_count + 1
             ),
