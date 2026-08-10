@@ -380,7 +380,8 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
 
         await view_model.update_mqtt_config(replacement)
 
-        assert view_model.mqtt_config == replacement
+        assert view_model.mqtt_config.password == ""
+        assert view_model.active_broker_profile.password_configured
         assert repository.broker_configurations == [replacement]
         assert broker_repository.updated_mqtt == [replacement]
         assert changes == [True]
@@ -426,7 +427,8 @@ def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> Non
     assert broker_repository.get_profile().id == active_profile.id
     assert broker_repository.updated_mqtt == []
     assert saved.name == "Fixed local"
-    assert saved.config == replacement
+    assert saved.config.password == ""
+    assert saved.password_configured
 
 
 def test_profile_operations_allow_credentials_without_tls() -> None:
@@ -443,8 +445,10 @@ def test_profile_operations_allow_credentials_without_tls() -> None:
         created = view_model.create_broker_profile("Plain MQTT", insecure)
         await view_model.activate_broker_profile(profile.id, insecure)
 
-        assert saved.config == insecure
-        assert created.config == insecure
+        assert saved.config.password == ""
+        assert saved.password_configured
+        assert created.config.password == ""
+        assert created.password_configured
         assert broker_repository.get_profile().config == insecure
         assert len(broker_repository.get_all_profiles()) == 3
         assert repository.broker_configurations == [insecure]

@@ -482,6 +482,31 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     application.processEvents()
 
 
+def test_broker_settings_dialog_masks_a_configured_password() -> None:
+    application = QApplication.instance() or QApplication([])
+    mqtt_config = MqttConfig(
+        "broker.local",
+        8883,
+        "observer",
+        "os-loaded-secret",
+        True,
+    )
+    view_model = MainViewModel(
+        runtime_for(FakeGuiRepository(), FakeBrokerRepository(mqtt_config)),
+    )
+    dialog = BrokerSettingsDialog(view_model)
+
+    password_edit = dialog.findChild(QLineEdit, "brokerPasswordEdit")
+
+    assert password_edit is not None
+    assert password_edit.text() == ""
+    assert password_edit.placeholderText() == "********"
+    assert "os-loaded-secret" not in password_edit.text()
+
+    dialog.close()
+    application.processEvents()
+
+
 def test_observer_tree_renders_a_broker_profile_dropdown() -> None:
     application = QApplication.instance() or QApplication([])
     broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))

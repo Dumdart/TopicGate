@@ -80,6 +80,77 @@ def test_runtime_owns_the_mqtt_lifecycle() -> None:
     asyncio.run(scenario())
 
 
+def test_runtime_sanitizes_broker_credentials_exposed_to_callers() -> None:
+    configured = profile("Configured")
+    configured.config = MqttConfig(
+        "broker.example",
+        8883,
+        "observer",
+        "os-loaded-secret",
+        True,
+    )
+    runtime, brokers, _ = runtime_with((configured,))
+
+    listed = runtime.list_brokers()[0]
+    selected = runtime.get_broker(configured.id)
+
+    assert listed.config.password == ""
+    assert listed.password_configured
+    assert selected.config.password == ""
+    assert selected.password_configured
+    assert runtime.mqtt_config.password == ""
+    assert brokers.get_profile(configured.id).config.password == "os-loaded-secret"
+
+
+def test_runtime_reports_when_a_broker_password_is_not_configured() -> None:
+    runtime, _, _ = runtime_with((profile("No password"),))
+
+    summary = runtime.get_broker()
+
+    assert summary.config.password == ""
+    assert not summary.password_configured
+
+
+def test_runtime_preserves_a_hidden_password_when_broker_settings_change() -> None:
+    configured = profile("Configured")
+    configured.config = MqttConfig(
+        "old-broker.example",
+        1883,
+        "observer",
+        "os-loaded-secret",
+    )
+    runtime, brokers, _ = runtime_with((configured,))
+
+    runtime.update_broker(
+        configured.id,
+        MqttConfig("new-broker.example", 8883, "observer", "", True),
+    )
+
+    saved = brokers.get_profile(configured.id).config
+    assert saved.host == "new-broker.example"
+    assert saved.password == "os-loaded-secret"
+
+
+def test_runtime_connects_with_a_stored_password_from_a_broker_summary() -> None:
+    async def scenario() -> None:
+        configured = profile("Configured")
+        configured.config = MqttConfig(
+            "broker.example",
+            1883,
+            "observer",
+            "os-loaded-secret",
+        )
+        runtime, _, mqtt = runtime_with((configured,))
+        sanitized_config = runtime.get_broker(configured.id).config
+
+        await runtime.activate_broker(configured.id, sanitized_config)
+
+        connected_config = mqtt.update_broker.await_args.args[0]
+        assert connected_config.password == "os-loaded-secret"
+
+    asyncio.run(scenario())
+
+
 def test_runtime_activates_and_persists_a_broker_only_after_connecting() -> None:
     async def scenario() -> None:
         default = profile("Default")
@@ -218,6 +289,6 @@ def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
         brokers.update_profile.assert_called_once_with(removable)
         assert created.name == "New"
         assert updated.name == "Renamed"
-        assert deleted is removable
+        assert deleted.id == removable.id
 
     asyncio.run(scenario())

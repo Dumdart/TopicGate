@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from uuid import UUID
 
 from topicgate.app.service_item import ServiceItem
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
@@ -34,14 +36,20 @@ class TopicGateRuntime(ServiceItem):
         finally:
             self._brokers.update_observer_model(model)
 
-    def list_brokers(self) -> tuple[BrokerProfile, ...]:
-        return self._brokers.get_all_profiles()
+    def list_brokers(self) -> tuple[BrokerSummary, ...]:
+        return tuple(
+            self._broker_summary(profile)
+            for profile in self._brokers.get_all_profiles()
+        )
 
-    def get_broker(self, broker_id: UUID | None = None) -> BrokerProfile:
-        return self._brokers.get_profile(broker_id)
+    def list_topics(self) -> tuple[str, ...]:
+        return self._mqtt.get_all_topics()
+
+    def get_broker(self, broker_id: UUID | None = None) -> BrokerSummary:
+        return self._broker_summary(self._get_broker_profile(broker_id))
 
     @property
-    def active_broker(self) -> BrokerProfile:
+    def active_broker(self) -> BrokerSummary:
         return self.get_broker()
 
     @property
@@ -51,17 +59,19 @@ class TopicGateRuntime(ServiceItem):
     def get_topic_state(self, broker_id: UUID, topic: str) -> TopicState | None:
         if broker_id == self.active_broker.id:
             return self._mqtt.get_state(topic)
-        return self.get_broker(broker_id).workspace.model.topic_states.get(topic)
+        return self._get_broker_profile(
+            broker_id
+        ).workspace.model.topic_states.get(topic)
 
     def get_observer_model(self, broker_id: UUID) -> ObserverModel:
         if broker_id == self.active_broker.id:
             return self._mqtt.get()
-        return self.get_broker(broker_id).workspace.model
+        return self._get_broker_profile(broker_id).workspace.model
 
     def list_subscriptions(self, broker_id: UUID) -> tuple[Subscription, ...]:
         if broker_id == self.active_broker.id:
             return tuple(self._mqtt.subscriptions)
-        return tuple(self.get_broker(broker_id).workspace.subscriptions)
+        return tuple(self._get_broker_profile(broker_id).workspace.subscriptions)
 
     @property
     def connection_status(self) -> object:
@@ -93,22 +103,25 @@ class TopicGateRuntime(ServiceItem):
     async def reconnect(self) -> None:
         await self._mqtt.reconnect()
 
-    def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerProfile:
-        return self._brokers.create_profile(name, mqtt_config)
+    def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerSummary:
+        return self._broker_summary(
+            self._brokers.create_profile(name, mqtt_config)
+        )
 
     def update_broker(
         self,
         broker_id: UUID,
         mqtt_config: MqttConfig,
         name: str | None = None,
-    ) -> BrokerProfile:
-        profile = self.get_broker(broker_id)
+    ) -> BrokerSummary:
+        profile = self._get_broker_profile(broker_id)
+        config = self._config_with_stored_password(profile, mqtt_config)
         profile.name = (
             self._validated_profile_name(name, broker_id)
             if name is not None
             else profile.name
         )
-        profile.config = mqtt_config
+        profile.config = config
         self._brokers.update_profile(profile)
         return self.get_broker(broker_id)
 
@@ -117,9 +130,13 @@ class TopicGateRuntime(ServiceItem):
         broker_id: UUID,
         mqtt_config: MqttConfig | None = None,
         name: str | None = None,
-    ) -> BrokerProfile:
-        profile = self.get_broker(broker_id)
-        config = profile.config if mqtt_config is None else mqtt_config
+    ) -> BrokerSummary:
+        profile = self._get_broker_profile(broker_id)
+        config = (
+            profile.config
+            if mqtt_config is None
+            else self._config_with_stored_password(profile, mqtt_config)
+        )
         normalized_name = (
             self._validated_profile_name(name, broker_id)
             if name is not None
@@ -136,15 +153,15 @@ class TopicGateRuntime(ServiceItem):
         self._brokers.activate_profile(broker_id, config)
         return self.active_broker
 
-    async def delete_broker(self, broker_id: UUID) -> BrokerProfile:
-        profile = self.get_broker(broker_id)
+    async def delete_broker(self, broker_id: UUID) -> BrokerSummary:
+        profile = self._get_broker_profile(broker_id)
         profiles = self.list_brokers()
         if len(profiles) == 1:
             raise ValueError("At least one broker profile is required.")
         if profile.id == self.active_broker.id:
             replacement = next(item for item in profiles if item.id != profile.id)
             await self.activate_broker(replacement.id)
-        return self._brokers.delete_profile(profile.id)
+        return self._broker_summary(self._brokers.delete_profile(profile.id))
 
     async def add_subscription(
         self,
@@ -179,7 +196,7 @@ class TopicGateRuntime(ServiceItem):
         await self._mqtt.publish(topic, payload)
 
     def _persist_active_subscriptions(self) -> None:
-        workspace = self.active_broker.workspace
+        workspace = self._get_broker_profile().workspace
         workspace.subscriptions = tuple(self._mqtt.subscriptions)
         self._brokers.update_observer_workspace(workspace)
 
@@ -198,3 +215,32 @@ class TopicGateRuntime(ServiceItem):
         ):
             raise ValueError("A broker profile with that name already exists.")
         return normalized_name
+
+    def _get_broker_profile(self, broker_id: UUID | None = None) -> BrokerProfile:
+        return self._brokers.get_profile(broker_id)
+
+    @staticmethod
+    def _config_with_stored_password(
+        profile: BrokerProfile,
+        mqtt_config: MqttConfig,
+    ) -> MqttConfig:
+        if mqtt_config.password or not profile.config.password:
+            return mqtt_config
+        return replace(mqtt_config, password=profile.config.password)
+
+    @staticmethod
+    def _broker_summary(profile: BrokerProfile) -> BrokerSummary:
+        config = profile.config
+        return BrokerSummary(
+            id=profile.id,
+            name=profile.name,
+            config=MqttConfig(
+                host=config.host,
+                port=config.port,
+                username=config.username,
+                password="",
+                use_tls=config.use_tls,
+                id=config.id,
+            ),
+            password_configured=bool(config.password),
+        )

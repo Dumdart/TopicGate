@@ -172,6 +172,9 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
     def get_state(self, topic: str) -> TopicState | None:
         return self._state.topic_states.get(topic)
 
+    def get_all_topics(self) -> tuple[str, ...]:
+        return tuple(ObserverModelService.get_all_topics(self._state))
+
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
         if not self._message_processor.process(self._state, msg):
             self._dropped_message_count += 1
