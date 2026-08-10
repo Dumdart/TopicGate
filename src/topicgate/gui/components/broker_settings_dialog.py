@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QWidget,
@@ -75,6 +76,14 @@ class BrokerSettingsDialog(QDialog):
         self._use_tls_checkbox = QCheckBox()
         self._use_tls_checkbox.setObjectName("brokerUseTlsCheckbox")
         self._use_tls_checkbox.setChecked(mqtt_config.use_tls)
+        self._transport_security_error = QLabel(
+            "Credentials will be sent without transport encryption."
+        )
+        self._transport_security_error.setObjectName(
+            "brokerTransportSecurityError"
+        )
+        self._transport_security_error.setWordWrap(True)
+        self._transport_security_error.setStyleSheet("color: #b26a00;")
 
         layout.addRow("Profile", self._name_edit)
         layout.addRow("Host", self._host_edit)
@@ -82,6 +91,7 @@ class BrokerSettingsDialog(QDialog):
         layout.addRow("Username", self._username_edit)
         layout.addRow("Password", self._password_edit)
         layout.addRow("Use TLS", self._use_tls_checkbox)
+        layout.addRow("", self._transport_security_error)
 
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self._buttons.setObjectName("brokerSettingsButtons")
@@ -111,8 +121,11 @@ class BrokerSettingsDialog(QDialog):
         self._name_edit.textChanged.connect(self._update_apply_enabled)
         self._host_edit.textChanged.connect(self._update_apply_enabled)
         self._port_edit.textChanged.connect(self._update_apply_enabled)
+        self._username_edit.textChanged.connect(self._update_apply_enabled)
+        self._password_edit.textChanged.connect(self._update_apply_enabled)
         self._port_edit.textEdited.connect(self._mark_port_changed)
         self._use_tls_checkbox.toggled.connect(self._update_tls_port)
+        self._use_tls_checkbox.toggled.connect(self._update_apply_enabled)
         if self._save_button is not None:
             self._save_button.clicked.connect(self.save_requested.emit)
         self._apply_button.clicked.connect(self.apply_requested.emit)
@@ -132,13 +145,14 @@ class BrokerSettingsDialog(QDialog):
             raise ValueError("MQTT port must be an integer from 1 to 65535.") from error
         if not 1 <= port <= 65535:
             raise ValueError("MQTT port must be an integer from 1 to 65535.")
-        return MqttConfig(
+        mqtt_config = MqttConfig(
             host=host,
             port=port,
             username=self._username_edit.text(),
             password=self._password_edit.text(),
             use_tls=self._use_tls_checkbox.isChecked(),
         )
+        return mqtt_config
 
     @property
     def profile_id(self) -> UUID | None:
@@ -187,6 +201,12 @@ class BrokerSettingsDialog(QDialog):
             self._port_edit.setText("8883")
 
     def _update_apply_enabled(self, *_args: object) -> None:
+        has_credentials = bool(
+            self._username_edit.text() or self._password_edit.text()
+        )
+        self._transport_security_error.setVisible(
+            has_credentials and not self._use_tls_checkbox.isChecked()
+        )
         is_valid = self._is_valid()
         if self._save_button is not None:
             self._save_button.setEnabled(is_valid)

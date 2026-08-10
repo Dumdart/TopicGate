@@ -11,12 +11,16 @@ class ObserverStateReader(Protocol):
     """Provides observer state and runtime subscription operations to the UI."""
 
     connection_status: object
+    dropped_message_count: int
+    topic_update_interval: float
 
     def get(self) -> ObserverModel: ...
 
     def get_state(self, topic: str) -> TopicState | None: ...
 
     def messages(self) -> AsyncIterator[MqttMessage]: ...
+
+    def drain_pending_messages(self) -> tuple[MqttMessage, ...]: ...
 
     def connection_statuses(self) -> AsyncIterator[object]: ...
 

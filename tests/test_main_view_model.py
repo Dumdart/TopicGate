@@ -13,10 +13,18 @@ from topicgate.core.models.observer_model import (
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.gui.main_view_model import MainViewModel, mqtt_filter_matches
+from topicgate.core.payload_limits import (
+    MAX_FORMATTED_JSON_CHARACTERS,
+    MAX_RENDERED_PAYLOAD_BYTES,
+)
 
 
 class FakeObserverRepository:
+    topic_update_interval = 0.0
+    connection_status = "disconnected"
+
     def __init__(self) -> None:
         self._states: dict[str, TopicState] = {}
         self._messages: asyncio.Queue[MqttMessage] = asyncio.Queue()
@@ -24,6 +32,13 @@ class FakeObserverRepository:
         self.connection_operations: list[str] = []
         self.removed_subscriptions: list[Subscription] = []
         self.broker_configurations: list[MqttConfig] = []
+        self.dropped_message_count = 0
+
+    async def start(self) -> None:
+        self.connection_status = "connected"
+
+    async def stop(self) -> None:
+        self.connection_status = "disconnected"
 
     def get(self) -> ObserverModel:
         return ObserverModel(root_stats=[], topic_states=dict(self._states))
@@ -34,6 +49,16 @@ class FakeObserverRepository:
     async def messages(self) -> AsyncIterator[MqttMessage]:
         while True:
             yield await self._messages.get()
+
+    async def connection_statuses(self) -> AsyncIterator[object]:
+        if False:
+            yield "disconnected"
+
+    def drain_pending_messages(self) -> tuple[MqttMessage, ...]:
+        messages: list[MqttMessage] = []
+        while not self._messages.empty():
+            messages.append(self._messages.get_nowait())
+        return tuple(messages)
 
     def publish(self, message: MqttMessage) -> None:
         self._states[message.topic] = TopicState(
@@ -71,6 +96,17 @@ class FakeObserverRepository:
         self.removed_subscriptions.append(subscription)
         self.subscriptions = tuple(
             item for item in self.subscriptions if item != subscription
+        )
+
+    async def add_subscription(self, subscription: Subscription) -> None:
+        self.subscriptions += (subscription,)
+
+    async def update_subscription(
+        self, original_filter: str, subscription: Subscription
+    ) -> None:
+        self.subscriptions = tuple(
+            subscription if item.topic_filter == original_filter else item
+            for item in self.subscriptions
         )
 
 
@@ -115,6 +151,12 @@ class FakeBrokerRepository:
             self.updated_mqtt.append(mqtt)
         self._active_profile_id = profile_id
 
+    def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
+        self._profiles[workspace.profile_id].workspace = workspace
+
+    def update_observer_model(self, model: ObserverModel) -> None:
+        self.get_profile().workspace.model = model
+
     @staticmethod
     def _profile(name: str, mqtt: MqttConfig) -> BrokerProfile:
         profile_id = uuid4()
@@ -126,11 +168,25 @@ class FakeBrokerRepository:
         return BrokerProfile(profile_id, name, mqtt, workspace.id, workspace)
 
 
+class FakeTopicGateRuntime(TopicGateRuntime):
+    """Runtime test double backed by in-memory repositories."""
+
+
+def runtime_for(
+    repository: FakeObserverRepository,
+    broker_repository: FakeBrokerRepository | None = None,
+) -> FakeTopicGateRuntime:
+    brokers = broker_repository or FakeBrokerRepository(
+        MqttConfig("default", 1883, "", "")
+    )
+    return FakeTopicGateRuntime(brokers, repository)
+
+
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
     async def scenario() -> None:
         topic = "SmartHome/Huehnerstall/door/status"
         repository = FakeObserverRepository()
-        view_model = MainViewModel(repository, topic)
+        view_model = MainViewModel(runtime_for(repository), topic)
 
         assert view_model.value == "Waiting for a message"
 
@@ -149,12 +205,68 @@ def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
     asyncio.run(scenario())
 
 
+def test_view_model_batches_notifications_and_reports_dropped_messages() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        repository.dropped_message_count = 4
+        view_model = MainViewModel(runtime_for(repository), "untrusted/topic")
+        logs: list[str] = []
+        view_model.log_message.connect(logs.append)
+
+        for index in range(3):
+            repository.publish(
+                MqttMessage(
+                    "untrusted/topic", str(index).encode(), 0, False
+                )
+            )
+
+        await view_model.start()
+        await asyncio.sleep(0)
+        await view_model.stop()
+
+        assert view_model.value == "2"
+        assert view_model.dropped_message_count == "4"
+        assert logs == [
+            "Received 3 MQTT messages (latest: untrusted/topic)",
+            "Dropped 4 MQTT messages during admission (4 total)",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_view_model_throttles_topic_tree_updates() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        repository.topic_update_interval = 0.02
+        view_model = MainViewModel(runtime_for(repository), "untrusted/topic")
+        state_changes: list[bool] = []
+        topic_changes: list[bool] = []
+        view_model.state_changed.connect(lambda: state_changes.append(True))
+        view_model.topics_changed.connect(lambda: topic_changes.append(True))
+        await view_model.start()
+        state_changes.clear()
+        topic_changes.clear()
+
+        repository.publish(MqttMessage("untrusted/topic", b"value", 0, False))
+        await asyncio.sleep(0)
+
+        assert state_changes == []
+        assert topic_changes == []
+
+        await asyncio.sleep(0.03)
+        assert state_changes == [True]
+        assert topic_changes == [True]
+        await view_model.stop()
+
+    asyncio.run(scenario())
+
+
 def test_discovered_topic_updates_details_and_only_matching_filter_is_editable() -> None:
     repository = FakeObserverRepository()
     repository.subscriptions = (Subscription("SmartHome/+/status", qos=2),)
     repository.publish(MqttMessage("SmartHome/kitchen/status", b"open", 1, False))
     repository.publish(MqttMessage("Other/device/value", b"42", 0, False))
-    view_model = MainViewModel(repository)
+    view_model = MainViewModel(runtime_for(repository))
 
     view_model.select_topic("SmartHome/kitchen/status")
 
@@ -167,12 +279,49 @@ def test_discovered_topic_updates_details_and_only_matching_filter_is_editable()
     assert view_model.selected_subscription is None
 
 
+def test_payload_rendering_is_bounded_and_reports_truncation() -> None:
+    repository = FakeObserverRepository()
+    payload = b'"' + b"x" * (MAX_RENDERED_PAYLOAD_BYTES + 100) + b'"'
+    repository.publish(MqttMessage("untrusted/topic", payload, 0, False))
+    view_model = MainViewModel(runtime_for(repository), "untrusted/topic")
+    view_model.refresh()
+
+    notice = (
+        f"[Payload truncated: showing {MAX_RENDERED_PAYLOAD_BYTES} of "
+        f"{len(payload)} bytes]"
+    )
+    assert view_model.decoded_payload.endswith(notice)
+    assert len(view_model.decoded_payload) < MAX_RENDERED_PAYLOAD_BYTES + 100
+    assert view_model.raw_payload.endswith(notice)
+    assert len(view_model.raw_payload) < MAX_RENDERED_PAYLOAD_BYTES * 3 + 100
+
+
+def test_small_json_payload_is_still_pretty_printed() -> None:
+    repository = FakeObserverRepository()
+    repository.publish(MqttMessage("trusted/topic", b'{"open":true}', 0, False))
+    view_model = MainViewModel(runtime_for(repository), "trusted/topic")
+    view_model.refresh()
+
+    assert view_model.decoded_payload == '{\n  "open": true\n}'
+
+
+def test_size_amplified_json_formatting_is_bounded() -> None:
+    repository = FakeObserverRepository()
+    payload = ("[" * 500 + "0" + "]" * 500).encode()
+    repository.publish(MqttMessage("untrusted/json", payload, 0, False))
+    view_model = MainViewModel(runtime_for(repository), "untrusted/json")
+    view_model.refresh()
+
+    assert view_model.decoded_payload.endswith("[Formatted JSON truncated]")
+    assert len(view_model.decoded_payload) < MAX_FORMATTED_JSON_CHARACTERS + 100
+
+
 def test_topic_paths_include_configured_filters_and_discovered_topics() -> None:
     repository = FakeObserverRepository()
     repository.subscriptions = (Subscription("SmartHome/#"),)
     repository.publish(MqttMessage("SmartHome/kitchen/temperature", b"21", 0, False))
 
-    assert MainViewModel(repository).topic_paths == [
+    assert MainViewModel(runtime_for(repository)).topic_paths == [
         "SmartHome/#",
         "SmartHome/kitchen/temperature",
     ]
@@ -184,7 +333,7 @@ def test_topic_paths_exclude_discovered_topics_without_an_active_filter() -> Non
     repository.publish(MqttMessage("SmartHome/kitchen/status", b"open", 1, False))
     repository.publish(MqttMessage("Other/device/status", b"open", 1, False))
 
-    assert MainViewModel(repository).topic_paths == [
+    assert MainViewModel(runtime_for(repository)).topic_paths == [
         "SmartHome/#",
         "SmartHome/kitchen/status",
     ]
@@ -202,7 +351,7 @@ def test_mqtt_filter_matching_supports_wildcards_and_system_topic_rules() -> Non
 def test_connection_commands_are_forwarded_to_the_repository() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
-        view_model = MainViewModel(repository)
+        view_model = MainViewModel(runtime_for(repository))
 
         await view_model.connect_to_broker()
         await view_model.reconnect_to_broker()
@@ -222,10 +371,7 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
         repository = FakeObserverRepository()
         initial = MqttConfig("old", 1883, "", "")
         broker_repository = FakeBrokerRepository(initial)
-        view_model = MainViewModel(
-            repository,
-            broker_repository=broker_repository,
-        )
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         replacement = MqttConfig("new", 8883, "observer", "password", True)
         logs: list[str] = []
         changes: list[bool] = []
@@ -250,7 +396,7 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         local_profile = broker_repository.get_all_profiles()[1]
 
         await view_model.update_broker_profile(local_profile.id, local_profile.config)
@@ -265,7 +411,7 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
 def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> None:
     repository = FakeObserverRepository()
     broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
-    view_model = MainViewModel(repository, broker_repository=broker_repository)
+    view_model = MainViewModel(runtime_for(repository, broker_repository))
     active_profile = broker_repository.get_profile()
     inactive_profile = broker_repository.get_all_profiles()[1]
     replacement = MqttConfig("fixed", 8883, "observer", "secret", True)
@@ -281,6 +427,29 @@ def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> Non
     assert broker_repository.updated_mqtt == []
     assert saved.name == "Fixed local"
     assert saved.config == replacement
+
+
+def test_profile_operations_allow_credentials_without_tls() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(
+            MqttConfig("default", 1883, "", "")
+        )
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
+        profile = broker_repository.get_profile()
+        insecure = MqttConfig("broker", 1883, "observer", "secret")
+
+        saved = view_model.save_broker_profile(profile.id, insecure)
+        created = view_model.create_broker_profile("Plain MQTT", insecure)
+        await view_model.activate_broker_profile(profile.id, insecure)
+
+        assert saved.config == insecure
+        assert created.config == insecure
+        assert broker_repository.get_profile().config == insecure
+        assert len(broker_repository.get_all_profiles()) == 3
+        assert repository.broker_configurations == [insecure]
+
+    asyncio.run(scenario())
 
 
 def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
@@ -311,7 +480,7 @@ def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
         local_profile.workspace.subscriptions = (
             Subscription("bridge/connected"),
         )
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
 
         assert view_model.topic_paths == ["home/status"]
 
@@ -330,7 +499,7 @@ def test_view_model_creates_and_renames_broker_profiles() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         changes: list[bool] = []
         logs: list[str] = []
         view_model.configuration_changed.connect(lambda: changes.append(True))
@@ -358,7 +527,7 @@ def test_deleting_active_profile_switches_before_removing_it() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         deleted_profile = view_model.active_broker_profile
         replacement = view_model.broker_profiles[1]
 
@@ -384,10 +553,7 @@ def test_failed_mqtt_configuration_is_not_stored() -> None:
     async def scenario() -> None:
         initial = MqttConfig("old", 1883, "", "")
         broker_repository = FakeBrokerRepository(initial)
-        view_model = MainViewModel(
-            FailingObserverRepository(),
-            broker_repository=broker_repository,
-        )
+        view_model = MainViewModel(runtime_for(FailingObserverRepository(), broker_repository))
         logs: list[str] = []
         view_model.log_message.connect(logs.append)
 
@@ -413,7 +579,9 @@ def test_removing_subscription_updates_topics_and_clears_stale_selection() -> No
         repository = FakeObserverRepository()
         subscription = Subscription("SmartHome/#")
         repository.subscriptions = (subscription,)
-        view_model = MainViewModel(repository, subscription.topic_filter)
+        view_model = MainViewModel(
+            runtime_for(repository), subscription.topic_filter
+        )
         changed: list[str] = []
         logs: list[str] = []
         view_model.state_changed.connect(lambda: changed.append("state"))
@@ -442,7 +610,9 @@ def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> 
         repository.publish(
             MqttMessage(subscription.topic_filter, b"open", 1, False)
         )
-        view_model = MainViewModel(repository, subscription.topic_filter)
+        view_model = MainViewModel(
+            runtime_for(repository), subscription.topic_filter
+        )
 
         await view_model.remove_subscription(subscription)
 
@@ -475,9 +645,8 @@ def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
             ]
         )
         view_model = MainViewModel(
-            repository,
+            runtime_for(repository, broker_repository),
             subscription.topic_filter,
-            broker_repository=broker_repository,
         )
 
         await view_model.remove_subscription(subscription)
@@ -495,7 +664,7 @@ def test_removing_subscription_keeps_topics_covered_by_another_filter() -> None:
         remaining = Subscription("SmartHome/#")
         repository.subscriptions = (removed, remaining)
         repository.publish(MqttMessage(removed.topic_filter, b"open", 1, False))
-        view_model = MainViewModel(repository, removed.topic_filter)
+        view_model = MainViewModel(runtime_for(repository), removed.topic_filter)
 
         await view_model.remove_subscription(removed)
 

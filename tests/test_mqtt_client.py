@@ -7,6 +7,11 @@ from paho.mqtt.reasoncodes import ReasonCode
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.mqtt_topics import MAX_MQTT_TOPIC_LEVELS
+from topicgate.core.payload_limits import (
+    MAX_PENDING_INGRESS_MESSAGES,
+    MAX_STORED_PAYLOAD_BYTES,
+)
 from topicgate.infrastructure.mqtt.mqtt_client import MqttClient
 from topicgate.infrastructure.mqtt.mqtt_gate import MqttGate
 from topicgate.infrastructure.mqtt.mqtt_callbacks import MqttCallbacks
@@ -57,6 +62,10 @@ class FakePahoClient:
         self.events.append(("unsubscribe", topic))
         self.on_unsubscribe(self, None, 13, "properties", ["success"])
         return 0, 13
+
+    def publish(self, topic, payload, qos):
+        self.events.append(("publish", topic, payload, qos))
+        return SimpleNamespace(rc=0)
 
     def message_callback_add(self, topic, callback):
         self.events.append(("message_callback_add", topic))
@@ -141,6 +150,48 @@ def test_tls_client_can_disconnect_and_reconnect() -> None:
         events = FakePahoClient.instances[0].events
         assert [event[0] for event in events].count("tls_set") == 1
         assert [event[0] for event in events].count("connect") == 2
+        assert [event[0] for event in events].index("tls_set") < [
+            event[0] for event in events
+        ].index("username_pw_set")
+
+    asyncio.run(scenario())
+
+
+def test_async_gate_publishes_through_the_connected_client() -> None:
+    async def scenario() -> None:
+        FakePahoClient.instances.clear()
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            gate = MqttGate(config(), TestCallbacks())
+            await gate.start(timeout=1)
+            await gate.publish("home/set", b"off")
+            await gate.stop()
+
+        assert ("publish", "home/set", b"off", 1) in (
+            FakePahoClient.instances[0].events
+        )
+
+    asyncio.run(scenario())
+
+
+def test_client_configures_credentials_without_tls() -> None:
+    async def scenario() -> None:
+        FakePahoClient.instances.clear()
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(
+                MqttConfig("broker", 1883, "observer", "secret")
+            )
+            await client.connect(timeout=1)
+            await client.disconnect()
+
+        events = FakePahoClient.instances[-1].events
+        assert ("username_pw_set", "observer", "secret") in events
+        assert not any(event[0] == "tls_set" for event in events)
 
     asyncio.run(scenario())
 
@@ -277,5 +328,147 @@ def test_async_message_callback_is_awaited_on_application_loop():
         assert received_message == MqttMessage(
             topic="SmartHome/door/status", payload=b"on", qos=1, retain=False
         )
+
+    asyncio.run(scenario())
+
+
+def test_message_callback_bounds_attacker_controlled_payload() -> None:
+    async def scenario() -> None:
+        received = asyncio.Event()
+        received_message = None
+
+        async def on_message(client, userdata, message):
+            nonlocal received_message
+            received_message = message
+            received.set()
+
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(config())
+            await client.connect(timeout=1)
+            client.message_callback_add("untrusted/topic", on_message)
+            fake_client = FakePahoClient.instances[-1]
+            payload = b"x" * (MAX_STORED_PAYLOAD_BYTES + 1)
+            paho_message = SimpleNamespace(
+                topic="untrusted/topic", payload=payload, qos=0, retain=False
+            )
+
+            fake_client.message_callback(fake_client, None, paho_message)
+            await asyncio.wait_for(received.wait(), timeout=1)
+            await client.disconnect()
+
+        assert received_message.payload == payload[:MAX_STORED_PAYLOAD_BYTES]
+        assert received_message.payload_size == len(payload)
+
+    asyncio.run(scenario())
+
+
+def test_message_callback_flood_is_bounded_before_loop_scheduling() -> None:
+    async def scenario() -> None:
+        received: list[MqttMessage] = []
+        release_callback = asyncio.Event()
+
+        async def on_message(client, userdata, message):
+            received.append(message)
+            await release_callback.wait()
+
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(config())
+            await client.connect(timeout=1)
+            client.message_callback_add("untrusted/topic", on_message)
+            fake_client = FakePahoClient.instances[-1]
+            overflow = 10
+
+            fake_client.message_callback(
+                fake_client,
+                None,
+                SimpleNamespace(
+                    topic="untrusted/topic",
+                    payload=b"0",
+                    qos=0,
+                    retain=False,
+                ),
+            )
+            while not received:
+                await asyncio.sleep(0)
+
+            loop = asyncio.get_running_loop()
+            with patch.object(
+                loop,
+                "call_soon_threadsafe",
+                wraps=loop.call_soon_threadsafe,
+            ) as schedule:
+                for index in range(
+                    1, MAX_PENDING_INGRESS_MESSAGES + overflow + 1
+                ):
+                    fake_client.message_callback(
+                        fake_client,
+                        None,
+                        SimpleNamespace(
+                            topic="untrusted/topic",
+                            payload=str(index).encode(),
+                            qos=0,
+                            retain=False,
+                        ),
+                    )
+
+                assert schedule.call_count == 0
+
+            assert client.dropped_message_count == overflow
+            assert len(client._pending_messages) == MAX_PENDING_INGRESS_MESSAGES
+            assert [message.payload for message in received] == [b"0"]
+
+            release_callback.set()
+            while len(received) <= MAX_PENDING_INGRESS_MESSAGES:
+                await asyncio.sleep(0)
+            await client.disconnect()
+
+        assert received[1].payload == str(overflow + 1).encode()
+        assert received[-1].payload == str(
+            MAX_PENDING_INGRESS_MESSAGES + overflow
+        ).encode()
+
+    asyncio.run(scenario())
+
+
+def test_message_callback_drops_deep_topic_before_loop_scheduling() -> None:
+    async def scenario() -> None:
+        received: list[MqttMessage] = []
+
+        async def on_message(client, userdata, message):
+            received.append(message)
+
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(config())
+            await client.connect(timeout=1)
+            client.message_callback_add("#", on_message)
+            fake_client = FakePahoClient.instances[-1]
+            deep_topic = "/".join(
+                "a" for _ in range(MAX_MQTT_TOPIC_LEVELS + 1)
+            )
+
+            fake_client.message_callback(
+                fake_client,
+                None,
+                SimpleNamespace(
+                    topic=deep_topic,
+                    payload=b"value",
+                    qos=0,
+                    retain=False,
+                ),
+            )
+            await asyncio.sleep(0)
+            await client.disconnect()
+
+        assert received == []
+        assert client.dropped_message_count == 1
 
     asyncio.run(scenario())

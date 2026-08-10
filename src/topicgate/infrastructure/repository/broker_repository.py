@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from topicgate.core.config.app_config import AppConfig
-from topicgate.core.config.config_loader import ConfigLoader
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel
@@ -24,6 +23,9 @@ from topicgate.infrastructure.database.models.broker_profile_row import (
 from topicgate.infrastructure.database.models.observer_workspace_row import (
     ObserverWorkspaceRow,
 )
+from topicgate.infrastructure.credentials.credential_store import CredentialStore
+
+
 class BrokerRepository:
     """Persist broker profiles and use the database as their source of truth."""
 
@@ -31,6 +33,8 @@ class BrokerRepository:
         self,
         settings: AppConfig | DatabaseContext | None = None,
         db: DatabaseContext | AppConfig | None = None,
+        *,
+        credential_store: CredentialStore,
     ) -> None:
         if isinstance(settings, DatabaseContext):
             self._db = settings
@@ -41,7 +45,8 @@ class BrokerRepository:
             )
             supplied_settings = settings
 
-        self._runtime_configs: dict[UUID, MqttConfig] = {}
+        self._credential_store = credential_store
+        self._runtime_config_ids: dict[UUID, int | None] = {}
         self._runtime_models: dict[UUID, ObserverModel] = {}
         self._profile_handles: dict[UUID, BrokerProfile] = {}
 
@@ -49,13 +54,25 @@ class BrokerRepository:
         if profiles:
             active_profile = self.get_profile()
             if supplied_settings is not None:
-                self._runtime_configs[active_profile.id] = supplied_settings.mqtt
-                self._settings = supplied_settings
-            else:
-                self._settings = AppConfig(active_profile.config)
+                self._runtime_config_ids[active_profile.id] = supplied_settings.mqtt.id
+            if (
+                supplied_settings is not None
+                and self._credential_store.get_password(active_profile.id) is None
+            ):
+                self._sync_password(
+                    active_profile.id,
+                    supplied_settings.mqtt.password,
+                )
+                active_profile = self.get_profile()
+            self._settings = AppConfig(
+                active_profile.config,
+                id=None if supplied_settings is None else supplied_settings.id,
+            )
             return
 
-        self._settings = supplied_settings or ConfigLoader().load_config()
+        self._settings = supplied_settings or AppConfig(
+            MqttConfig("localhost", 1883, "", "")
+        )
         default_profile = self._create_profile(
             "Default",
             self._settings.mqtt,
@@ -64,8 +81,8 @@ class BrokerRepository:
             "Local MQTT",
             MqttConfig("localhost", 1883, "", ""),
         )
-        self._runtime_configs[default_profile.id] = default_profile.config
-        self._runtime_configs[local_profile.id] = local_profile.config
+        self._runtime_config_ids[default_profile.id] = default_profile.config.id
+        self._runtime_config_ids[local_profile.id] = local_profile.config.id
         with self._db.session() as session:
             session.add(
                 BrokerProfileMapper.to_broker_profile_row(
@@ -82,6 +99,8 @@ class BrokerRepository:
                 )
             )
             session.commit()
+        self._sync_password(default_profile.id, default_profile.config.password)
+        self._sync_password(local_profile.id, local_profile.config.password)
         self.save()
 
     def get(self) -> AppConfig:
@@ -142,7 +161,8 @@ class BrokerRepository:
                 )
             )
             session.commit()
-        self._runtime_configs[profile.id] = config
+        self._sync_password(profile.id, config.password)
+        self._runtime_config_ids[profile.id] = config.id
         self._profile_handles[profile.id] = profile
         self.save()
         return profile
@@ -174,7 +194,8 @@ class BrokerRepository:
             session.commit()
 
         profile.name = normalized_name
-        self._runtime_configs[profile.id] = profile.config
+        self._sync_password(profile.id, profile.config.password)
+        self._runtime_config_ids[profile.id] = profile.config.id
         self._profile_handles[profile.id] = profile
         if self.get_profile().id == profile.id:
             self._settings = AppConfig(profile.config, id=self._settings.id)
@@ -195,7 +216,8 @@ class BrokerRepository:
             session.delete(row)
             session.commit()
 
-        self._runtime_configs.pop(profile_id, None)
+        self._delete_password(profile_id)
+        self._runtime_config_ids.pop(profile_id, None)
         self._runtime_models.pop(profile_id, None)
         self._profile_handles.pop(profile_id, None)
         self.save()
@@ -215,7 +237,8 @@ class BrokerRepository:
             session.commit()
 
         if mqtt is not None:
-            self._runtime_configs[profile_id] = mqtt
+            self._sync_password(profile_id, mqtt.password)
+            self._runtime_config_ids[profile_id] = mqtt.id
         active_config = self.get_mqtt()
         self._settings = AppConfig(active_config, id=self._settings.id)
         self.save()
@@ -269,17 +292,29 @@ class BrokerRepository:
 
     def _to_profile(self, row: BrokerProfileRow) -> BrokerProfile:
         profile = BrokerProfileMapper.to_broker_profile(row)
-        runtime_config = self._runtime_configs.get(profile.id)
-        if runtime_config is not None:
-            profile.config = replace(
-                profile.config,
-                password=runtime_config.password,
-                id=runtime_config.id,
-            )
+        profile.config = replace(
+            profile.config,
+            password=self._credential_store.get_password(profile.id) or "",
+            id=(
+                self._runtime_config_ids[profile.id]
+                if profile.id in self._runtime_config_ids
+                else profile.config.id
+            ),
+        )
         runtime_model = self._runtime_models.get(profile.id)
         if runtime_model is not None:
             profile.workspace.model = runtime_model
         return profile
+
+    def _sync_password(self, profile_id: UUID, password: str) -> None:
+        if password:
+            self._credential_store.set_password(profile_id, password)
+        else:
+            self._delete_password(profile_id)
+
+    def _delete_password(self, profile_id: UUID) -> None:
+        if self._credential_store.get_password(profile_id) is not None:
+            self._credential_store.delete_password(profile_id)
 
     @staticmethod
     def _update_mqtt_row(row: BrokerProfileRow, config: MqttConfig) -> None:

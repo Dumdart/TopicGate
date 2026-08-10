@@ -17,8 +17,7 @@ class App:
         self._dependencies = AppDependencies()
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
-            repository=self._dependencies.observer_model_repository,
-            broker_repository=self._dependencies.broker_repository,
+            runtime=self._dependencies.runtime,
             topic="",
         )
         self._window = MainWindow(self._view_model)

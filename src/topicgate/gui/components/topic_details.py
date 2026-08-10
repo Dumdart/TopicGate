@@ -16,6 +16,8 @@ class TopicDetailsPane(WorkspacePane):
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
         self._topic_label = QLabel("No topic selected")
+        self._topic_label.setObjectName("topicPathLabel")
+        self._topic_label.setTextFormat(Qt.TextFormat.PlainText)
         self._topic_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -24,11 +26,13 @@ class TopicDetailsPane(WorkspacePane):
         self._quality_of_service_label = QLabel("-")
         self._retained_label = QLabel("-")
         self._message_count_label = QLabel("0")
+        self._dropped_message_count_label = QLabel("0")
         form.addRow("Topic path", self._topic_label)
         form.addRow("Last received", self._received_at_label)
         form.addRow("QoS", self._quality_of_service_label)
         form.addRow("Retained", self._retained_label)
         form.addRow("Message count", self._message_count_label)
+        form.addRow("Dropped messages", self._dropped_message_count_label)
         self.content_layout.addLayout(form)
 
         self.content_layout.addWidget(self._section_label("Decoded payload"))
@@ -55,6 +59,9 @@ class TopicDetailsPane(WorkspacePane):
         self._quality_of_service_label.setText(view_model.quality_of_service)
         self._retained_label.setText(view_model.retained)
         self._message_count_label.setText(view_model.message_count)
+        self._dropped_message_count_label.setText(
+            view_model.dropped_message_count
+        )
 
     def focus_payload(self) -> None:
         self._decoded_payload.setFocus(Qt.FocusReason.OtherFocusReason)

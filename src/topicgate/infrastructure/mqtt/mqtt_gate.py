@@ -28,6 +28,10 @@ class MqttGate:
     def topics(self) -> list[str]:
         return [subscription.topic_filter for subscription in self.subscriptions]
 
+    @property
+    def dropped_message_count(self) -> int:
+        return self.client.dropped_message_count
+
     def set_subscriptions(self, subscriptions: list[Subscription]) -> None:
         self.subscriptions = list(subscriptions)
 
@@ -79,6 +83,9 @@ class MqttGate:
                 )
         finally:
             self._remove_message_callbacks()
+
+    async def publish(self, topic: str, payload: bytes) -> None:
+        await self.client.publish(topic, payload)
 
     @property
     def is_started(self) -> bool:

@@ -24,12 +24,14 @@ def test_fresh_installation_uses_new_database_path(tmp_path: Path) -> None:
 
 def test_legacy_database_migration_preserves_profiles_and_subscriptions(
     tmp_path: Path,
+    credential_store,
 ) -> None:
     legacy = tmp_path / "smart_observer.db"
     legacy_context = DatabaseContext(sqlite_url(legacy))
     repository = BrokerRepository(
         legacy_context,
         AppConfig(MqttConfig("default", 1883, "user", "secret")),
+        credential_store=credential_store,
     )
     profile = repository.create_profile(
         "Remote",
@@ -42,7 +44,10 @@ def test_legacy_database_migration_preserves_profiles_and_subscriptions(
 
     target = prepare_database_path(tmp_path / "data", legacy)
     migrated_context = DatabaseContext(sqlite_url(target))
-    migrated = BrokerRepository(migrated_context)
+    migrated = BrokerRepository(
+        migrated_context,
+        credential_store=credential_store,
+    )
 
     assert legacy.exists()
     assert migrated.get_profile().id == profile.id
