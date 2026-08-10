@@ -353,17 +353,22 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     host_edit = dialog.findChild(QLineEdit, "brokerHostEdit")
     port_edit = dialog.findChild(QLineEdit, "brokerPortEdit")
     password_edit = dialog.findChild(QLineEdit, "brokerPasswordEdit")
+    username_edit = dialog.findChild(QLineEdit, "brokerUsernameEdit")
     tls_checkbox = dialog.findChild(QCheckBox, "brokerUseTlsCheckbox")
+    security_error = dialog.findChild(QLabel, "brokerTransportSecurityError")
     apply_button = dialog.findChild(QPushButton, "applyBrokerSettingsButton")
     assert host_edit is not None
     assert port_edit is not None
     assert password_edit is not None
+    assert username_edit is not None
     assert tls_checkbox is not None
+    assert security_error is not None
     assert apply_button is not None
     assert host_edit.text() == "broker.local"
     assert port_edit.text() == "1883"
     assert password_edit.echoMode() == QLineEdit.EchoMode.Password
     assert not tls_checkbox.isChecked()
+    assert security_error.isHidden()
     assert apply_button.isEnabled()
     host_edit.setText(" ")
     assert not apply_button.isEnabled()
@@ -374,6 +379,15 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     assert not apply_button.isEnabled()
     port_edit.setText("1883")
     assert apply_button.isEnabled()
+    username_edit.setText("observer")
+    assert not apply_button.isEnabled()
+    assert not security_error.isHidden()
+    tls_checkbox.setChecked(True)
+    assert apply_button.isEnabled()
+    assert security_error.isHidden()
+    assert dialog.mqtt_config == MqttConfig(
+        "broker.local", 8883, "observer", "", True
+    )
 
     dialog.close()
     application.processEvents()

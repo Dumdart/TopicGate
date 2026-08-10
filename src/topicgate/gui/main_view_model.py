@@ -338,6 +338,7 @@ class MainViewModel(QObject):
         """Connect with a profile and make it active only after success."""
         if self._broker_repository is None:
             raise RuntimeError("MainViewModel requires a broker repository.")
+        mqtt_config.validate_transport_security()
 
         profile = self._broker_repository.get_profile(profile_id)
         profile_changed = profile.id != self.active_broker_profile.id
@@ -398,6 +399,7 @@ class MainViewModel(QObject):
     ) -> BrokerProfile:
         if self._broker_repository is None:
             raise RuntimeError("MainViewModel requires a broker repository.")
+        mqtt_config.validate_transport_security()
         profile = self._broker_repository.get_profile(profile_id)
         profile.name = (
             self._validated_profile_name(profile_name, profile_id)
@@ -416,6 +418,7 @@ class MainViewModel(QObject):
         """Create a selectable broker profile without changing connections."""
         if self._broker_repository is None:
             raise RuntimeError("MainViewModel requires a broker repository.")
+        mqtt_config.validate_transport_security()
         profile = self._broker_repository.create_profile(name, mqtt_config)
         self.configuration_changed.emit()
         self.log_message.emit(f"Created broker profile: {profile.name}")

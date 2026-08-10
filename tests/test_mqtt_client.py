@@ -145,6 +145,38 @@ def test_tls_client_can_disconnect_and_reconnect() -> None:
         events = FakePahoClient.instances[0].events
         assert [event[0] for event in events].count("tls_set") == 1
         assert [event[0] for event in events].count("connect") == 2
+        assert [event[0] for event in events].index("tls_set") < [
+            event[0] for event in events
+        ].index("username_pw_set")
+
+    asyncio.run(scenario())
+
+
+def test_client_rejects_credentials_without_tls_before_configuration() -> None:
+    async def scenario() -> None:
+        insecure_configs = (
+            MqttConfig("broker", 1883, "observer", ""),
+            MqttConfig("broker", 1883, "", "secret"),
+        )
+
+        for insecure_config in insecure_configs:
+            FakePahoClient.instances.clear()
+            with patch(
+                "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+                FakePahoClient,
+            ):
+                client = MqttClient(insecure_config)
+                try:
+                    await client.connect(timeout=1)
+                except ValueError as error:
+                    assert str(error) == (
+                        "TLS is required when an MQTT username or password "
+                        "is configured."
+                    )
+                else:
+                    raise AssertionError("Expected plaintext credentials to fail")
+
+            assert FakePahoClient.instances[-1].events == []
 
     asyncio.run(scenario())
 

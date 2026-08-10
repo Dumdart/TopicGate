@@ -360,6 +360,45 @@ def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> Non
     assert saved.config == replacement
 
 
+def test_profile_operations_reject_credentials_without_tls() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        broker_repository = FakeBrokerRepository(
+            MqttConfig("default", 1883, "", "")
+        )
+        view_model = MainViewModel(
+            repository, broker_repository=broker_repository
+        )
+        profile = broker_repository.get_profile()
+        insecure = MqttConfig("broker", 1883, "observer", "secret")
+
+        for operation in (
+            lambda: view_model.save_broker_profile(profile.id, insecure),
+            lambda: view_model.create_broker_profile("Insecure", insecure),
+        ):
+            try:
+                operation()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Expected plaintext credentials to fail")
+
+        try:
+            await view_model.activate_broker_profile(profile.id, insecure)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Expected plaintext credentials to fail")
+
+        assert broker_repository.get_profile().config == MqttConfig(
+            "default", 1883, "", ""
+        )
+        assert len(broker_repository.get_all_profiles()) == 2
+        assert repository.broker_configurations == []
+
+    asyncio.run(scenario())
+
+
 def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
