@@ -2,6 +2,10 @@ from copy import copy
 from collections.abc import Iterable, Iterator
 
 from topicgate.core.mqtt_topics import validate_topic_size_and_depth
+from topicgate.core.observer_limits import (
+    MAX_OBSERVER_NODES,
+    ObserverModelCapacityError,
+)
 from topicgate.core.models.observer_model import (
     ObserverModel,
     TopicNode,
@@ -49,7 +53,11 @@ class ObserverModelService:
             topic: copy_state(state)
             for topic, state in model.topic_states.items()
         }
-        return ObserverModel(root_stats=root_copies, topic_states=topic_states)
+        return ObserverModel(
+            root_stats=root_copies,
+            topic_states=topic_states,
+            configured_topics=set(model.configured_topics),
+        )
 
     @staticmethod
     def get_all_topics(model: ObserverModel) -> list[str]:
@@ -90,6 +98,14 @@ class ObserverModelService:
     def find_or_create_node(model: ObserverModel, topic: str) -> TopicNode:
         """Return the exact topic node, creating its path when first observed."""
         segments = validate_topic_size_and_depth(topic, "topic")
+        missing_nodes = ObserverModelService._missing_node_count(model, segments)
+        if (
+            len(ObserverModelService.get_all_nodes(model)) + missing_nodes
+            > MAX_OBSERVER_NODES
+        ):
+            raise ObserverModelCapacityError(
+                f"An observer model cannot exceed {MAX_OBSERVER_NODES:,} nodes."
+            )
         root = next(
             (node for node in model.root_stats if node.segment == segments[0]),
             None,
@@ -113,7 +129,63 @@ class ObserverModelService:
         """Add topic paths to an observer tree and return the updated model."""
         for topic in topics:
             ObserverModelService.find_or_create_node(model, topic)
+            model.configured_topics.add(topic)
         return model
+
+    @staticmethod
+    def remove_topic(model: ObserverModel, topic: str) -> TopicState | None:
+        """Remove retained state and prune its unconfigured empty path."""
+        state = model.topic_states.pop(topic, None)
+        segments = topic.split("/")
+        chain: list[tuple[TopicNode | None, TopicNode, str]] = []
+        node = next(
+            (root for root in model.root_stats if root.segment == segments[0]),
+            None,
+        )
+        if node is None:
+            return state
+
+        path = segments[0]
+        chain.append((None, node, path))
+        for segment in segments[1:]:
+            parent = node
+            node = parent.children.get(segment)
+            if node is None:
+                return state
+            path = f"{path}/{segment}"
+            chain.append((parent, node, path))
+
+        node.state = None
+        # Check from the leaf upward so shared and configured paths remain.
+        for parent, current, current_path in reversed(chain):
+            if (
+                current.children
+                or current.state is not None
+                or current_path in model.configured_topics
+            ):
+                break
+            if parent is None:
+                model.root_stats.remove(current)
+            else:
+                parent.children.pop(current.segment, None)
+        return state
+
+    @staticmethod
+    def rebuild(
+        model: ObserverModel,
+        configured_topics: Iterable[str],
+    ) -> None:
+        """Rebuild bounded structural nodes from configuration and retained state."""
+        rebuilt = ObserverModel(
+            root_stats=[],
+            topic_states=dict(model.topic_states),
+        )
+        ObserverModelService.add_topics(rebuilt, configured_topics)
+        for state in rebuilt.topic_states.values():
+            node = ObserverModelService.find_or_create_node(rebuilt, state.topic)
+            node.state = state
+        model.root_stats = rebuilt.root_stats
+        model.configured_topics = rebuilt.configured_topics
 
     @staticmethod
     def _scan_nodes(model: ObserverModel) -> Iterator[tuple[str, TopicNode]]:
@@ -129,3 +201,18 @@ class ObserverModelService:
             yield topic, node
             for child in reversed(tuple(node.children.values())):
                 pending.append((child, f"{topic}/{child.segment}"))
+
+    @staticmethod
+    def _missing_node_count(model: ObserverModel, segments: list[str]) -> int:
+        node = next(
+            (root for root in model.root_stats if root.segment == segments[0]),
+            None,
+        )
+        if node is None:
+            return len(segments)
+        for index, segment in enumerate(segments[1:], start=1):
+            child = node.children.get(segment)
+            if child is None:
+                return len(segments) - index
+            node = child
+        return 0

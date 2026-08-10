@@ -21,6 +21,8 @@ from topicgate.core.payload_limits import (
 
 
 class FakeObserverRepository:
+    topic_update_interval = 0.0
+
     def __init__(self) -> None:
         self._states: dict[str, TopicState] = {}
         self._messages: asyncio.Queue[MqttMessage] = asyncio.Queue()
@@ -185,6 +187,33 @@ def test_view_model_batches_notifications_and_reports_dropped_messages() -> None
             "Received 3 MQTT messages (latest: untrusted/topic)",
             "Dropped 4 MQTT messages during admission (4 total)",
         ]
+
+    asyncio.run(scenario())
+
+
+def test_view_model_throttles_topic_tree_updates() -> None:
+    async def scenario() -> None:
+        repository = FakeObserverRepository()
+        repository.topic_update_interval = 0.02
+        view_model = MainViewModel(repository, "untrusted/topic")
+        state_changes: list[bool] = []
+        topic_changes: list[bool] = []
+        view_model.state_changed.connect(lambda: state_changes.append(True))
+        view_model.topics_changed.connect(lambda: topic_changes.append(True))
+        await view_model.start()
+        state_changes.clear()
+        topic_changes.clear()
+
+        repository.publish(MqttMessage("untrusted/topic", b"value", 0, False))
+        await asyncio.sleep(0)
+
+        assert state_changes == []
+        assert topic_changes == []
+
+        await asyncio.sleep(0.03)
+        assert state_changes == [True]
+        assert topic_changes == [True]
+        await view_model.stop()
 
     asyncio.run(scenario())
 

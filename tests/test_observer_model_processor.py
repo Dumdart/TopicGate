@@ -4,6 +4,11 @@ from topicgate.core.mqtt_topics import (
     MAX_MQTT_TOPIC_BYTES,
     MAX_MQTT_TOPIC_LEVELS,
 )
+from topicgate.core.observer_limits import (
+    MAX_OBSERVED_TOPICS,
+    MAX_OBSERVER_NODES,
+    MAX_RETAINED_PAYLOAD_BYTES,
+)
 from topicgate.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
@@ -101,3 +106,44 @@ def test_process_accepts_received_topic_at_depth_limit() -> None:
 
     assert len(ObserverModelService.get_all_nodes(model)) == MAX_MQTT_TOPIC_LEVELS
     assert model.topic_states[topic].payload == b"value"
+
+
+def test_distinct_topic_flood_evicts_least_recently_used_state() -> None:
+    model = build_model("devices/#")
+    processor = ObserverModelMqttMessageProcessor()
+
+    for index in range(MAX_OBSERVED_TOPICS):
+        assert processor.process(
+            model, MqttMessage(f"devices/{index}", b"value", 0, False)
+        )
+    assert processor.process(
+        model, MqttMessage("devices/0", b"recent", 0, False)
+    )
+    assert processor.process(
+        model, MqttMessage("devices/overflow", b"new", 0, False)
+    )
+
+    assert len(model.topic_states) == MAX_OBSERVED_TOPICS
+    assert "devices/0" in model.topic_states
+    assert "devices/1" not in model.topic_states
+    assert "devices/overflow" in model.topic_states
+    assert ObserverModelService.find_node(model, "devices/#") is not None
+    assert len(ObserverModelService.get_all_nodes(model)) <= MAX_OBSERVER_NODES
+
+
+def test_retained_payload_bytes_are_bounded() -> None:
+    model = build_model("devices/#")
+    processor = ObserverModelMqttMessageProcessor()
+    payload = b"x" * (64 * 1024)
+    message_total = MAX_RETAINED_PAYLOAD_BYTES // len(payload) + 1
+
+    for index in range(message_total):
+        assert processor.process(
+            model, MqttMessage(f"devices/{index}", payload, 0, False)
+        )
+
+    assert sum(
+        len(state.payload) for state in model.topic_states.values()
+    ) <= MAX_RETAINED_PAYLOAD_BYTES
+    assert "devices/0" not in model.topic_states
+    assert f"devices/{message_total - 1}" in model.topic_states

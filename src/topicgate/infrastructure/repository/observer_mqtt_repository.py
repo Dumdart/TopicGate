@@ -8,6 +8,8 @@ from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.observer_limits import TOPIC_TREE_REFRESH_INTERVAL_SECONDS
 from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.mqtt.callbacks.observer_repository_callbacks import (
     ObserverRepositoryCallbacks,
@@ -22,6 +24,8 @@ from topicgate.services.observer_model_service import ObserverModelService
 
 class ObserverMqttRepository(MqttRepository[ObserverModel]):
     """Observe messages matching the supplied absolute MQTT topic filters."""
+
+    topic_update_interval = TOPIC_TREE_REFRESH_INTERVAL_SECONDS
 
     def __init__(
         self,
@@ -45,6 +49,13 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
         )
         self._subscription_manager = SubscriptionManager(
             self._mqtt_gate, self.handle_message
+        )
+        ObserverModelService.rebuild(
+            self._state,
+            (
+                subscription.topic_filter
+                for subscription in self._subscription_manager.subscriptions
+            ),
         )
 
     async def start(self) -> None:
@@ -130,6 +141,13 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
                 self._state = model
 
             try:
+                ObserverModelService.rebuild(
+                    self._state,
+                    (
+                        subscription.topic_filter
+                        for subscription in active_subscriptions
+                    ),
+                )
                 await self._start()
             except Exception:
                 # Check that a failed broker change leaves the repository using
@@ -155,7 +173,9 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
         return self._state.topic_states.get(topic)
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
-        self._message_processor.process(self._state, msg)
+        if not self._message_processor.process(self._state, msg):
+            self._dropped_message_count += 1
+            return
         if self.message_queue.full():
             self.message_queue.get_nowait()
             self._dropped_message_count += 1
@@ -178,10 +198,18 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.add(subscription)
+            ObserverModelService.rebuild(
+                self._state,
+                (
+                    item.topic_filter
+                    for item in self._subscription_manager.subscriptions
+                ),
+            )
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.remove(subscription)
+            self._prune_unsubscribed_topics()
 
     async def update_subscription(
         self,
@@ -190,6 +218,7 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
     ) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.update(original_filter, subscription)
+            self._prune_unsubscribed_topics()
 
     async def reconnect(self) -> None:
         """Reconnect and restore all active subscriptions."""
@@ -232,3 +261,16 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
         if self.connection_status != status:
             self.connection_status = status
             self.connection_status_queue.put_nowait(status)
+
+    def _prune_unsubscribed_topics(self) -> None:
+        subscriptions = self.subscriptions
+        for topic in tuple(self._state.topic_states):
+            if not any(
+                mqtt_filter_matches(subscription.topic_filter, topic)
+                for subscription in subscriptions
+            ):
+                ObserverModelService.remove_topic(self._state, topic)
+        ObserverModelService.rebuild(
+            self._state,
+            (subscription.topic_filter for subscription in subscriptions),
+        )

@@ -9,6 +9,8 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.observer_limits import TOPIC_TREE_REFRESH_INTERVAL_SECONDS
 from topicgate.core.payload_limits import (
     MAX_FORMATTED_JSON_CHARACTERS,
     MAX_RENDERED_PAYLOAD_BYTES,
@@ -16,27 +18,6 @@ from topicgate.core.payload_limits import (
 from topicgate.gui.broker_state_reader import BrokerStateReader
 from topicgate.gui.observer_state_reader import ObserverStateReader
 from topicgate.services.observer_model_service import ObserverModelService
-
-
-def mqtt_filter_matches(topic_filter: str, topic: str) -> bool:
-    """Return whether an MQTT topic matches a valid wildcard filter."""
-    filter_segments = topic_filter.split("/")
-    topic_segments = topic.split("/")
-
-    # Check MQTT's rule that wildcard filters not beginning with '$' do not
-    # match system topics.
-    if topic.startswith("$") and not topic_filter.startswith("$"):
-        return False
-
-    for index, filter_segment in enumerate(filter_segments):
-        if filter_segment == "#":
-            return index == len(filter_segments) - 1
-        if index >= len(topic_segments):
-            return False
-        if filter_segment != "+" and filter_segment != topic_segments[index]:
-            return False
-
-    return len(filter_segments) == len(topic_segments)
 
 
 class MainViewModel(QObject):
@@ -470,6 +451,15 @@ class MainViewModel(QObject):
 
     async def _observe_messages(self) -> None:
         async for message in self._repository.messages():
+            update_interval = float(
+                getattr(
+                    self._repository,
+                    "topic_update_interval",
+                    TOPIC_TREE_REFRESH_INTERVAL_SECONDS,
+                )
+            )
+            if update_interval > 0:
+                await asyncio.sleep(update_interval)
             messages = (message,)
             drain_pending = getattr(
                 self._repository, "drain_pending_messages", None

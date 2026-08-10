@@ -10,6 +10,7 @@ from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
+from topicgate.services.observer_model_service import ObserverModelService
 
 
 def build_repository(
@@ -115,6 +116,38 @@ def test_repository_delegates_subscription_operations() -> None:
         manager.add.assert_awaited_once_with(replacement)
         manager.remove.assert_awaited_once_with(original)
         manager.update.assert_awaited_once_with(original.topic_filter, replacement)
+
+    asyncio.run(scenario())
+
+
+def test_removing_subscription_clears_uncovered_retained_state() -> None:
+    async def scenario() -> None:
+        repository, manager = build_repository()
+        removed = Subscription("devices/#")
+        remaining = Subscription("sensors/#")
+        manager.subscriptions = (removed, remaining)
+        repository.handle_message(
+            None,
+            None,
+            MqttMessage("devices/untrusted", b"value", 0, False),
+        )
+        repository.handle_message(
+            None,
+            None,
+            MqttMessage("sensors/temperature", b"21", 0, False),
+        )
+
+        async def remove(_subscription: Subscription) -> None:
+            manager.subscriptions = (remaining,)
+
+        manager.remove.side_effect = remove
+        await repository.remove_subscription(removed)
+
+        assert repository.get_state("devices/untrusted") is None
+        assert repository.get_value("sensors/temperature") == b"21"
+        assert ObserverModelService.find_node(
+            repository.get(), remaining.topic_filter
+        ) is not None
 
     asyncio.run(scenario())
 

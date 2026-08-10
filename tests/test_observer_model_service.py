@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from topicgate.core.models.observer_model import (
     ObserverModel,
@@ -102,6 +103,11 @@ def test_add_topics_builds_shared_observer_tree_paths() -> None:
         "bridge/#",
     ]
     assert len(model.root_stats) == 2
+    assert model.configured_topics == {
+        "SmartHome/kitchen/status",
+        "SmartHome/kitchen/temperature",
+        "bridge/#",
+    }
 
 
 def test_add_topics_does_not_duplicate_existing_nodes() -> None:
@@ -129,3 +135,19 @@ def test_deep_legacy_tree_copy_and_traversal_are_iterative() -> None:
     assert len(copied_nodes) == depth
     assert copied_nodes[-1].segment == str(depth - 1)
     assert copied.root_stats[0] is not root
+
+
+def test_observer_tree_rejects_nodes_beyond_budget_before_mutation() -> None:
+    model = ObserverModel(root_stats=[])
+    with patch(
+        "topicgate.services.observer_model_service.MAX_OBSERVER_NODES", 3
+    ):
+        ObserverModelService.add_topics(model, ["a/b/c"])
+        try:
+            ObserverModelService.find_or_create_node(model, "a/b/c/d")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Expected the observer node budget to apply")
+
+    assert ObserverModelService.get_all_topics(model) == ["a/b/c"]

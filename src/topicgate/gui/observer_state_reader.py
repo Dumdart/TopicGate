@@ -12,6 +12,7 @@ class ObserverStateReader(Protocol):
 
     connection_status: object
     dropped_message_count: int
+    topic_update_interval: float
 
     def get(self) -> ObserverModel: ...
 
