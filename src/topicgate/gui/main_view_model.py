@@ -493,7 +493,7 @@ class MainViewModel(QObject):
             if dropped > self._reported_dropped_messages:
                 newly_dropped = dropped - self._reported_dropped_messages
                 self.log_message.emit(
-                    f"Dropped {newly_dropped} MQTT messages due to overload "
+                    f"Dropped {newly_dropped} MQTT messages during admission "
                     f"({dropped} total)"
                 )
                 self._reported_dropped_messages = dropped

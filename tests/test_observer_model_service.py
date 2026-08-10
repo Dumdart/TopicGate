@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.observer_model import (
+    ObserverModel,
+    TopicNode,
+    TopicState,
+)
 from topicgate.services.observer_model_service import ObserverModelService
 
 
@@ -107,3 +111,21 @@ def test_add_topics_does_not_duplicate_existing_nodes() -> None:
 
     assert ObserverModelService.get_all_topics(model) == ["home/status"]
     assert len(ObserverModelService.get_all_nodes(model)) == 2
+
+
+def test_deep_legacy_tree_copy_and_traversal_are_iterative() -> None:
+    root = TopicNode("root")
+    node = root
+    depth = 1_500
+    for index in range(1, depth):
+        child = TopicNode(str(index))
+        node.children[child.segment] = child
+        node = child
+    model = ObserverModel(root_stats=[root])
+
+    copied = ObserverModelService.deep_copy(model)
+    copied_nodes = ObserverModelService.get_all_nodes(copied)
+
+    assert len(copied_nodes) == depth
+    assert copied_nodes[-1].segment == str(depth - 1)
+    assert copied.root_stats[0] is not root

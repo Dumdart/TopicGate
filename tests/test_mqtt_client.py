@@ -7,6 +7,7 @@ from paho.mqtt.reasoncodes import ReasonCode
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.mqtt_topics import MAX_MQTT_TOPIC_LEVELS
 from topicgate.core.payload_limits import (
     MAX_PENDING_INGRESS_MESSAGES,
     MAX_STORED_PAYLOAD_BYTES,
@@ -417,5 +418,43 @@ def test_message_callback_flood_is_bounded_before_loop_scheduling() -> None:
         assert received[-1].payload == str(
             MAX_PENDING_INGRESS_MESSAGES + overflow
         ).encode()
+
+    asyncio.run(scenario())
+
+
+def test_message_callback_drops_deep_topic_before_loop_scheduling() -> None:
+    async def scenario() -> None:
+        received: list[MqttMessage] = []
+
+        async def on_message(client, userdata, message):
+            received.append(message)
+
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(config())
+            await client.connect(timeout=1)
+            client.message_callback_add("#", on_message)
+            fake_client = FakePahoClient.instances[-1]
+            deep_topic = "/".join(
+                "a" for _ in range(MAX_MQTT_TOPIC_LEVELS + 1)
+            )
+
+            fake_client.message_callback(
+                fake_client,
+                None,
+                SimpleNamespace(
+                    topic=deep_topic,
+                    payload=b"value",
+                    qos=0,
+                    retain=False,
+                ),
+            )
+            await asyncio.sleep(0)
+            await client.disconnect()
+
+        assert received == []
+        assert client.dropped_message_count == 1
 
     asyncio.run(scenario())

@@ -183,7 +183,7 @@ def test_view_model_batches_notifications_and_reports_dropped_messages() -> None
         assert view_model.dropped_message_count == "4"
         assert logs == [
             "Received 3 MQTT messages (latest: untrusted/topic)",
-            "Dropped 4 MQTT messages due to overload (4 total)",
+            "Dropped 4 MQTT messages during admission (4 total)",
         ]
 
     asyncio.run(scenario())

@@ -11,6 +11,7 @@ from paho.mqtt.subscribeoptions import SubscribeOptions
 
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.mqtt_topics import validate_topic_name
 from topicgate.core.payload_limits import (
     MAX_MESSAGE_CALLBACK_BATCH,
     MAX_PENDING_INGRESS_MESSAGES,
@@ -196,9 +197,16 @@ class MqttClient:
 
     def message_callback_add(self, topic: str, callback: Callback):
         def forward(client: Any, userdata: Any, message: Any):
+            topic = str(message.topic)
+            try:
+                validate_topic_name(topic)
+            except ValueError:
+                with self._pending_messages_lock:
+                    self._dropped_message_count += 1
+                return
             payload_size = len(message.payload)
             mqtt_message = MqttMessage(
-                topic=str(message.topic),
+                topic=topic,
                 payload=bytes(message.payload[:MAX_STORED_PAYLOAD_BYTES]),
                 qos=int(message.qos),
                 retain=bool(message.retain),

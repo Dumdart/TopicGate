@@ -1,5 +1,9 @@
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel
+from topicgate.core.mqtt_topics import (
+    MAX_MQTT_TOPIC_BYTES,
+    MAX_MQTT_TOPIC_LEVELS,
+)
 from topicgate.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
@@ -63,3 +67,37 @@ def test_process_preserves_original_size_of_a_truncated_payload() -> None:
 
     assert model.topic_states[message.topic].payload == b"truncated"
     assert model.topic_states[message.topic].payload_size == 100_000
+
+
+def test_process_rejects_unsafe_received_topics_before_mutation() -> None:
+    unsafe_topics = (
+        "/".join("a" for _ in range(MAX_MQTT_TOPIC_LEVELS + 1)),
+        "a" * (MAX_MQTT_TOPIC_BYTES + 1),
+        "home/+/status",
+    )
+
+    for topic in unsafe_topics:
+        model = build_model()
+        try:
+            ObserverModelMqttMessageProcessor().process(
+                model, MqttMessage(topic, b"value", 0, False)
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Expected an unsafe topic name to fail")
+
+        assert model.root_stats == []
+        assert model.topic_states == {}
+
+
+def test_process_accepts_received_topic_at_depth_limit() -> None:
+    model = build_model()
+    topic = "/".join("a" for _ in range(MAX_MQTT_TOPIC_LEVELS))
+
+    ObserverModelMqttMessageProcessor().process(
+        model, MqttMessage(topic, b"value", 0, False)
+    )
+
+    assert len(ObserverModelService.get_all_nodes(model)) == MAX_MQTT_TOPIC_LEVELS
+    assert model.topic_states[topic].payload == b"value"
