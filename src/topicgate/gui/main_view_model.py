@@ -6,7 +6,7 @@ from uuid import UUID
 from PySide6.QtCore import QObject, Signal
 
 from topicgate.core.config.mqtt_config import MqttConfig
-from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
@@ -141,11 +141,11 @@ class MainViewModel(QObject):
         return self._runtime.mqtt_config
 
     @property
-    def broker_profiles(self) -> tuple[BrokerProfile, ...]:
+    def broker_profiles(self) -> tuple[BrokerSummary, ...]:
         return self._runtime.list_brokers()
 
     @property
-    def active_broker_profile(self) -> BrokerProfile:
+    def active_broker_profile(self) -> BrokerSummary:
         return self._runtime.active_broker
 
     @property
@@ -202,6 +202,9 @@ class MainViewModel(QObject):
 
     async def stop(self) -> None:
         """Stop listening for repository events."""
+        await self._cancel_observer_tasks()
+
+    async def _cancel_observer_tasks(self) -> None:
         tasks = [
             task
             for task in (self._message_task, self._connection_task)
@@ -214,6 +217,17 @@ class MainViewModel(QObject):
                 await task
         self._message_task = None
         self._connection_task = None
+
+    async def _restart_observer_tasks(self) -> None:
+        observe_messages = self._message_task is not None
+        observe_connections = self._connection_task is not None
+        await self._cancel_observer_tasks()
+        if observe_messages:
+            self._message_task = asyncio.create_task(self._observe_messages())
+        if observe_connections:
+            self._connection_task = asyncio.create_task(
+                self._observe_connection_statuses()
+            )
 
     def select_topic(self, topic: str) -> None:
         if topic == self._topic:
@@ -327,6 +341,7 @@ class MainViewModel(QObject):
             self.log_message.emit(f"Broker update failed: {error}")
             raise
         if profile_changed:
+            await self._restart_observer_tasks()
             self._topic = ""
             self.refresh()
             self.topics_changed.emit()
@@ -341,7 +356,7 @@ class MainViewModel(QObject):
         profile_id: UUID,
         mqtt_config: MqttConfig,
         profile_name: str | None = None,
-    ) -> BrokerProfile:
+    ) -> BrokerSummary:
         """Persist broker settings without changing the MQTT connection."""
         profile = self._runtime.update_broker(
             profile_id,
@@ -356,7 +371,7 @@ class MainViewModel(QObject):
         self,
         name: str,
         mqtt_config: MqttConfig,
-    ) -> BrokerProfile:
+    ) -> BrokerSummary:
         """Create a selectable broker profile without changing connections."""
         profile = self._runtime.create_broker(name, mqtt_config)
         self.configuration_changed.emit()

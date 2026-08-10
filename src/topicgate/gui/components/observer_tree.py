@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
 
@@ -130,7 +130,7 @@ class ObserverTreePane(WorkspacePane):
 
     def render_broker_profiles(
         self,
-        profiles: tuple[BrokerProfile, ...],
+        profiles: tuple[BrokerSummary, ...],
         active_profile_id: UUID,
     ) -> None:
         """Render a quick-switch menu for the available broker profiles."""

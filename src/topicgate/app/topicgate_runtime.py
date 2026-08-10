@@ -1,9 +1,11 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from uuid import UUID
 
 from topicgate.app.service_item import ServiceItem
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
@@ -19,29 +21,55 @@ class TopicGateRuntime(ServiceItem):
     def __init__(
         self,
         broker_repository: BrokerRepository,
-        mqtt_repository: ObserverMqttRepository,
+        mqtt_repositories: dict[UUID, ObserverMqttRepository],
+        active_broker_id: UUID | None = None,
+        mqtt_repository_factory: Callable[
+            [BrokerProfile], ObserverMqttRepository
+        ] | None = None,
     ) -> None:
         self._brokers = broker_repository
-        self._mqtt = mqtt_repository
+        self._active_broker_id = (
+            broker_repository.get_profile().id
+            if active_broker_id is None
+            else active_broker_id
+        )
+        self._mqtt_repositories = mqtt_repositories
+        self._mqtt_repository_factory = (
+            self._create_mqtt_repository
+            if mqtt_repository_factory is None
+            else mqtt_repository_factory
+        )
+        if self._active_broker_id not in self._mqtt_repositories:
+            raise ValueError("The active broker requires an MQTT repository.")
+
+    @property
+    def active_repo(self) -> ObserverMqttRepository:
+        return self._mqtt_repositories[self._active_broker_id]
 
     async def start(self) -> None:
-        await self._mqtt.start()
+        await self.active_repo.start()
 
     async def stop(self) -> None:
-        model = self._mqtt.get()
+        model = self.active_repo.get()
         try:
-            await self._mqtt.stop()
+            await self.active_repo.stop()
         finally:
             self._brokers.update_observer_model(model)
 
-    def list_brokers(self) -> tuple[BrokerProfile, ...]:
-        return self._brokers.get_all_profiles()
+    def list_brokers(self) -> tuple[BrokerSummary, ...]:
+        return tuple(
+            self._broker_summary(profile)
+            for profile in self._brokers.get_all_profiles()
+        )
 
-    def get_broker(self, broker_id: UUID | None = None) -> BrokerProfile:
-        return self._brokers.get_profile(broker_id)
+    def list_topics(self) -> tuple[str, ...]:
+        return self.active_repo.get_all_topics()
+
+    def get_broker(self, broker_id: UUID | None = None) -> BrokerSummary:
+        return self._broker_summary(self._get_broker_profile(broker_id))
 
     @property
-    def active_broker(self) -> BrokerProfile:
+    def active_broker(self) -> BrokerSummary:
         return self.get_broker()
 
     @property
@@ -49,66 +77,63 @@ class TopicGateRuntime(ServiceItem):
         return self.active_broker.config
 
     def get_topic_state(self, broker_id: UUID, topic: str) -> TopicState | None:
-        if broker_id == self.active_broker.id:
-            return self._mqtt.get_state(topic)
-        return self.get_broker(broker_id).workspace.model.topic_states.get(topic)
+        return self._mqtt_repositories[broker_id].get_state(topic)
 
     def get_observer_model(self, broker_id: UUID) -> ObserverModel:
-        if broker_id == self.active_broker.id:
-            return self._mqtt.get()
-        return self.get_broker(broker_id).workspace.model
+        return self._mqtt_repositories[broker_id].get()
 
     def list_subscriptions(self, broker_id: UUID) -> tuple[Subscription, ...]:
-        if broker_id == self.active_broker.id:
-            return tuple(self._mqtt.subscriptions)
-        return tuple(self.get_broker(broker_id).workspace.subscriptions)
+        return tuple(self._mqtt_repositories[broker_id].subscriptions)
 
     @property
     def connection_status(self) -> object:
-        return self._mqtt.connection_status
+        return self.active_repo.connection_status
 
     @property
     def dropped_message_count(self) -> int:
-        return self._mqtt.dropped_message_count
+        return self.active_repo.dropped_message_count
 
     @property
     def topic_update_interval(self) -> float:
-        return self._mqtt.topic_update_interval
+        return self.active_repo.topic_update_interval
 
     def messages(self) -> AsyncIterator[MqttMessage]:
-        return self._mqtt.messages()
+        return self.active_repo.messages()
 
     def drain_pending_messages(self) -> tuple[MqttMessage, ...]:
-        return self._mqtt.drain_pending_messages()
+        return self.active_repo.drain_pending_messages()
 
     def connection_statuses(self) -> AsyncIterator[object]:
-        return self._mqtt.connection_statuses()
+        return self.active_repo.connection_statuses()
 
     async def connect(self) -> None:
-        await self._mqtt.connect()
+        await self.active_repo.connect()
 
     async def disconnect(self) -> None:
-        await self._mqtt.disconnect()
+        await self.active_repo.disconnect()
 
     async def reconnect(self) -> None:
-        await self._mqtt.reconnect()
+        await self.active_repo.reconnect()
 
-    def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerProfile:
-        return self._brokers.create_profile(name, mqtt_config)
+    def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerSummary:
+        profile = self._brokers.create_profile(name, mqtt_config)
+        self._mqtt_repositories[profile.id] = self._mqtt_repository_factory(profile)
+        return self._broker_summary(profile)
 
     def update_broker(
         self,
         broker_id: UUID,
         mqtt_config: MqttConfig,
         name: str | None = None,
-    ) -> BrokerProfile:
-        profile = self.get_broker(broker_id)
+    ) -> BrokerSummary:
+        profile = self._get_broker_profile(broker_id)
+        config = self._config_with_stored_password(profile, mqtt_config)
         profile.name = (
             self._validated_profile_name(name, broker_id)
             if name is not None
             else profile.name
         )
-        profile.config = mqtt_config
+        profile.config = config
         self._brokers.update_profile(profile)
         return self.get_broker(broker_id)
 
@@ -117,34 +142,54 @@ class TopicGateRuntime(ServiceItem):
         broker_id: UUID,
         mqtt_config: MqttConfig | None = None,
         name: str | None = None,
-    ) -> BrokerProfile:
-        profile = self.get_broker(broker_id)
-        config = profile.config if mqtt_config is None else mqtt_config
+    ) -> BrokerSummary:
+        profile = self._get_broker_profile(broker_id)
+        config = (
+            profile.config
+            if mqtt_config is None
+            else self._config_with_stored_password(profile, mqtt_config)
+        )
         normalized_name = (
             self._validated_profile_name(name, broker_id)
             if name is not None
             else profile.name
         )
-        await self._mqtt.update_broker(
-            config,
-            profile.workspace.model,
-            profile.workspace.subscriptions,
-        )
+        previous_broker_id = self._active_broker_id
+        previous_repo = self.active_repo
+        selected_repo = self._mqtt_repositories[broker_id]
+        switching_repositories = selected_repo is not previous_repo
+        if switching_repositories:
+            await previous_repo.stop()
+        try:
+            await selected_repo.update_broker(
+                config,
+                subscriptions=profile.workspace.subscriptions,
+            )
+        except Exception:
+            if switching_repositories:
+                await previous_repo.start()
+            raise
         profile.name = normalized_name
         profile.config = config
         self._brokers.update_profile(profile)
+        if broker_id != previous_broker_id:
+            self._brokers.update_observer_model(previous_repo.get())
         self._brokers.activate_profile(broker_id, config)
+        if broker_id != previous_broker_id:
+            self._active_broker_id = broker_id
         return self.active_broker
 
-    async def delete_broker(self, broker_id: UUID) -> BrokerProfile:
-        profile = self.get_broker(broker_id)
+    async def delete_broker(self, broker_id: UUID) -> BrokerSummary:
+        profile = self._get_broker_profile(broker_id)
         profiles = self.list_brokers()
         if len(profiles) == 1:
             raise ValueError("At least one broker profile is required.")
         if profile.id == self.active_broker.id:
             replacement = next(item for item in profiles if item.id != profile.id)
             await self.activate_broker(replacement.id)
-        return self._brokers.delete_profile(profile.id)
+        deleted = self._brokers.delete_profile(profile.id)
+        self._mqtt_repositories.pop(profile.id)
+        return self._broker_summary(deleted)
 
     async def add_subscription(
         self,
@@ -152,7 +197,7 @@ class TopicGateRuntime(ServiceItem):
         subscription: Subscription,
     ) -> None:
         self._require_active_broker(broker_id)
-        await self._mqtt.add_subscription(subscription)
+        await self.active_repo.add_subscription(subscription)
         self._persist_active_subscriptions()
 
     async def update_subscription(
@@ -162,7 +207,7 @@ class TopicGateRuntime(ServiceItem):
         subscription: Subscription,
     ) -> None:
         self._require_active_broker(broker_id)
-        await self._mqtt.update_subscription(original_filter, subscription)
+        await self.active_repo.update_subscription(original_filter, subscription)
         self._persist_active_subscriptions()
 
     async def remove_subscription(
@@ -171,16 +216,16 @@ class TopicGateRuntime(ServiceItem):
         subscription: Subscription,
     ) -> None:
         self._require_active_broker(broker_id)
-        await self._mqtt.remove_subscription(subscription)
+        await self.active_repo.remove_subscription(subscription)
         self._persist_active_subscriptions()
 
     async def publish(self, broker_id: UUID, topic: str, payload: bytes) -> None:
         self._require_active_broker(broker_id)
-        await self._mqtt.publish(topic, payload)
+        await self.active_repo.publish(topic, payload)
 
     def _persist_active_subscriptions(self) -> None:
-        workspace = self.active_broker.workspace
-        workspace.subscriptions = tuple(self._mqtt.subscriptions)
+        workspace = self._get_broker_profile().workspace
+        workspace.subscriptions = tuple(self.active_repo.subscriptions)
         self._brokers.update_observer_workspace(workspace)
 
     def _require_active_broker(self, broker_id: UUID) -> None:
@@ -198,3 +243,40 @@ class TopicGateRuntime(ServiceItem):
         ):
             raise ValueError("A broker profile with that name already exists.")
         return normalized_name
+
+    def _get_broker_profile(self, broker_id: UUID | None = None) -> BrokerProfile:
+        return self._brokers.get_profile(broker_id)
+
+    @staticmethod
+    def _create_mqtt_repository(profile: BrokerProfile) -> ObserverMqttRepository:
+        return ObserverMqttRepository(
+            profile.config,
+            list(profile.workspace.subscriptions),
+            profile.workspace.model,
+        )
+
+    @staticmethod
+    def _config_with_stored_password(
+        profile: BrokerProfile,
+        mqtt_config: MqttConfig,
+    ) -> MqttConfig:
+        if mqtt_config.password or not profile.config.password:
+            return mqtt_config
+        return replace(mqtt_config, password=profile.config.password)
+
+    @staticmethod
+    def _broker_summary(profile: BrokerProfile) -> BrokerSummary:
+        config = profile.config
+        return BrokerSummary(
+            id=profile.id,
+            name=profile.name,
+            config=MqttConfig(
+                host=config.host,
+                port=config.port,
+                username=config.username,
+                password="",
+                use_tls=config.use_tls,
+                id=config.id,
+            ),
+            password_configured=bool(config.password),
+        )

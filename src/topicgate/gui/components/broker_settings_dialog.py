@@ -73,6 +73,8 @@ class BrokerSettingsDialog(QDialog):
         self._password_edit = QLineEdit(mqtt_config.password)
         self._password_edit.setObjectName("brokerPasswordEdit")
         self._password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        if selected_profile is not None and selected_profile.password_configured:
+            self._password_edit.setPlaceholderText("********")
         self._use_tls_checkbox = QCheckBox()
         self._use_tls_checkbox.setObjectName("brokerUseTlsCheckbox")
         self._use_tls_checkbox.setChecked(mqtt_config.use_tls)

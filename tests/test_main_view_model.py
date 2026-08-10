@@ -179,7 +179,14 @@ def runtime_for(
     brokers = broker_repository or FakeBrokerRepository(
         MqttConfig("default", 1883, "", "")
     )
-    return FakeTopicGateRuntime(brokers, repository)
+    profiles = brokers.get_all_profiles()
+    repositories = {profile.id: repository for profile in profiles}
+    return FakeTopicGateRuntime(
+        brokers,
+        repositories,
+        brokers.get_profile().id,
+        lambda _profile: repository,
+    )
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -380,7 +387,8 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
 
         await view_model.update_mqtt_config(replacement)
 
-        assert view_model.mqtt_config == replacement
+        assert view_model.mqtt_config.password == ""
+        assert view_model.active_broker_profile.password_configured
         assert repository.broker_configurations == [replacement]
         assert broker_repository.updated_mqtt == [replacement]
         assert changes == [True]
@@ -408,6 +416,39 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
     asyncio.run(scenario())
 
 
+def test_switching_broker_profile_moves_live_message_observation() -> None:
+    async def scenario() -> None:
+        brokers = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        default_profile, selected_profile = brokers.get_all_profiles()
+        selected_profile.workspace.subscriptions = (Subscription("#"),)
+        default_repo = FakeObserverRepository()
+        selected_repo = FakeObserverRepository()
+        runtime = FakeTopicGateRuntime(
+            brokers,
+            {
+                default_profile.id: default_repo,
+                selected_profile.id: selected_repo,
+            },
+            default_profile.id,
+        )
+        view_model = MainViewModel(runtime)
+        await view_model.start()
+
+        await view_model.activate_broker_profile(
+            selected_profile.id,
+            selected_profile.config,
+        )
+        selected_repo.publish(
+            MqttMessage("garage/status", b"closed", 0, False)
+        )
+        await asyncio.sleep(0)
+
+        assert "garage/status" in view_model.topic_paths
+        await view_model.stop()
+
+    asyncio.run(scenario())
+
+
 def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> None:
     repository = FakeObserverRepository()
     broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
@@ -426,7 +467,8 @@ def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> Non
     assert broker_repository.get_profile().id == active_profile.id
     assert broker_repository.updated_mqtt == []
     assert saved.name == "Fixed local"
-    assert saved.config == replacement
+    assert saved.config.password == ""
+    assert saved.password_configured
 
 
 def test_profile_operations_allow_credentials_without_tls() -> None:
@@ -443,8 +485,10 @@ def test_profile_operations_allow_credentials_without_tls() -> None:
         created = view_model.create_broker_profile("Plain MQTT", insecure)
         await view_model.activate_broker_profile(profile.id, insecure)
 
-        assert saved.config == insecure
-        assert created.config == insecure
+        assert saved.config.password == ""
+        assert saved.password_configured
+        assert created.config.password == ""
+        assert created.password_configured
         assert broker_repository.get_profile().config == insecure
         assert len(broker_repository.get_all_profiles()) == 3
         assert repository.broker_configurations == [insecure]

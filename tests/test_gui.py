@@ -199,7 +199,14 @@ def runtime_for(
     brokers = broker_repository or FakeBrokerRepository(
         MqttConfig("broker", 1883, "", "")
     )
-    return FakeTopicGateRuntime(brokers, repository)
+    profiles = brokers.get_all_profiles()
+    repositories = {profile.id: repository for profile in profiles}
+    return FakeTopicGateRuntime(
+        brokers,
+        repositories,
+        brokers.get_profile().id,
+        lambda _profile: repository,
+    )
 
 
 def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
@@ -477,6 +484,31 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     )
     tls_checkbox.setChecked(True)
     assert security_error.isHidden()
+
+    dialog.close()
+    application.processEvents()
+
+
+def test_broker_settings_dialog_masks_a_configured_password() -> None:
+    application = QApplication.instance() or QApplication([])
+    mqtt_config = MqttConfig(
+        "broker.local",
+        8883,
+        "observer",
+        "os-loaded-secret",
+        True,
+    )
+    view_model = MainViewModel(
+        runtime_for(FakeGuiRepository(), FakeBrokerRepository(mqtt_config)),
+    )
+    dialog = BrokerSettingsDialog(view_model)
+
+    password_edit = dialog.findChild(QLineEdit, "brokerPasswordEdit")
+
+    assert password_edit is not None
+    assert password_edit.text() == ""
+    assert password_edit.placeholderText() == "********"
+    assert "os-loaded-secret" not in password_edit.text()
 
     dialog.close()
     application.processEvents()

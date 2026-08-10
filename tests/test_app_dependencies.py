@@ -15,6 +15,7 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
     profile.workspace.model = MagicMock()
     broker_repository = MagicMock()
     broker_repository.get_profile.return_value = profile
+    broker_repository.get_all_profiles.return_value = (profile,)
     credential_store = MagicMock()
 
     with (
