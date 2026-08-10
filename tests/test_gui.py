@@ -39,6 +39,7 @@ from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
 )
 from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
 
@@ -171,6 +172,10 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     assert window.findChild(QLabel, "settingsHint").text() == (
         "Matched by subscription: home/+/temperature"
     )
+    assert (
+        window.findChild(QLabel, "settingsHint").textFormat()
+        == Qt.TextFormat.PlainText
+    )
     connection_status = window.findChild(QLabel, "connectionStatus")
     connection_controls = window.findChild(ConnectionControls)
     assert connection_controls is not None
@@ -194,6 +199,28 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     assert window.findChild(QAction, "disconnectAction").isEnabled()
 
     window.close()
+    application.processEvents()
+
+
+def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    pane = TopicDetailsPane()
+    topic_label = pane.findChild(QLabel, "topicPathLabel")
+    assert topic_label is not None
+    assert topic_label.textFormat() == Qt.TextFormat.PlainText
+
+    topics = (
+        "home/kitchen/temperature",
+        '<b>spoofed</b><img src="file:///C:/secret">',
+        '\\\\attacker\\share\\<img src="//attacker/share/pixel.png">',
+    )
+    for topic in topics:
+        pane.render(MainViewModel(repository, topic))
+        assert topic_label.text() == topic
+        assert topic_label.textFormat() == Qt.TextFormat.PlainText
+
+    pane.deleteLater()
     application.processEvents()
 
 

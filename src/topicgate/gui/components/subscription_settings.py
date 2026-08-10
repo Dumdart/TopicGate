@@ -1,4 +1,4 @@
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,6 +30,7 @@ class SubscriptionSettingsPane(WorkspacePane):
         self._selected_topic = ""
 
         self._hint = QLabel("No editable subscription filter selected.")
+        self._hint.setTextFormat(Qt.TextFormat.PlainText)
         self._hint.setWordWrap(True)
         self._hint.setObjectName("settingsHint")
         self._hint.setSizePolicy(

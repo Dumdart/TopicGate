@@ -16,6 +16,8 @@ class TopicDetailsPane(WorkspacePane):
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
         self._topic_label = QLabel("No topic selected")
+        self._topic_label.setObjectName("topicPathLabel")
+        self._topic_label.setTextFormat(Qt.TextFormat.PlainText)
         self._topic_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
