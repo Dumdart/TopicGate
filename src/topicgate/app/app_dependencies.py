@@ -31,14 +31,19 @@ class AppDependencies:
             credential_store=self.credential_store,
         )
         profile = self.broker_repository.get_profile()
-        self.observer_model_repository = ObserverMqttRepository(
-            profile.config,
-            list(profile.workspace.subscriptions),
-            profile.workspace.model,
-        )
+        self.observer_model_repositories = {
+            item.id: ObserverMqttRepository(
+                item.config,
+                list(item.workspace.subscriptions),
+                item.workspace.model,
+            )
+            for item in self.broker_repository.get_all_profiles()
+        }
+        self.observer_model_repository = self.observer_model_repositories[profile.id]
         self.runtime = TopicGateRuntime(
             self.broker_repository,
-            self.observer_model_repository,
+            self.observer_model_repositories,
+            profile.id,
         )
         self.service_items: tuple[ServiceItem, ...] = (
             self.runtime,

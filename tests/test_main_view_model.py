@@ -179,7 +179,14 @@ def runtime_for(
     brokers = broker_repository or FakeBrokerRepository(
         MqttConfig("default", 1883, "", "")
     )
-    return FakeTopicGateRuntime(brokers, repository)
+    profiles = brokers.get_all_profiles()
+    repositories = {profile.id: repository for profile in profiles}
+    return FakeTopicGateRuntime(
+        brokers,
+        repositories,
+        brokers.get_profile().id,
+        lambda _profile: repository,
+    )
 
 
 def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
@@ -405,6 +412,39 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
         assert repository.broker_configurations == [local_profile.config]
         assert view_model.active_broker_profile.id == local_profile.id
         assert view_model.mqtt_config == local_profile.config
+
+    asyncio.run(scenario())
+
+
+def test_switching_broker_profile_moves_live_message_observation() -> None:
+    async def scenario() -> None:
+        brokers = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
+        default_profile, selected_profile = brokers.get_all_profiles()
+        selected_profile.workspace.subscriptions = (Subscription("#"),)
+        default_repo = FakeObserverRepository()
+        selected_repo = FakeObserverRepository()
+        runtime = FakeTopicGateRuntime(
+            brokers,
+            {
+                default_profile.id: default_repo,
+                selected_profile.id: selected_repo,
+            },
+            default_profile.id,
+        )
+        view_model = MainViewModel(runtime)
+        await view_model.start()
+
+        await view_model.activate_broker_profile(
+            selected_profile.id,
+            selected_profile.config,
+        )
+        selected_repo.publish(
+            MqttMessage("garage/status", b"closed", 0, False)
+        )
+        await asyncio.sleep(0)
+
+        assert "garage/status" in view_model.topic_paths
+        await view_model.stop()
 
     asyncio.run(scenario())
 

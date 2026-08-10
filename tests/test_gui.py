@@ -199,7 +199,14 @@ def runtime_for(
     brokers = broker_repository or FakeBrokerRepository(
         MqttConfig("broker", 1883, "", "")
     )
-    return FakeTopicGateRuntime(brokers, repository)
+    profiles = brokers.get_all_profiles()
+    repositories = {profile.id: repository for profile in profiles}
+    return FakeTopicGateRuntime(
+        brokers,
+        repositories,
+        brokers.get_profile().id,
+        lambda _profile: repository,
+    )
 
 
 def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:

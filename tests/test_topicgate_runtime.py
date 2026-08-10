@@ -6,9 +6,13 @@ from uuid import uuid4
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.infrastructure.repository.observer_mqtt_repository import (
+    ObserverMqttRepository,
+)
 
 
 def profile(name: str, host: str = "broker") -> BrokerProfile:
@@ -63,7 +67,8 @@ def runtime_with(
     mqtt.connection_status = "disconnected"
     mqtt.dropped_message_count = 0
     mqtt.topic_update_interval = 0.1
-    return TopicGateRuntime(brokers, mqtt), brokers, mqtt
+    repositories = {item.id: mqtt for item in profiles}
+    return TopicGateRuntime(brokers, repositories, active_id), brokers, mqtt
 
 
 def test_runtime_owns_the_mqtt_lifecycle() -> None:
@@ -166,13 +171,67 @@ def test_runtime_activates_and_persists_a_broker_only_after_connecting() -> None
 
         mqtt.update_broker.assert_awaited_once_with(
             replacement,
-            selected.workspace.model,
-            selected.workspace.subscriptions,
+            subscriptions=selected.workspace.subscriptions,
         )
         brokers.update_profile.assert_called_once_with(selected)
         brokers.activate_profile.assert_called_once_with(selected.id, replacement)
         assert active.id == selected.id
         assert active.name == "Local TLS"
+
+    asyncio.run(scenario())
+
+
+def test_runtime_preserves_topic_states_across_broker_switches() -> None:
+    async def scenario() -> None:
+        default = profile("Default")
+        selected = profile("Local", "local")
+        _, brokers, _ = runtime_with((default, selected))
+        default_repo = ObserverMqttRepository(
+            default.config,
+            [],
+            default.workspace.model,
+        )
+        selected_repo = ObserverMqttRepository(
+            selected.config,
+            [],
+            selected.workspace.model,
+        )
+        default_repo.handle_message(
+            None,
+            None,
+            MqttMessage("home/status", b"open", 0, False),
+        )
+        selected_repo.handle_message(
+            None,
+            None,
+            MqttMessage("garage/status", b"closed", 0, False),
+        )
+        default_repo.start = AsyncMock()
+        default_repo.stop = AsyncMock()
+        default_repo.update_broker = AsyncMock()
+        selected_repo.start = AsyncMock()
+        selected_repo.stop = AsyncMock()
+        selected_repo.update_broker = AsyncMock()
+        runtime = TopicGateRuntime(
+            brokers,
+            {
+                default.id: default_repo,
+                selected.id: selected_repo,
+            },
+            default.id,
+        )
+
+        await runtime.activate_broker(selected.id)
+        await runtime.activate_broker(default.id)
+
+        assert runtime.active_repo is default_repo
+        assert runtime.get_topic_state(default.id, "home/status").payload == b"open"
+        assert (
+            runtime.get_topic_state(selected.id, "garage/status").payload
+            == b"closed"
+        )
+        default_repo.stop.assert_awaited_once_with()
+        selected_repo.stop.assert_awaited_once_with()
 
     asyncio.run(scenario())
 
@@ -194,6 +253,42 @@ def test_runtime_does_not_persist_a_failed_broker_activation() -> None:
             raise AssertionError("Expected broker activation to fail")
 
         brokers.update_profile.assert_not_called()
+        brokers.activate_profile.assert_not_called()
+
+    asyncio.run(scenario())
+
+
+def test_failed_broker_switch_restarts_the_previous_repository() -> None:
+    async def scenario() -> None:
+        default = profile("Default")
+        selected = profile("Local", "local")
+        _, brokers, _ = runtime_with((default, selected))
+        default_repo = MagicMock()
+        default_repo.stop = AsyncMock()
+        default_repo.start = AsyncMock()
+        selected_repo = MagicMock()
+        selected_repo.update_broker = AsyncMock(
+            side_effect=ConnectionError("unavailable")
+        )
+        runtime = TopicGateRuntime(
+            brokers,
+            {
+                default.id: default_repo,
+                selected.id: selected_repo,
+            },
+            default.id,
+        )
+
+        try:
+            await runtime.activate_broker(selected.id)
+        except ConnectionError:
+            pass
+        else:
+            raise AssertionError("Expected broker activation to fail")
+
+        assert runtime.active_repo is default_repo
+        default_repo.stop.assert_awaited_once_with()
+        default_repo.start.assert_awaited_once_with()
         brokers.activate_profile.assert_not_called()
 
     asyncio.run(scenario())

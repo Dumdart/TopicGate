@@ -202,6 +202,9 @@ class MainViewModel(QObject):
 
     async def stop(self) -> None:
         """Stop listening for repository events."""
+        await self._cancel_observer_tasks()
+
+    async def _cancel_observer_tasks(self) -> None:
         tasks = [
             task
             for task in (self._message_task, self._connection_task)
@@ -214,6 +217,17 @@ class MainViewModel(QObject):
                 await task
         self._message_task = None
         self._connection_task = None
+
+    async def _restart_observer_tasks(self) -> None:
+        observe_messages = self._message_task is not None
+        observe_connections = self._connection_task is not None
+        await self._cancel_observer_tasks()
+        if observe_messages:
+            self._message_task = asyncio.create_task(self._observe_messages())
+        if observe_connections:
+            self._connection_task = asyncio.create_task(
+                self._observe_connection_statuses()
+            )
 
     def select_topic(self, topic: str) -> None:
         if topic == self._topic:
@@ -327,6 +341,7 @@ class MainViewModel(QObject):
             self.log_message.emit(f"Broker update failed: {error}")
             raise
         if profile_changed:
+            await self._restart_observer_tasks()
             self._topic = ""
             self.refresh()
             self.topics_changed.emit()
