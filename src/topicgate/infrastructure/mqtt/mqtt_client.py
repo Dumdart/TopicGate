@@ -195,6 +195,17 @@ class MqttClient:
         self._check_result(result, "unsubscribe")
         return mid
 
+    async def publish(self, topic: str, payload: bytes) -> None:
+        await self.wait_connected()
+        validate_topic_name(topic)
+        result = await asyncio.to_thread(
+            self.client.publish,
+            topic,
+            payload,
+            self.qos,
+        )
+        self._check_result(result.rc, "publish")
+
     def message_callback_add(self, topic: str, callback: Callback):
         def forward(client: Any, userdata: Any, message: Any):
             topic = str(message.topic)

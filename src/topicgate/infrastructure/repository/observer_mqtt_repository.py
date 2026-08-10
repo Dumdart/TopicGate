@@ -234,6 +234,11 @@ class ObserverMqttRepository(MqttRepository[ObserverModel]):
         """Connect to MQTT and activate all configured subscriptions."""
         await self.start()
 
+    async def publish(self, topic: str, payload: bytes) -> None:
+        """Publish a payload through the active MQTT connection."""
+        async with self._lifecycle_lock:
+            await self._mqtt_gate.publish(topic, payload)
+
     async def messages(self) -> AsyncIterator[MqttMessage]:
         """Yield normalized messages after their current value has been stored."""
         while True:

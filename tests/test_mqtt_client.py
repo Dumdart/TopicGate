@@ -63,6 +63,10 @@ class FakePahoClient:
         self.on_unsubscribe(self, None, 13, "properties", ["success"])
         return 0, 13
 
+    def publish(self, topic, payload, qos):
+        self.events.append(("publish", topic, payload, qos))
+        return SimpleNamespace(rc=0)
+
     def message_callback_add(self, topic, callback):
         self.events.append(("message_callback_add", topic))
         self.message_callback = callback
@@ -149,6 +153,25 @@ def test_tls_client_can_disconnect_and_reconnect() -> None:
         assert [event[0] for event in events].index("tls_set") < [
             event[0] for event in events
         ].index("username_pw_set")
+
+    asyncio.run(scenario())
+
+
+def test_async_gate_publishes_through_the_connected_client() -> None:
+    async def scenario() -> None:
+        FakePahoClient.instances.clear()
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            gate = MqttGate(config(), TestCallbacks())
+            await gate.start(timeout=1)
+            await gate.publish("home/set", b"off")
+            await gate.stop()
+
+        assert ("publish", "home/set", b"off", 1) in (
+            FakePahoClient.instances[0].events
+        )
 
     asyncio.run(scenario())
 

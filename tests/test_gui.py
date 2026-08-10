@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel, TopicState
@@ -46,6 +47,8 @@ from topicgate.gui.main_view_model import MainViewModel
 
 class FakeGuiRepository:
     connection_status = "connected"
+    topic_update_interval = 0.0
+    dropped_message_count = 0
     subscriptions = (Subscription("home/+/temperature"),)
 
     def __init__(self) -> None:
@@ -71,10 +74,43 @@ class FakeGuiRepository:
         if False:
             yield MqttMessage("", b"", 0, False)
 
+    async def connection_statuses(self) -> AsyncIterator[object]:
+        if False:
+            yield "connected"
+
+    def drain_pending_messages(self) -> tuple[MqttMessage, ...]:
+        return ()
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+    async def connect(self) -> None:
+        pass
+
+    async def reconnect(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
     async def remove_subscription(self, subscription: Subscription) -> None:
         self.removed_subscriptions.append(subscription)
         self.subscriptions = tuple(
             item for item in self.subscriptions if item != subscription
+        )
+
+    async def add_subscription(self, subscription: Subscription) -> None:
+        self.subscriptions += (subscription,)
+
+    async def update_subscription(
+        self, original_filter: str, subscription: Subscription
+    ) -> None:
+        self.subscriptions = tuple(
+            subscription if item.topic_filter == original_filter else item
+            for item in self.subscriptions
         )
 
     async def update_broker(
@@ -135,6 +171,12 @@ class FakeBrokerRepository:
             self.updated_mqtt.append(mqtt_config)
         self._active_profile_id = profile_id
 
+    def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
+        self._profiles[workspace.profile_id].workspace = workspace
+
+    def update_observer_model(self, model: ObserverModel) -> None:
+        self.get_profile().workspace.model = model
+
     @staticmethod
     def _profile(name: str, mqtt_config: MqttConfig) -> BrokerProfile:
         profile_id = uuid4()
@@ -146,13 +188,29 @@ class FakeBrokerRepository:
         return BrokerProfile(profile_id, name, mqtt_config, workspace.id, workspace)
 
 
+class FakeTopicGateRuntime(TopicGateRuntime):
+    """Runtime test double backed by in-memory repositories."""
+
+
+def runtime_for(
+    repository: FakeGuiRepository,
+    broker_repository: FakeBrokerRepository | None = None,
+) -> FakeTopicGateRuntime:
+    brokers = broker_repository or FakeBrokerRepository(
+        MqttConfig("broker", 1883, "", "")
+    )
+    return FakeTopicGateRuntime(brokers, repository)
+
+
 def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(
-        repository,
+        runtime_for(
+            repository,
+            FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        ),
         repository.state.topic,
-        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
     )
     settings = QSettings(
         str(Path(".pytest_cache/gui-layout.ini").resolve()),
@@ -216,7 +274,7 @@ def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
         '\\\\attacker\\share\\<img src="//attacker/share/pixel.png">',
     )
     for topic in topics:
-        pane.render(MainViewModel(repository, topic))
+        pane.render(MainViewModel(runtime_for(repository), topic))
         assert topic_label.text() == topic
         assert topic_label.textFormat() == Qt.TextFormat.PlainText
 
@@ -246,8 +304,10 @@ def test_connection_actions_follow_the_rendered_connection_status() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(
-        repository,
-        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        runtime_for(
+            repository,
+            FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        ),
     )
     window = MainWindow(view_model)
 
@@ -275,9 +335,11 @@ def test_unmatched_dynamic_topic_leaves_settings_disabled() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(
-        repository,
+        runtime_for(
+            repository,
+            FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        ),
         "unmatched/topic",
-        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
     )
     settings = QSettings(
         str(Path(".pytest_cache/gui-unmatched.ini").resolve()),
@@ -333,9 +395,11 @@ def test_subscription_trash_button_runs_the_removal_workflow() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
         view_model = MainViewModel(
-            repository,
+            runtime_for(
+                repository,
+                FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+            ),
             repository.state.topic,
-            broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
         )
         settings = QSettings(
             str(Path(".pytest_cache/gui-remove.ini").resolve()),
@@ -372,8 +436,7 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     repository = FakeGuiRepository()
     mqtt_config = MqttConfig("broker.local", 1883, "", "", False)
     view_model = MainViewModel(
-        repository,
-        broker_repository=FakeBrokerRepository(mqtt_config),
+        runtime_for(repository, FakeBrokerRepository(mqtt_config)),
     )
     dialog = BrokerSettingsDialog(view_model)
 
@@ -464,8 +527,7 @@ def test_profile_menu_creates_a_new_broker_profile() -> None:
     application = QApplication.instance() or QApplication([])
     broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
     view_model = MainViewModel(
-        FakeGuiRepository(),
-        broker_repository=broker_repository,
+        runtime_for(FakeGuiRepository(), broker_repository),
     )
     window = MainWindow(view_model)
     button = window.findChild(QToolButton, "brokerProfileButton")
@@ -505,9 +567,9 @@ def test_about_action_opens_the_project_about_view() -> None:
     application = QApplication.instance() or QApplication([])
     window = MainWindow(
         MainViewModel(
-            FakeGuiRepository(),
-            broker_repository=FakeBrokerRepository(
-                MqttConfig("broker", 1883, "", "")
+            runtime_for(
+                FakeGuiRepository(),
+                FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
             ),
         )
     )
@@ -534,7 +596,7 @@ def test_profile_menu_edits_an_inactive_profile_without_connecting() -> None:
     broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
     active_profile = broker_repository.get_profile()
     inactive_profile = broker_repository.get_all_profiles()[1]
-    view_model = MainViewModel(repository, broker_repository=broker_repository)
+    view_model = MainViewModel(runtime_for(repository, broker_repository))
     window = MainWindow(view_model)
     profile_button = window.findChild(QToolButton, "brokerProfileButton")
     edit_menu = profile_button.menu().actions()[4].menu()
@@ -559,7 +621,7 @@ def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         window = MainWindow(view_model)
         button = window.findChild(QToolButton, "brokerProfileButton")
         assert button is not None
@@ -595,7 +657,7 @@ def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         window = MainWindow(view_model)
         button = window.findChild(QToolButton, "brokerProfileButton")
         assert button is not None
@@ -622,8 +684,10 @@ def test_tls_defaults_port_only_until_the_user_changes_it() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(
-        repository,
-        broker_repository=FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        runtime_for(
+            repository,
+            FakeBrokerRepository(MqttConfig("broker", 1883, "", "")),
+        ),
     )
     dialog = BrokerSettingsDialog(view_model)
     port_edit = dialog.findChild(QLineEdit, "brokerPortEdit")
@@ -649,7 +713,7 @@ def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> 
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("old", 1883, "", ""))
-        view_model = MainViewModel(repository, broker_repository=broker_repository)
+        view_model = MainViewModel(runtime_for(repository, broker_repository))
         window = MainWindow(view_model)
         window.findChild(QAction, "brokerSettingsAction").trigger()
         dialog = window.findChild(BrokerSettingsDialog, "brokerSettingsDialog")
@@ -686,8 +750,7 @@ def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
         application = QApplication.instance() or QApplication([])
         broker_repository = FakeBrokerRepository(MqttConfig("old", 1883, "", ""))
         view_model = MainViewModel(
-            FailingGuiRepository(),
-            broker_repository=broker_repository,
+            runtime_for(FailingGuiRepository(), broker_repository),
         )
         window = MainWindow(view_model)
         window.findChild(QAction, "brokerSettingsAction").trigger()

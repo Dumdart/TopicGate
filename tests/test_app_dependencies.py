@@ -28,7 +28,7 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
         ) as repository_type,
         patch("topicgate.app.app_dependencies.ObserverMqttRepository"),
     ):
-        AppDependencies(
+        dependencies = AppDependencies(
             data_dir=tmp_path,
             legacy_database=tmp_path / "missing.db",
             credential_store=credential_store,
@@ -38,3 +38,4 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
         database,
         credential_store=credential_store,
     )
+    assert dependencies.service_items == (dependencies.runtime,)

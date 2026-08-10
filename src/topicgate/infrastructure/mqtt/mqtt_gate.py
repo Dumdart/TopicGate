@@ -84,6 +84,9 @@ class MqttGate:
         finally:
             self._remove_message_callbacks()
 
+    async def publish(self, topic: str, payload: bytes) -> None:
+        await self.client.publish(topic, payload)
+
     @property
     def is_started(self) -> bool:
         return self._is_started

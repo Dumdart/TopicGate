@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from topicgate.app.service_item import ServiceItem
+from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.credentials.os_credential_store import OSCredentialStore
@@ -35,6 +36,10 @@ class AppDependencies:
             list(profile.workspace.subscriptions),
             profile.workspace.model,
         )
-        self.service_items: tuple[ServiceItem, ...] = (
+        self.runtime = TopicGateRuntime(
+            self.broker_repository,
             self.observer_model_repository,
+        )
+        self.service_items: tuple[ServiceItem, ...] = (
+            self.runtime,
         )
