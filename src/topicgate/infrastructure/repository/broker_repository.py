@@ -147,7 +147,6 @@ class BrokerRepository:
 
     def create_profile(self, name: str, config: MqttConfig) -> BrokerProfile:
         """Create a broker profile with an independent, empty workspace."""
-        config.validate_transport_security()
         normalized_name = self._validate_profile_name(name)
         profile = self._create_profile(
             normalized_name,
@@ -170,7 +169,6 @@ class BrokerRepository:
 
     def update_profile(self, profile: BrokerProfile) -> None:
         """Persist changes to a broker profile and its workspace."""
-        profile.config.validate_transport_security()
         normalized_name = self._validate_profile_name(profile.name, profile.id)
         if (
             profile.workspace.profile_id != profile.id
@@ -227,8 +225,6 @@ class BrokerRepository:
 
     def activate_profile(self, profile_id: UUID, mqtt: MqttConfig | None = None) -> None:
         """Persist the active profile after its MQTT connection was updated."""
-        if mqtt is not None:
-            mqtt.validate_transport_security()
         with self._db.session() as session:
             rows = session.scalars(self._profile_statement()).all()
             selected = next((row for row in rows if row.id == profile_id), None)

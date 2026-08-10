@@ -176,31 +176,22 @@ def test_async_gate_publishes_through_the_connected_client() -> None:
     asyncio.run(scenario())
 
 
-def test_client_rejects_credentials_without_tls_before_configuration() -> None:
+def test_client_configures_credentials_without_tls() -> None:
     async def scenario() -> None:
-        insecure_configs = (
-            MqttConfig("broker", 1883, "observer", ""),
-            MqttConfig("broker", 1883, "", "secret"),
-        )
+        FakePahoClient.instances.clear()
+        with patch(
+            "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
+            FakePahoClient,
+        ):
+            client = MqttClient(
+                MqttConfig("broker", 1883, "observer", "secret")
+            )
+            await client.connect(timeout=1)
+            await client.disconnect()
 
-        for insecure_config in insecure_configs:
-            FakePahoClient.instances.clear()
-            with patch(
-                "topicgate.infrastructure.mqtt.mqtt_client.paho.Client",
-                FakePahoClient,
-            ):
-                client = MqttClient(insecure_config)
-                try:
-                    await client.connect(timeout=1)
-                except ValueError as error:
-                    assert str(error) == (
-                        "TLS is required when an MQTT username or password "
-                        "is configured."
-                    )
-                else:
-                    raise AssertionError("Expected plaintext credentials to fail")
-
-            assert FakePahoClient.instances[-1].events == []
+        events = FakePahoClient.instances[-1].events
+        assert ("username_pw_set", "observer", "secret") in events
+        assert not any(event[0] == "tls_set" for event in events)
 
     asyncio.run(scenario())
 

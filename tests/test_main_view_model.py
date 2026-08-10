@@ -429,7 +429,7 @@ def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> Non
     assert saved.config == replacement
 
 
-def test_profile_operations_reject_credentials_without_tls() -> None:
+def test_profile_operations_allow_credentials_without_tls() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(
@@ -439,29 +439,15 @@ def test_profile_operations_reject_credentials_without_tls() -> None:
         profile = broker_repository.get_profile()
         insecure = MqttConfig("broker", 1883, "observer", "secret")
 
-        for operation in (
-            lambda: view_model.save_broker_profile(profile.id, insecure),
-            lambda: view_model.create_broker_profile("Insecure", insecure),
-        ):
-            try:
-                operation()
-            except ValueError:
-                pass
-            else:
-                raise AssertionError("Expected plaintext credentials to fail")
+        saved = view_model.save_broker_profile(profile.id, insecure)
+        created = view_model.create_broker_profile("Plain MQTT", insecure)
+        await view_model.activate_broker_profile(profile.id, insecure)
 
-        try:
-            await view_model.activate_broker_profile(profile.id, insecure)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("Expected plaintext credentials to fail")
-
-        assert broker_repository.get_profile().config == MqttConfig(
-            "default", 1883, "", ""
-        )
-        assert len(broker_repository.get_all_profiles()) == 2
-        assert repository.broker_configurations == []
+        assert saved.config == insecure
+        assert created.config == insecure
+        assert broker_repository.get_profile().config == insecure
+        assert len(broker_repository.get_all_profiles()) == 3
+        assert repository.broker_configurations == [insecure]
 
     asyncio.run(scenario())
 

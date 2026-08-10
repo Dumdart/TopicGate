@@ -77,13 +77,13 @@ class BrokerSettingsDialog(QDialog):
         self._use_tls_checkbox.setObjectName("brokerUseTlsCheckbox")
         self._use_tls_checkbox.setChecked(mqtt_config.use_tls)
         self._transport_security_error = QLabel(
-            "TLS is required when a username or password is configured."
+            "Credentials will be sent without transport encryption."
         )
         self._transport_security_error.setObjectName(
             "brokerTransportSecurityError"
         )
         self._transport_security_error.setWordWrap(True)
-        self._transport_security_error.setStyleSheet("color: #c62828;")
+        self._transport_security_error.setStyleSheet("color: #b26a00;")
 
         layout.addRow("Profile", self._name_edit)
         layout.addRow("Host", self._host_edit)
@@ -152,7 +152,6 @@ class BrokerSettingsDialog(QDialog):
             password=self._password_edit.text(),
             use_tls=self._use_tls_checkbox.isChecked(),
         )
-        mqtt_config.validate_transport_security()
         return mqtt_config
 
     @property

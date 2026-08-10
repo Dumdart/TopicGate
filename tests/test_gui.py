@@ -470,14 +470,13 @@ def test_broker_settings_dialog_loads_current_configuration_and_validates_input(
     port_edit.setText("1883")
     assert apply_button.isEnabled()
     username_edit.setText("observer")
-    assert not apply_button.isEnabled()
-    assert not security_error.isHidden()
-    tls_checkbox.setChecked(True)
     assert apply_button.isEnabled()
-    assert security_error.isHidden()
+    assert not security_error.isHidden()
     assert dialog.mqtt_config == MqttConfig(
-        "broker.local", 8883, "observer", "", True
+        "broker.local", 1883, "observer", "", False
     )
+    tls_checkbox.setChecked(True)
+    assert security_error.isHidden()
 
     dialog.close()
     application.processEvents()

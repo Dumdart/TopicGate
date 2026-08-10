@@ -223,32 +223,18 @@ def test_broker_repository_rejects_duplicate_names_and_active_deletion(
         raise AssertionError("Expected active profile deletion to be rejected")
 
 
-def test_broker_repository_rejects_plaintext_credential_mutations(
+def test_broker_repository_allows_plaintext_credential_mutations(
     credential_store,
 ) -> None:
     repository = BrokerRepository(credential_store=credential_store)
     active_profile = repository.get_profile()
     insecure = MqttConfig("broker", 1883, "observer", "secret")
 
-    operations = (
-        lambda: repository.create_profile("Insecure", insecure),
-        lambda: repository.activate_profile(active_profile.id, insecure),
-    )
-    for operation in operations:
-        try:
-            operation()
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("Expected plaintext credentials to fail")
-
+    created = repository.create_profile("Plain MQTT", insecure)
+    repository.activate_profile(active_profile.id, insecure)
     active_profile.config = insecure
-    try:
-        repository.update_profile(active_profile)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("Expected plaintext credentials to fail")
+    repository.update_profile(active_profile)
 
-    assert len(repository.get_all_profiles()) == 2
-    assert repository.get_mqtt() == MqttConfig("localhost", 1883, "", "")
+    assert created.config == insecure
+    assert len(repository.get_all_profiles()) == 3
+    assert repository.get_mqtt() == insecure

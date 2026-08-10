@@ -292,7 +292,6 @@ class MqttClient:
                 await asyncio.sleep(0)
 
     def _configure(self) -> None:
-        self.config.validate_transport_security()
         if self._configured:
             return
         if self.config.use_tls:

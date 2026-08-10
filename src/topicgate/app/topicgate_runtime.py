@@ -94,7 +94,6 @@ class TopicGateRuntime(ServiceItem):
         await self._mqtt.reconnect()
 
     def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerProfile:
-        mqtt_config.validate_transport_security()
         return self._brokers.create_profile(name, mqtt_config)
 
     def update_broker(
@@ -103,7 +102,6 @@ class TopicGateRuntime(ServiceItem):
         mqtt_config: MqttConfig,
         name: str | None = None,
     ) -> BrokerProfile:
-        mqtt_config.validate_transport_security()
         profile = self.get_broker(broker_id)
         profile.name = (
             self._validated_profile_name(name, broker_id)
@@ -122,7 +120,6 @@ class TopicGateRuntime(ServiceItem):
     ) -> BrokerProfile:
         profile = self.get_broker(broker_id)
         config = profile.config if mqtt_config is None else mqtt_config
-        config.validate_transport_security()
         normalized_name = (
             self._validated_profile_name(name, broker_id)
             if name is not None
