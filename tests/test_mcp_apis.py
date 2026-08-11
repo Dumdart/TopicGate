@@ -13,6 +13,7 @@ from topicgate.core.models.subscription import Subscription
 from topicgate.mcp.connection_api import ConnectionAPI
 from topicgate.mcp.mcp_api import McpApiContainer
 from topicgate.mcp.publish_api import PublishAPI
+from topicgate.mcp.server import Server
 from topicgate.mcp.subscription_api import SubscriptionAPI
 from topicgate.mcp.topic_api import TopicAPI
 
@@ -197,5 +198,25 @@ def test_publish_api_supports_utf8_and_base64_payloads() -> None:
 
         with pytest.raises(ValueError, match="not valid base64"):
             await api.publish(broker_id, "camera/set", "%%%", "base64")
+
+    asyncio.run(scenario())
+
+
+def test_server_lifespan_starts_disconnected_after_initial_connection_failure() -> None:
+    async def scenario() -> None:
+        server = Server.__new__(Server)
+        server.services = MagicMock()
+        server.services.start_services = AsyncMock(
+            side_effect=ConnectionError("broker unavailable")
+        )
+        server.services.stop_services = AsyncMock()
+        server.dependencies = MagicMock()
+        server.dependencies.runtime.stop = AsyncMock()
+
+        async with server._lifespan(MagicMock()):
+            pass
+
+        server.services.stop_services.assert_awaited_once_with()
+        server.dependencies.runtime.stop.assert_awaited_once_with()
 
     asyncio.run(scenario())
