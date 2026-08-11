@@ -5,10 +5,10 @@ from fastmcp.tools import tool
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.models.broker_summary import BrokerSummary
-from topicgate.mcp.mcp_api import McpApi
+from topicgate.mcp.api.mcp_api import MCPApi
 
 
-class BrokerAPI(McpApi):
+class BrokerAPI(MCPApi):
     def __init__(self, runtime: TopicGateRuntime):
         self._runtime = runtime
 

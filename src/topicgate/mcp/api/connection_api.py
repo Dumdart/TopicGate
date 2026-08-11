@@ -2,11 +2,11 @@ from fastmcp import FastMCP
 from fastmcp.tools import tool
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime
-from topicgate.mcp.mcp_api import McpApi
+from topicgate.mcp.api.mcp_api import MCPApi
 from topicgate.mcp.models import ConnectionStatusResult
 
 
-class ConnectionAPI(McpApi):
+class ConnectionAPI(MCPApi):
     def __init__(self, runtime: TopicGateRuntime):
         self._runtime = runtime
 

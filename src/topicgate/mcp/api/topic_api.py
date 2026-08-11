@@ -6,11 +6,11 @@ from fastmcp.tools import tool
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.models.observer_model import TopicState
-from topicgate.mcp.mcp_api import McpApi
+from topicgate.mcp.api.mcp_api import MCPApi
 from topicgate.mcp.models import TopicStateResult
 
 
-class TopicAPI(McpApi):
+class TopicAPI(MCPApi):
     def __init__(self, runtime: TopicGateRuntime):
         self._runtime = runtime
 

@@ -7,10 +7,10 @@ from fastmcp import FastMCP
 from fastmcp.tools import tool
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime
-from topicgate.mcp.mcp_api import McpApi
+from topicgate.mcp.api.mcp_api import MCPApi
 
 
-class PublishAPI(McpApi):
+class PublishAPI(MCPApi):
     def __init__(self, runtime: TopicGateRuntime):
         self._runtime = runtime
 

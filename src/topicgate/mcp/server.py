@@ -6,13 +6,13 @@ from fastmcp import FastMCP
 
 from topicgate.app.app_dependencies import AppDependencies
 from topicgate.app.service_container import ServiceContainer
-from topicgate.mcp.broker_api import BrokerAPI
-from topicgate.mcp.connection_api import ConnectionAPI
-from topicgate.mcp.mcp_api import McpApiContainer
+from topicgate.mcp.api.broker_api import BrokerAPI
+from topicgate.mcp.api.connection_api import ConnectionAPI
+from topicgate.mcp.api.mcp_api import McpApiContainer
+from topicgate.mcp.api.publish_api import PublishAPI
+from topicgate.mcp.api.subscription_api import SubscriptionAPI
+from topicgate.mcp.api.topic_api import TopicAPI
 from topicgate.mcp.middleware import ErrorHandlingMiddleware, LoggingMiddleware
-from topicgate.mcp.publish_api import PublishAPI
-from topicgate.mcp.subscription_api import SubscriptionAPI
-from topicgate.mcp.topic_api import TopicAPI
 
 class Server:
     def __init__(self):
@@ -50,7 +50,6 @@ class Server:
             yield
         finally:
             await self.services.stop_services()
-
 
 def run() -> int:
     server = Server()
