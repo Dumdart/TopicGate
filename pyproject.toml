@@ -18,6 +18,7 @@ dependencies = [
     "keyring",
     "fastmcp",
     "fastmcp[apps]",
+    "prefab-ui"
 ]
 
 [project.scripts]

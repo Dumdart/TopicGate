@@ -13,6 +13,7 @@ from topicgate.mcp.middleware import ErrorHandlingMiddleware, LoggingMiddleware
 from topicgate.mcp.publish_api import PublishAPI
 from topicgate.mcp.subscription_api import SubscriptionAPI
 from topicgate.mcp.topic_api import TopicAPI
+
 class Server:
     def __init__(self):
         self.mcp = FastMCP(
