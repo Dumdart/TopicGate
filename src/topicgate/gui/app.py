@@ -1,7 +1,8 @@
-import asyncio
-import sys
 
-from PySide6.QtCore import QCoreApplication
+
+import sys
+import asyncio
+from PySide6.QtCore import QCoreApplication, QEventLoop
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
@@ -17,11 +18,10 @@ class App:
         self._dependencies = AppDependencies()
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
-            runtime=self._dependencies.runtime,
-            topic="",
+            runtime=self._dependencies.runtime
         )
         self._window = MainWindow(self._view_model)
-
+        
 
     async def run(self) -> int:
         try:
@@ -60,7 +60,3 @@ def run() -> int:
 
     with event_loop:
         return event_loop.run_until_complete(app.run())
-
-
-if __name__ == "__main__":
-    raise SystemExit(run())
