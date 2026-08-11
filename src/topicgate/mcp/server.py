@@ -1,7 +1,6 @@
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-import logging
-import sys
 
 from fastmcp import FastMCP
 
@@ -10,27 +9,25 @@ from topicgate.app.service_container import ServiceContainer
 from topicgate.mcp.broker_api import BrokerAPI
 from topicgate.mcp.connection_api import ConnectionAPI
 from topicgate.mcp.mcp_api import McpApiContainer
+from topicgate.mcp.middleware import ErrorHandlingMiddleware, LoggingMiddleware
 from topicgate.mcp.publish_api import PublishAPI
 from topicgate.mcp.subscription_api import SubscriptionAPI
 from topicgate.mcp.topic_api import TopicAPI
-
-
-logger = logging.getLogger(__name__)
-
-
 class Server:
     def __init__(self):
         self.mcp = FastMCP(
             name="topicgate",
             instructions="Inspect and manage MQTT brokers, topics, and subscriptions.",
-            lifespan=self._lifespan
+            lifespan=self._lifespan,
+            middleware=[ErrorHandlingMiddleware(), LoggingMiddleware()],
+            mask_error_details=True,
         )
 
         self.dependencies = AppDependencies()
         self.services = ServiceContainer(self.dependencies)
 
         runtime = self.dependencies.runtime
-        
+
         self.mcp_container = McpApiContainer(
             [
                 BrokerAPI(runtime),
@@ -43,27 +40,16 @@ class Server:
         self.mcp_container.register(self.mcp)
 
     def run(self) -> None:
-       self.mcp.run()
-    
+        self.mcp.run()
+
     @asynccontextmanager
     async def _lifespan(self, _server: FastMCP) -> AsyncIterator[None]:
-        startup_failed = False
         try:
-            try:
-                await self.services.start_services()
-            except ConnectionError as error:
-                startup_failed = True
-                logger.warning(
-                    "Initial MQTT connection failed; MCP started disconnected: %s",
-                    error,
-                )
+            await self.services.start_services()
             yield
         finally:
-            try:
-                await self.services.stop_services()
-            finally:
-                if startup_failed:
-                    await self.dependencies.runtime.stop()
+            await self.services.stop_services()
+
 
 def run() -> int:
     server = Server()

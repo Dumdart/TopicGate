@@ -16,7 +16,8 @@ dependencies = [
     "qasync",
     "sqlalchemy",
     "keyring",
-    "fastmcp"
+    "fastmcp",
+    "fastmcp[apps]",
 ]
 
 [project.scripts]
