@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastmcp.server.server import FastMCP
+from fastmcp import FastMCP
 from fastmcp.tools import tool
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime

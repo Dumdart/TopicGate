@@ -5,7 +5,11 @@ from fastmcp import FastMCP
 from topicgate.app.app_dependencies import AppDependencies
 from topicgate.app.service_container import ServiceContainer
 from topicgate.mcp.broker_api import BrokerAPI
+from topicgate.mcp.connection_api import ConnectionAPI
 from topicgate.mcp.mcp_api import McpApiContainer
+from topicgate.mcp.publish_api import PublishAPI
+from topicgate.mcp.subscription_api import SubscriptionAPI
+from topicgate.mcp.topic_api import TopicAPI
 
 
 class Server:
@@ -21,7 +25,15 @@ class Server:
 
         runtime = self.dependencies.runtime
         
-        self.mcp_container = McpApiContainer([BrokerAPI(runtime)])
+        self.mcp_container = McpApiContainer(
+            [
+                BrokerAPI(runtime),
+                ConnectionAPI(runtime),
+                PublishAPI(runtime),
+                SubscriptionAPI(runtime),
+                TopicAPI(runtime),
+            ]
+        )
         self.mcp_container.register(self.mcp)
 
     def run(self) -> None:
