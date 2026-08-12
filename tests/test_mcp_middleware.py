@@ -13,7 +13,7 @@ def middleware_server() -> FastMCP:
     )
 
 
-def test_logging_middleware_preserves_results_without_logging_contents(caplog) -> None:
+async def test_logging_middleware_preserves_results_without_logging_contents(caplog) -> None:
     async def scenario() -> None:
         mcp = middleware_server()
 
@@ -35,10 +35,10 @@ def test_logging_middleware_preserves_results_without_logging_contents(caplog) -
         assert any("MCP tool completed tool=echo" in line for line in application_logs)
         assert all(secret not in line for line in application_logs)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_error_middleware_exposes_actionable_validation_errors() -> None:
+async def test_error_middleware_exposes_actionable_validation_errors() -> None:
     async def scenario() -> None:
         mcp = middleware_server()
 
@@ -52,10 +52,10 @@ def test_error_middleware_exposes_actionable_validation_errors() -> None:
         assert result.is_error
         assert result.content[0].text == "QoS must be between 0 and 2"
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_error_middleware_preserves_fastmcp_argument_validation() -> None:
+async def test_error_middleware_preserves_fastmcp_argument_validation() -> None:
     async def scenario() -> None:
         mcp = middleware_server()
 
@@ -71,10 +71,10 @@ def test_error_middleware_preserves_fastmcp_argument_validation() -> None:
         assert result.is_error
         assert "qos" in result.content[0].text
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_error_middleware_masks_connection_and_unexpected_error_details(caplog) -> None:
+async def test_error_middleware_masks_connection_and_unexpected_error_details(caplog) -> None:
     async def scenario() -> None:
         mcp = middleware_server()
 
@@ -111,4 +111,4 @@ def test_error_middleware_masks_connection_and_unexpected_error_details(caplog) 
         assert all("broker-secret" not in line for line in application_logs)
         assert all("internal-secret" not in line for line in application_logs)
 
-    asyncio.run(scenario())
+    await scenario()

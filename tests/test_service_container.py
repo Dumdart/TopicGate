@@ -20,7 +20,7 @@ class FakeDependencies:
         self.service_items = service_items
 
 
-def test_container_starts_services_in_registration_order_and_stops_in_reverse() -> None:
+async def test_container_starts_services_in_registration_order_and_stops_in_reverse() -> None:
     async def scenario() -> None:
         events: list[str] = []
         first = FakeService("first", events)
@@ -37,10 +37,10 @@ def test_container_starts_services_in_registration_order_and_stops_in_reverse() 
             "stop:first",
         ]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_container_only_stops_services_that_started() -> None:
+async def test_container_only_stops_services_that_started() -> None:
     async def scenario() -> None:
         events: list[str] = []
         service = FakeService("service", events)
@@ -50,4 +50,4 @@ def test_container_only_stops_services_that_started() -> None:
 
         assert events == []
 
-    asyncio.run(scenario())
+    await scenario()

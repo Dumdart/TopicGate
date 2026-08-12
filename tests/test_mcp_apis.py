@@ -37,7 +37,7 @@ def mcp_runtime() -> MagicMock:
     return runtime
 
 
-def test_non_broker_apis_register_described_tools() -> None:
+async def test_non_broker_apis_register_described_tools() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
         mcp = FastMCP("test")
@@ -68,10 +68,10 @@ def test_non_broker_apis_register_described_tools() -> None:
         }
         assert all(item.description for item in tools)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_subscription_api_maps_flat_arguments_to_domain_models() -> None:
+async def test_subscription_api_maps_flat_arguments_to_domain_models() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
         broker_id = uuid4()
@@ -104,10 +104,10 @@ def test_subscription_api_maps_flat_arguments_to_domain_models() -> None:
         )
         runtime.remove_subscription.assert_awaited_once_with(broker_id, original)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_remove_subscription_rejects_an_unknown_filter() -> None:
+async def test_remove_subscription_rejects_an_unknown_filter() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
 
@@ -116,7 +116,7 @@ def test_remove_subscription_rejects_an_unknown_filter() -> None:
 
         runtime.remove_subscription.assert_not_awaited()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_topic_api_returns_text_and_binary_safe_payload_views() -> None:
@@ -155,7 +155,7 @@ def test_topic_api_returns_text_and_binary_safe_payload_views() -> None:
     assert binary_result.payload_base64 == "/wA="
 
 
-def test_connection_api_reports_status_and_delegates_commands() -> None:
+async def test_connection_api_reports_status_and_delegates_commands() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
         runtime.connection_status = ConnectionStatus.CONNECTED
@@ -173,10 +173,10 @@ def test_connection_api_reports_status_and_delegates_commands() -> None:
         runtime.disconnect.assert_awaited_once_with()
         runtime.reconnect.assert_awaited_once_with()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_publish_api_supports_utf8_and_base64_payloads() -> None:
+async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
         broker_id = uuid4()
@@ -199,10 +199,10 @@ def test_publish_api_supports_utf8_and_base64_payloads() -> None:
         with pytest.raises(ValueError, match="not valid base64"):
             await api.publish(broker_id, "camera/set", "%%%", "base64")
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_server_lifespan_starts_disconnected_after_initial_connection_failure() -> None:
+async def test_server_lifespan_starts_disconnected_after_initial_connection_failure() -> None:
     async def scenario() -> None:
         server = Server.__new__(Server)
         server.services = MagicMock()
@@ -219,4 +219,4 @@ def test_server_lifespan_starts_disconnected_after_initial_connection_failure() 
         server.services.stop_services.assert_awaited_once_with()
         server.dependencies.runtime.stop.assert_awaited_once_with()
 
-    asyncio.run(scenario())
+    await scenario()

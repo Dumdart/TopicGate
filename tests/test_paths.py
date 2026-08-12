@@ -7,7 +7,7 @@ from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.database_context import DatabaseContext
-from topicgate.infrastructure.repository.broker_repository import BrokerRepository
+from topicgate.app.broker_profile_service import BrokerProfileService
 from topicgate.paths import (
     DatabaseMigrationError,
     prepare_database_path,
@@ -28,7 +28,7 @@ def test_legacy_database_migration_preserves_profiles_and_subscriptions(
 ) -> None:
     legacy = tmp_path / "smart_observer.db"
     legacy_context = DatabaseContext(sqlite_url(legacy))
-    repository = BrokerRepository(
+    repository = BrokerProfileService(
         legacy_context,
         AppConfig(MqttConfig("default", 1883, "user", "secret")),
         credential_store=credential_store,
@@ -44,7 +44,7 @@ def test_legacy_database_migration_preserves_profiles_and_subscriptions(
 
     target = prepare_database_path(tmp_path / "data", legacy)
     migrated_context = DatabaseContext(sqlite_url(target))
-    migrated = BrokerRepository(
+    migrated = BrokerProfileService(
         migrated_context,
         credential_store=credential_store,
     )

@@ -21,7 +21,7 @@ def build_manager(
     return SubscriptionManager(mqtt_gate, message_handler), mqtt_gate, message_handler
 
 
-def test_subscribe_once_before_activation_does_nothing() -> None:
+async def test_subscribe_once_before_activation_does_nothing() -> None:
     async def scenario() -> None:
         manager, mqtt_gate, _ = build_manager()
 
@@ -29,10 +29,10 @@ def test_subscribe_once_before_activation_does_nothing() -> None:
 
         mqtt_gate.subscribe.assert_not_awaited()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_activation_subscribes_once_with_the_configured_message_handler() -> None:
+async def test_activation_subscribes_once_with_the_configured_message_handler() -> None:
     async def scenario() -> None:
         manager, mqtt_gate, message_handler = build_manager()
 
@@ -41,10 +41,10 @@ def test_activation_subscribes_once_with_the_configured_message_handler() -> Non
 
         mqtt_gate.subscribe.assert_awaited_once_with(message_handler)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_deactivation_unsubscribes_and_prevents_changes_from_subscribing() -> None:
+async def test_deactivation_unsubscribes_and_prevents_changes_from_subscribing() -> None:
     async def scenario() -> None:
         original = Subscription("SmartHome/old/#")
         added = Subscription("SmartHome/new/#")
@@ -58,10 +58,10 @@ def test_deactivation_unsubscribes_and_prevents_changes_from_subscribing() -> No
         mqtt_gate.subscribe.assert_awaited_once()
         assert manager.subscriptions == (original, added)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_disconnect_allows_subscriptions_to_be_restored() -> None:
+async def test_disconnect_allows_subscriptions_to_be_restored() -> None:
     async def scenario() -> None:
         manager, mqtt_gate, _ = build_manager()
         await manager.activate()
@@ -71,10 +71,10 @@ def test_disconnect_allows_subscriptions_to_be_restored() -> None:
 
         assert mqtt_gate.subscribe.await_count == 2
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_add_replaces_active_broker_subscriptions() -> None:
+async def test_add_replaces_active_broker_subscriptions() -> None:
     async def scenario() -> None:
         original = Subscription("SmartHome/old/#")
         added = Subscription("SmartHome/new/#", qos=2)
@@ -87,10 +87,10 @@ def test_add_replaces_active_broker_subscriptions() -> None:
         assert manager.subscriptions == (original, added)
         assert mqtt_gate.subscribe.await_count == 2
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_remove_replaces_active_broker_subscriptions() -> None:
+async def test_remove_replaces_active_broker_subscriptions() -> None:
     async def scenario() -> None:
         removed = Subscription("SmartHome/old/#")
         remaining = Subscription("SmartHome/+/status", qos=2)
@@ -103,10 +103,10 @@ def test_remove_replaces_active_broker_subscriptions() -> None:
         assert manager.subscriptions == (remaining,)
         assert mqtt_gate.subscribe.await_count == 2
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_update_replaces_active_broker_subscriptions() -> None:
+async def test_update_replaces_active_broker_subscriptions() -> None:
     async def scenario() -> None:
         original = Subscription("SmartHome/old/#")
         replacement = Subscription("SmartHome/new/#", qos=2)
@@ -119,10 +119,10 @@ def test_update_replaces_active_broker_subscriptions() -> None:
         assert manager.subscriptions == (replacement,)
         assert mqtt_gate.subscribe.await_count == 2
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_subscription_changes_reject_missing_and_duplicate_filters() -> None:
+async def test_subscription_changes_reject_missing_and_duplicate_filters() -> None:
     async def scenario() -> None:
         existing = Subscription("SmartHome/existing/#")
         other = Subscription("SmartHome/other/#")
@@ -141,4 +141,4 @@ def test_subscription_changes_reject_missing_and_duplicate_filters() -> None:
             else:
                 raise AssertionError("Expected subscription validation to fail")
 
-    asyncio.run(scenario())
+    await scenario()

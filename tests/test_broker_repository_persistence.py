@@ -5,7 +5,7 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.observer_model import TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.database_context import DatabaseContext
-from topicgate.infrastructure.repository.broker_repository import BrokerRepository
+from topicgate.app.broker_profile_service import BrokerProfileService
 from topicgate.services.observer_model_service import ObserverModelService
 
 
@@ -14,7 +14,7 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
 ) -> None:
     database = DatabaseContext("sqlite:///:memory:")
     settings = AppConfig(MqttConfig("default", 1883, "user", "secret"))
-    repository = BrokerRepository(
+    repository = BrokerProfileService(
         database, settings, credential_store=credential_store
     )
     profile = repository.create_profile(
@@ -36,7 +36,7 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
     repository.update_profile(profile)
     repository.activate_profile(profile.id)
 
-    reloaded = BrokerRepository(database, credential_store=credential_store)
+    reloaded = BrokerProfileService(database, credential_store=credential_store)
     persisted = reloaded.get_profile(profile.id)
 
     assert reloaded.get_profile().id == profile.id
@@ -63,8 +63,8 @@ def test_broker_repository_reads_changes_made_by_another_instance(
 ) -> None:
     database = DatabaseContext("sqlite:///:memory:")
     settings = AppConfig(MqttConfig("default", 1883, "user", "secret"))
-    first = BrokerRepository(database, settings, credential_store=credential_store)
-    second = BrokerRepository(database, credential_store=credential_store)
+    first = BrokerProfileService(database, settings, credential_store=credential_store)
+    second = BrokerProfileService(database, credential_store=credential_store)
 
     profile = first.create_profile(
         "Remote",
@@ -91,14 +91,14 @@ def test_broker_repository_prefers_a_stored_password_to_supplied_settings(
     persisted_settings = AppConfig(
         MqttConfig("broker", 1883, "observer", "initial-secret")
     )
-    BrokerRepository(
+    BrokerProfileService(
         database, persisted_settings, credential_store=credential_store
     )
     runtime_settings = AppConfig(
         MqttConfig("ignored-host", 9999, "ignored-user", "runtime-secret")
     )
 
-    reloaded = BrokerRepository(
+    reloaded = BrokerProfileService(
         database, runtime_settings, credential_store=credential_store
     )
 
@@ -114,7 +114,7 @@ def test_broker_repository_imports_a_supplied_password_when_store_is_empty(
     credential_store,
 ) -> None:
     database = DatabaseContext("sqlite:///:memory:")
-    BrokerRepository(
+    BrokerProfileService(
         database,
         AppConfig(MqttConfig("broker", 1883, "observer", "")),
         credential_store=credential_store,
@@ -123,7 +123,7 @@ def test_broker_repository_imports_a_supplied_password_when_store_is_empty(
         MqttConfig("ignored-host", 9999, "ignored-user", "runtime-secret")
     )
 
-    reloaded = BrokerRepository(
+    reloaded = BrokerProfileService(
         database,
         runtime_settings,
         credential_store=credential_store,

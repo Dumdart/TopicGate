@@ -50,7 +50,7 @@ def runtime_with(
             stored[broker_id].config = mqtt
         active_id = broker_id
 
-    brokers.activate_profile.side_effect = activate
+    brokers.select_active_profile.side_effect = activate
     mqtt = MagicMock()
     mqtt.start = AsyncMock()
     mqtt.stop = AsyncMock()
@@ -68,10 +68,19 @@ def runtime_with(
     mqtt.dropped_message_count = 0
     mqtt.topic_update_interval = 0.1
     repositories = {item.id: mqtt for item in profiles}
-    return TopicGateRuntime(brokers, repositories, active_id), brokers, mqtt
+    return (
+        TopicGateRuntime(
+            brokers,
+            repositories,
+            active_id,
+            lambda _profile: mqtt,
+        ),
+        brokers,
+        mqtt,
+    )
 
 
-def test_runtime_owns_the_mqtt_lifecycle() -> None:
+async def test_runtime_owns_the_mqtt_lifecycle() -> None:
     async def scenario() -> None:
         runtime, brokers, mqtt = runtime_with((profile("Default"),))
 
@@ -82,7 +91,7 @@ def test_runtime_owns_the_mqtt_lifecycle() -> None:
         brokers.update_observer_model.assert_called_once_with(mqtt.get.return_value)
         mqtt.stop.assert_awaited_once_with()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_runtime_sanitizes_broker_credentials_exposed_to_callers() -> None:
@@ -136,7 +145,7 @@ def test_runtime_preserves_a_hidden_password_when_broker_settings_change() -> No
     assert saved.password == "os-loaded-secret"
 
 
-def test_runtime_connects_with_a_stored_password_from_a_broker_summary() -> None:
+async def test_runtime_connects_with_a_stored_password_from_a_broker_summary() -> None:
     async def scenario() -> None:
         configured = profile("Configured")
         configured.config = MqttConfig(
@@ -153,10 +162,10 @@ def test_runtime_connects_with_a_stored_password_from_a_broker_summary() -> None
         connected_config = mqtt.update_broker.await_args.args[0]
         assert connected_config.password == "os-loaded-secret"
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_runtime_activates_and_persists_a_broker_only_after_connecting() -> None:
+async def test_runtime_activates_and_persists_a_broker_only_after_connecting() -> None:
     async def scenario() -> None:
         default = profile("Default")
         selected = profile("Local", "local")
@@ -174,14 +183,14 @@ def test_runtime_activates_and_persists_a_broker_only_after_connecting() -> None
             subscriptions=selected.workspace.subscriptions,
         )
         brokers.update_profile.assert_called_once_with(selected)
-        brokers.activate_profile.assert_called_once_with(selected.id, replacement)
+        brokers.select_active_profile.assert_called_once_with(selected.id)
         assert active.id == selected.id
         assert active.name == "Local TLS"
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_runtime_preserves_topic_states_across_broker_switches() -> None:
+async def test_runtime_preserves_topic_states_across_broker_switches() -> None:
     async def scenario() -> None:
         default = profile("Default")
         selected = profile("Local", "local")
@@ -233,10 +242,10 @@ def test_runtime_preserves_topic_states_across_broker_switches() -> None:
         default_repo.stop.assert_awaited_once_with()
         selected_repo.stop.assert_awaited_once_with()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_runtime_does_not_persist_a_failed_broker_activation() -> None:
+async def test_runtime_does_not_persist_a_failed_broker_activation() -> None:
     async def scenario() -> None:
         selected = profile("Default")
         runtime, brokers, mqtt = runtime_with((selected,))
@@ -253,12 +262,12 @@ def test_runtime_does_not_persist_a_failed_broker_activation() -> None:
             raise AssertionError("Expected broker activation to fail")
 
         brokers.update_profile.assert_not_called()
-        brokers.activate_profile.assert_not_called()
+        brokers.select_active_profile.assert_not_called()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_failed_broker_switch_restarts_the_previous_repository() -> None:
+async def test_failed_broker_switch_restarts_the_previous_repository() -> None:
     async def scenario() -> None:
         default = profile("Default")
         selected = profile("Local", "local")
@@ -289,12 +298,12 @@ def test_failed_broker_switch_restarts_the_previous_repository() -> None:
         assert runtime.active_repo is default_repo
         default_repo.stop.assert_awaited_once_with()
         default_repo.start.assert_awaited_once_with()
-        brokers.activate_profile.assert_not_called()
+        brokers.select_active_profile.assert_not_called()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_runtime_persists_subscription_changes_to_the_active_workspace() -> None:
+async def test_runtime_persists_subscription_changes_to_the_active_workspace() -> None:
     async def scenario() -> None:
         active = profile("Default")
         runtime, brokers, mqtt = runtime_with((active,))
@@ -319,12 +328,12 @@ def test_runtime_persists_subscription_changes_to_the_active_workspace() -> None
         )
         mqtt.remove_subscription.assert_awaited_once_with(updated)
         assert active.workspace.subscriptions == ()
-        assert brokers.update_observer_workspace.call_count == 3
+        assert brokers.replace_subscriptions.call_count == 3
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_runtime_exposes_topic_queries_connection_commands_and_publish() -> None:
+async def test_runtime_exposes_topic_queries_connection_commands_and_publish() -> None:
     async def scenario() -> None:
         active = profile("Default")
         state = TopicState(
@@ -349,7 +358,7 @@ def test_runtime_exposes_topic_queries_connection_commands_and_publish() -> None
         mqtt.disconnect.assert_awaited_once_with()
         mqtt.publish.assert_awaited_once_with("home/set", b"off")
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_runtime_exposes_mqtt_event_streams() -> None:
@@ -364,7 +373,7 @@ def test_runtime_exposes_mqtt_event_streams() -> None:
     assert runtime.connection_statuses() is connection_stream
 
 
-def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
+async def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
     async def scenario() -> None:
         default = profile("Default")
         removable = profile("Remote")
@@ -386,4 +395,4 @@ def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
         assert updated.name == "Renamed"
         assert deleted.id == removable.id
 
-    asyncio.run(scenario())
+    await scenario()

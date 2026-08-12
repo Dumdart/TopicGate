@@ -21,6 +21,6 @@ jobs:
       - name: Install GUI system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libegl1
       - name: Install package and dependencies
-        run: python -m pip install -e ".[apps]"
+        run: python -m pip install -e ".[apps,test]"
       - name: Run tests
         run: python -m pytest -q

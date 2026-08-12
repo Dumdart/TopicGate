@@ -48,7 +48,7 @@ def dashboard_runtime() -> MagicMock:
     return runtime
 
 
-def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
+async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
     async def scenario() -> None:
         mcp = FastMCP("test")
         DashboardAPI(dashboard_runtime()).register(mcp)
@@ -58,7 +58,7 @@ def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
 
         assert [item.name for item in tools] == ["open_topicgate_dashboard"]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:
