@@ -109,7 +109,7 @@ class DashboardAPI(MCPApi):
                 gap=0,
                 css_class=(
                     "grid-cols-1 lg:grid-cols-[21rem_minmax(0,1fr)] "
-                    "min-h-[calc(100vh-5.75rem)] border-t border-[#202124]/16"
+                    "min-h-[calc(100vh-5.75rem)] border-t border-[#c8ced6]"
                 ),
             ):
                 self._build_tree(tools)
@@ -158,7 +158,7 @@ class DashboardAPI(MCPApi):
                         ),
                     ),
                     css_class=(
-                        "h-11 border-[#202124]/25 bg-[#ffffff] "
+                        "h-11 border-[#b8c0ca] bg-[#ffffff] "
                         "text-sm text-[#202124]"
                     ),
                 ):
@@ -182,7 +182,7 @@ class DashboardAPI(MCPApi):
         with Column(
             gap=0,
             css_class=(
-                "border-b border-[#202124]/16 bg-[#ffffff] px-4 py-7 "
+                "border-b border-[#c8ced6] bg-[#ffffff] px-4 py-7 "
                 "lg:border-b-0 lg:border-r lg:px-5 lg:py-8"
             ),
         ):
@@ -239,7 +239,7 @@ class DashboardAPI(MCPApi):
         selected: bool,
     ) -> None:
         selected_class = (
-            "border-l-[#4b5563] bg-[#f3f4f6] text-[#202124]"
+            "border-l-[#405d7a] bg-[#dce9f7] text-[#202124]"
             if selected
             else "border-l-transparent text-[#202124]/75"
         )
@@ -256,8 +256,8 @@ class DashboardAPI(MCPApi):
             ),
             css_class=(
                 "h-9 w-full justify-start rounded-none border-l-2 px-2 "
-                "font-mono text-[13px] font-normal hover:border-l-[#4b5563] "
-                f"hover:bg-[#f3f4f6] hover:text-[#202124] {selected_class}"
+                "font-mono text-[13px] font-normal hover:border-l-[#9aa8b6] "
+                f"hover:bg-[#eef2f6] hover:text-[#202124] {selected_class}"
             ),
         )
 
@@ -276,7 +276,8 @@ class DashboardAPI(MCPApi):
             )
             with Div(
                 css_class=(
-                    "min-h-44 border-l-4 border-[#4b5563] bg-[#ffffff] "
+                    "min-h-44 rounded-lg border border-[#c8ced6] border-l-4 "
+                    "border-l-[#405d7a] bg-[#fbfcfd] "
                     "px-8 py-8 lg:min-h-52 lg:px-10 lg:py-10"
                 )
             ):
@@ -293,8 +294,9 @@ class DashboardAPI(MCPApi):
                 columns=None,
                 gap=0,
                 css_class=(
-                    "mt-10 grid-cols-1 xl:grid-cols-2 "
-                    "xl:divide-x xl:divide-[#202124]/16"
+                    "mt-10 grid-cols-1 rounded-lg border border-[#c8ced6] "
+                    "bg-[#ffffff] px-8 py-8 xl:grid-cols-2 "
+                    "xl:divide-x xl:divide-[#c8ced6]"
                 ),
             ):
                 self._build_metadata()
@@ -307,7 +309,7 @@ class DashboardAPI(MCPApi):
                 level=2,
                 css_class=(
                     "mb-1 text-xs font-semibold uppercase tracking-[0.18em] "
-                    "text-[#202124]/55"
+                    "text-[#4b5563]"
                 ),
             )
             self._detail_row("Encoding", STATE.selection.topic.payload_encoding)
@@ -321,13 +323,13 @@ class DashboardAPI(MCPApi):
             )
 
     def _build_subscription_settings(self) -> None:
-        with Column(gap=4, css_class="border-t border-[#202124]/16 pt-9 xl:border-t-0 xl:pl-12"):
+        with Column(gap=4, css_class="border-t border-[#c8ced6] pt-9 xl:border-t-0 xl:pl-12"):
             Heading(
                 "Subscription",
                 level=2,
                 css_class=(
                     "mb-1 text-xs font-semibold uppercase tracking-[0.18em] "
-                    "text-[#202124]/55"
+                    "text-[#4b5563]"
                 ),
             )
             self._detail_row("Filter", STATE.selection.subscription.topic_filter, code=True)
@@ -342,7 +344,7 @@ class DashboardAPI(MCPApi):
     @staticmethod
     def _detail_row(label: str, value: Any, *, code: bool = False) -> None:
         with Grid(columns=2, gap=3, css_class="grid-cols-[8rem_minmax(0,1fr)] text-sm"):
-            Text(label, css_class="text-[#202124]/55")
+            Text(label, css_class="text-[#5f6368]")
             Text(
                 f"{value}",
                 code=code,
