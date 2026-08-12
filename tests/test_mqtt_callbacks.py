@@ -7,6 +7,6 @@ async def test_mqtt_v5_unsubscribe_callback_accepts_reason_codes():
         object(),
         None,
         1,
-        object(),
         [],
+        object(),
     )

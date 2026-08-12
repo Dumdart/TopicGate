@@ -1,9 +1,7 @@
 import asyncio
 import inspect
 import ssl
-from collections import deque
 from collections.abc import Callable
-from threading import Lock
 from typing import Any
 
 import paho.mqtt.client as paho
@@ -13,12 +11,11 @@ from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import validate_topic_name
 from topicgate.core.payload_limits import (
-    MAX_MESSAGE_CALLBACK_BATCH,
-    MAX_PENDING_INGRESS_MESSAGES,
     MAX_STORED_PAYLOAD_BYTES,
 )
 
 from ...core.config.mqtt_config import MqttConfig
+from .async_callback_bridge import AsyncCallbackBridge
 
 Callback = Callable[..., Any]
 
@@ -26,18 +23,19 @@ Callback = Callable[..., Any]
 class MqttClient:
     def __init__(self, config: MqttConfig, qos: int = 1):
         self.config = config
-        self.client = paho.Client(client_id="", userdata=None, protocol=paho.MQTTv5)
+        self.client = paho.Client(
+            callback_api_version=paho.CallbackAPIVersion.VERSION2,
+            client_id="",
+            userdata=None,
+            protocol=paho.MQTTv5,
+        )
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._connected_event: asyncio.Event | None = None
         self._connected = False
         self._loop_started = False
         self._configured = False
-        self._pending_messages: deque[tuple[Callback, tuple[Any, ...]]] = deque()
-        self._pending_messages_lock = Lock()
-        self._message_drain_scheduled = False
-        self._message_drain_task: asyncio.Task[None] | None = None
-        self._dropped_message_count = 0
+        self._callback_bridge = AsyncCallbackBridge()
 
         self._on_connect: Callback | None = None
         self._on_disconnect: Callback | None = None
@@ -59,8 +57,7 @@ class MqttClient:
 
     @property
     def dropped_message_count(self) -> int:
-        with self._pending_messages_lock:
-            return self._dropped_message_count
+        return self._callback_bridge.dropped_count
 
     async def connect(
         self,
@@ -70,6 +67,7 @@ class MqttClient:
         on_disconnect: Callback | None = None,
     ) -> bool:
         self._loop = asyncio.get_running_loop()
+        self._callback_bridge.bind_loop(self._loop)
         self._on_connect = on_connect
         self._on_disconnect = on_disconnect
 
@@ -212,8 +210,7 @@ class MqttClient:
             try:
                 validate_topic_name(topic)
             except ValueError:
-                with self._pending_messages_lock:
-                    self._dropped_message_count += 1
+                self._callback_bridge.record_drop()
                 return
             payload_size = len(message.payload)
             mqtt_message = MqttMessage(
@@ -223,73 +220,12 @@ class MqttClient:
                 retain=bool(message.retain),
                 payload_size=payload_size,
             )
-            self._enqueue_message_callback(
-                callback, client, userdata, mqtt_message
-            )
+            self._callback_bridge.enqueue(callback, client, userdata, mqtt_message)
 
         self.client.message_callback_add(topic, forward)
 
     def message_callback_remove(self, topic: str) -> None:
         self.client.message_callback_remove(topic)
-
-    def _enqueue_message_callback(self, callback: Callback, *args: Any) -> None:
-        loop = self._loop
-        if loop is None or loop.is_closed():
-            return
-
-        should_schedule = False
-        # Check and update admission state atomically with the Paho thread.
-        with self._pending_messages_lock:
-            if len(self._pending_messages) >= MAX_PENDING_INGRESS_MESSAGES:
-                self._pending_messages.popleft()
-                self._dropped_message_count += 1
-            self._pending_messages.append((callback, args))
-            if not self._message_drain_scheduled:
-                self._message_drain_scheduled = True
-                should_schedule = True
-
-        if should_schedule:
-            try:
-                loop.call_soon_threadsafe(self._start_message_drain)
-            except RuntimeError:
-                with self._pending_messages_lock:
-                    self._dropped_message_count += len(self._pending_messages)
-                    self._pending_messages.clear()
-                    self._message_drain_scheduled = False
-
-    def _start_message_drain(self) -> None:
-        self._message_drain_task = asyncio.create_task(
-            self._drain_message_callbacks()
-        )
-
-    async def _drain_message_callbacks(self) -> None:
-        processed = 0
-        while True:
-            with self._pending_messages_lock:
-                if not self._pending_messages:
-                    self._message_drain_scheduled = False
-                    self._message_drain_task = None
-                    return
-                callback, args = self._pending_messages.popleft()
-
-            try:
-                result = callback(*args)
-                if inspect.isawaitable(result):
-                    await result
-            except asyncio.CancelledError:
-                raise
-            except Exception as ex:
-                asyncio.get_running_loop().call_exception_handler(
-                    {
-                        "message": "MQTT message callback failed",
-                        "exception": ex,
-                    }
-                )
-
-            processed += 1
-            if processed >= MAX_MESSAGE_CALLBACK_BATCH:
-                processed = 0
-                await asyncio.sleep(0)
 
     def _configure(self) -> None:
         if self._configured:
@@ -327,14 +263,15 @@ class MqttClient:
         self,
         client,
         userdata,
+        disconnect_flags,
         reason_code,
-        properties=None,
+        properties,
     ):
         self._call_on_loop(
             self._handle_disconnect,
             client,
             userdata,
-            None,
+            disconnect_flags,
             reason_code,
             properties,
         )
@@ -359,9 +296,7 @@ class MqttClient:
             properties,
         )
 
-    def _paho_on_publish(
-        self, client, userdata, mid, reason_code=None, properties=None
-    ):
+    def _paho_on_publish(self, client, userdata, mid, reason_code, properties):
         self._call_on_loop(
             self._run_callback,
             self._on_publish,
@@ -372,14 +307,14 @@ class MqttClient:
             properties,
         )
 
-    def _paho_on_subscribe(self, client, userdata, mid, granted_qos, properties=None):
+    def _paho_on_subscribe(self, client, userdata, mid, reason_codes, properties):
         self._call_on_loop(
             self._run_callback,
             self._on_subscribe,
             client,
             userdata,
             mid,
-            granted_qos,
+            reason_codes,
             properties,
         )
 
@@ -388,8 +323,8 @@ class MqttClient:
         client,
         userdata,
         mid,
-        properties=None,
-        reason_codes=None,
+        reason_codes,
+        properties,
     ):
         self._call_on_loop(
             self._run_callback,
@@ -397,8 +332,8 @@ class MqttClient:
             client,
             userdata,
             mid,
-            properties,
             reason_codes,
+            properties,
         )
 
     def _call_on_loop(self, callback: Callback, *args):

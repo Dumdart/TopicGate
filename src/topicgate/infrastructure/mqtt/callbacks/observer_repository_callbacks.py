@@ -30,8 +30,8 @@ class ObserverRepositoryCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         flags: Any,
-        rc: Any,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
         await self._repository._handle_connected()
 
@@ -40,8 +40,8 @@ class ObserverRepositoryCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         disconnect_flags: Any,
-        reason_code: Any = None,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
         self._repository._handle_disconnected()
 
@@ -50,8 +50,8 @@ class ObserverRepositoryCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         mid: int,
-        reason_code: Any = None,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
         return None
 
@@ -60,8 +60,8 @@ class ObserverRepositoryCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         mid: int,
-        granted_qos: Any,
-        properties: Any = None,
+        reason_codes: Any,
+        properties: Any,
     ) -> None:
         return None
 
@@ -70,8 +70,8 @@ class ObserverRepositoryCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         mid: int,
-        properties: Any = None,
-        reason_codes: Any = None,
+        reason_codes: Any,
+        properties: Any,
     ) -> None:
         return None
 

@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import paho.mqtt.client as paho
 from paho.mqtt.reasoncodes import ReasonCode
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -21,6 +22,7 @@ class FakePahoClient:
     instances = []
 
     def __init__(self, **kwargs):
+        self.init_kwargs = kwargs
         self.events = []
         self.connected = False
         self.on_connect = None
@@ -50,7 +52,13 @@ class FakePahoClient:
     def disconnect(self):
         self.events.append(("disconnect",))
         self.connected = False
-        self.on_disconnect(self, None, 0, None)
+        self.on_disconnect(
+            self,
+            None,
+            SimpleNamespace(is_disconnect_packet_from_server=False),
+            ReasonCode(2, identifier=0),
+            None,
+        )
         return 0
 
     def subscribe(self, topic):
@@ -60,7 +68,7 @@ class FakePahoClient:
 
     def unsubscribe(self, topic):
         self.events.append(("unsubscribe", topic))
-        self.on_unsubscribe(self, None, 13, "properties", ["success"])
+        self.on_unsubscribe(self, None, 13, ["success"], "properties")
         return 0, 13
 
     def publish(self, topic, payload, qos):
@@ -82,22 +90,22 @@ class FakePahoClient:
 
 
 class TestCallbacks(MqttCallbacks):
-    async def on_subscribe(self, client, userdata, mid, granted_qos, properties=None):
+    async def on_subscribe(self, client, userdata, mid, reason_codes, properties):
         pass
 
-    async def on_connect(self, client, userdata, flags, rc, properties=None):
+    async def on_connect(self, client, userdata, flags, reason_code, properties):
         pass
 
     async def on_disconnect(
-        self, client, userdata, disconnect_flags, reason_code=None, properties=None
+        self, client, userdata, disconnect_flags, reason_code, properties
     ):
         pass
 
-    async def on_publish(self, client, userdata, mid, reason_code=None, properties=None):
+    async def on_publish(self, client, userdata, mid, reason_code, properties):
         pass
 
     async def on_unsubscribe(
-        self, client, userdata, mid, properties=None, reason_codes=None
+        self, client, userdata, mid, reason_codes, properties
     ):
         pass
 
@@ -111,6 +119,17 @@ def config():
         port=1883,
         username="",
         password="",
+    )
+
+
+def test_client_uses_paho_callback_api_v2() -> None:
+    FakePahoClient.instances.clear()
+    with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
+        MqttClient(config())
+
+    assert (
+        FakePahoClient.instances[-1].init_kwargs["callback_api_version"]
+        == paho.CallbackAPIVersion.VERSION2
     )
 
 
@@ -262,8 +281,8 @@ async def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
         received = asyncio.Event()
         values = []
 
-        async def on_unsubscribe(client, userdata, mid, properties, reason_codes):
-            values.extend((mid, properties, reason_codes))
+        async def on_unsubscribe(client, userdata, mid, reason_codes, properties):
+            values.extend((mid, reason_codes, properties))
             received.set()
 
         with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
@@ -273,12 +292,12 @@ async def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
             await asyncio.wait_for(received.wait(), timeout=1)
             await client.disconnect()
 
-        assert values == [13, "properties", ["success"]]
+        assert values == [13, ["success"], "properties"]
 
     await scenario()
 
 
-async def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
+async def test_async_disconnect_preserves_paho_v2_callback_arguments():
     async def scenario():
         received = asyncio.Event()
         values = []
@@ -294,11 +313,20 @@ async def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
             await client.connect(timeout=1)
             client._on_disconnect = on_disconnect
             fake_client = FakePahoClient.instances[-1]
-            fake_client.on_disconnect(fake_client, None, "reason", "properties")
+            disconnect_flags = SimpleNamespace(
+                is_disconnect_packet_from_server=True
+            )
+            fake_client.on_disconnect(
+                fake_client,
+                None,
+                disconnect_flags,
+                "reason",
+                "properties",
+            )
             await asyncio.wait_for(received.wait(), timeout=1)
             await client.disconnect()
 
-        assert values == [None, "reason", "properties"]
+        assert values == [disconnect_flags, "reason", "properties"]
 
     await scenario()
 
@@ -420,7 +448,10 @@ async def test_message_callback_flood_is_bounded_before_loop_scheduling() -> Non
                 assert schedule.call_count == 0
 
             assert client.dropped_message_count == overflow
-            assert len(client._pending_messages) == MAX_PENDING_INGRESS_MESSAGES
+            assert (
+                client._callback_bridge.pending_count
+                == MAX_PENDING_INGRESS_MESSAGES
+            )
             assert [message.payload for message in received] == [b"0"]
 
             release_callback.set()

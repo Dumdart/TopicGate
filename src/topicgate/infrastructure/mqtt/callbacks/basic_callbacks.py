@@ -9,39 +9,38 @@ class BasicCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         mid: int,
-        granted_qos: Any,
-        properties: Any = None,
+        reason_codes: Any,
+        properties: Any,
     ) -> None:
-        print(f"Subscribed: mid={mid}, granted_qos={granted_qos}")
+        print(f"Subscribed: mid={mid}, reason_codes={reason_codes}")
 
     async def on_connect(
         self,
         client: Any,
         userdata: Any,
         flags: Any,
-        rc: Any,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
-        print(f"Connected: reason_code={rc}")
+        print(f"Connected: reason_code={reason_code}")
 
     async def on_disconnect(
         self,
         client: Any,
         userdata: Any,
         disconnect_flags: Any,
-        reason_code: Any = None,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
-        code = reason_code if reason_code is not None else disconnect_flags
-        print(f"Disconnected: reason_code={code}")
+        print(f"Disconnected: reason_code={reason_code}")
 
     async def on_publish(
         self,
         client: Any,
         userdata: Any,
         mid: int,
-        reason_code: Any = None,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
         print(f"Published: mid={mid}, reason_code={reason_code}")
 
@@ -50,8 +49,8 @@ class BasicCallbacks(MqttCallbacks):
         client: Any,
         userdata: Any,
         mid: int,
-        properties: Any = None,
-        reason_codes: Any = None,
+        reason_codes: Any,
+        properties: Any,
     ) -> None:
         print(f"Unsubscribed: mid={mid}, reason_codes={reason_codes}")
 

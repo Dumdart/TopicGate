@@ -5,13 +5,13 @@ from typing import Any
 class MqttCallbacks(ABC):
     @abstractmethod
     async def on_subscribe(
-        self, client: Any, userdata: Any, mid: int, granted_qos: Any, properties: Any = None
+        self, client: Any, userdata: Any, mid: int, reason_codes: Any, properties: Any
     ) -> None:
         pass
 
     @abstractmethod
     async def on_connect(
-        self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None
+        self, client: Any, userdata: Any, flags: Any, reason_code: Any, properties: Any
     ) -> None:
         pass
 
@@ -21,8 +21,8 @@ class MqttCallbacks(ABC):
         client: Any,
         userdata: Any,
         disconnect_flags: Any,
-        reason_code: Any = None,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
         pass
 
@@ -32,8 +32,8 @@ class MqttCallbacks(ABC):
         client: Any,
         userdata: Any,
         mid: int,
-        reason_code: Any = None,
-        properties: Any = None,
+        reason_code: Any,
+        properties: Any,
     ) -> None:
         pass
 
@@ -43,8 +43,8 @@ class MqttCallbacks(ABC):
         client: Any,
         userdata: Any,
         mid: int,
-        properties: Any = None,
-        reason_codes: Any = None,
+        reason_codes: Any,
+        properties: Any,
     ) -> None:
         pass
 
