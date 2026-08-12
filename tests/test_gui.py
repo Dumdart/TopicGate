@@ -50,7 +50,12 @@ def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(runtime_for(repository), repository.state.topic)
-    window = MainWindow(view_model)
+    settings = QSettings(
+        str(Path(".pytest_cache/redesigned-window.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    window = MainWindow(view_model, settings)
 
     assert window.minimumWidth() == 1024
     assert window.minimumHeight() == 640
@@ -63,6 +68,11 @@ def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
     publish_payload.setPlainText("open")
     assert window.findChild(QPushButton, "publishButton").isEnabled()
     assert "#f3f4f6" in window.styleSheet()
+    assert "border: 1px solid #c8ced6" in window.styleSheet()
+    assert "QTreeView::item:selected" in window.styleSheet()
+    assert "border-left-color: #405d7a" in window.styleSheet()
+    assert "QSplitter::handle:horizontal" in window.styleSheet()
+    assert "color: #737b85" in window.styleSheet()
 
     window.close()
     application.processEvents()

@@ -109,7 +109,7 @@ class DashboardAPI(MCPApi):
                 gap=0,
                 css_class=(
                     "grid-cols-1 lg:grid-cols-[21rem_minmax(0,1fr)] "
-                    "min-h-[calc(100vh-5.75rem)] border-t border-[#202124]/10"
+                    "min-h-[calc(100vh-5.75rem)] border-t border-[#202124]/16"
                 ),
             ):
                 self._build_tree(tools)
@@ -158,7 +158,7 @@ class DashboardAPI(MCPApi):
                         ),
                     ),
                     css_class=(
-                        "h-11 border-[#202124]/15 bg-[#ffffff] "
+                        "h-11 border-[#202124]/25 bg-[#ffffff] "
                         "text-sm text-[#202124]"
                     ),
                 ):
@@ -182,7 +182,7 @@ class DashboardAPI(MCPApi):
         with Column(
             gap=0,
             css_class=(
-                "border-b border-[#202124]/10 bg-[#ffffff] px-4 py-7 "
+                "border-b border-[#202124]/16 bg-[#ffffff] px-4 py-7 "
                 "lg:border-b-0 lg:border-r lg:px-5 lg:py-8"
             ),
         ):
@@ -294,7 +294,7 @@ class DashboardAPI(MCPApi):
                 gap=0,
                 css_class=(
                     "mt-10 grid-cols-1 xl:grid-cols-2 "
-                    "xl:divide-x xl:divide-[#202124]/10"
+                    "xl:divide-x xl:divide-[#202124]/16"
                 ),
             ):
                 self._build_metadata()
@@ -321,7 +321,7 @@ class DashboardAPI(MCPApi):
             )
 
     def _build_subscription_settings(self) -> None:
-        with Column(gap=4, css_class="border-t border-[#202124]/10 pt-9 xl:border-t-0 xl:pl-12"):
+        with Column(gap=4, css_class="border-t border-[#202124]/16 pt-9 xl:border-t-0 xl:pl-12"):
             Heading(
                 "Subscription",
                 level=2,
