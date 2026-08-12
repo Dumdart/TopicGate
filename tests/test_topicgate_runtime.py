@@ -50,7 +50,7 @@ def runtime_with(
             stored[broker_id].config = mqtt
         active_id = broker_id
 
-    brokers.activate_profile.side_effect = activate
+    brokers.select_active_profile.side_effect = activate
     mqtt = MagicMock()
     mqtt.start = AsyncMock()
     mqtt.stop = AsyncMock()
@@ -183,7 +183,7 @@ async def test_runtime_activates_and_persists_a_broker_only_after_connecting() -
             subscriptions=selected.workspace.subscriptions,
         )
         brokers.update_profile.assert_called_once_with(selected)
-        brokers.activate_profile.assert_called_once_with(selected.id, replacement)
+        brokers.select_active_profile.assert_called_once_with(selected.id)
         assert active.id == selected.id
         assert active.name == "Local TLS"
 
@@ -262,7 +262,7 @@ async def test_runtime_does_not_persist_a_failed_broker_activation() -> None:
             raise AssertionError("Expected broker activation to fail")
 
         brokers.update_profile.assert_not_called()
-        brokers.activate_profile.assert_not_called()
+        brokers.select_active_profile.assert_not_called()
 
     await scenario()
 
@@ -298,7 +298,7 @@ async def test_failed_broker_switch_restarts_the_previous_repository() -> None:
         assert runtime.active_repo is default_repo
         default_repo.stop.assert_awaited_once_with()
         default_repo.start.assert_awaited_once_with()
-        brokers.activate_profile.assert_not_called()
+        brokers.select_active_profile.assert_not_called()
 
     await scenario()
 
@@ -328,7 +328,7 @@ async def test_runtime_persists_subscription_changes_to_the_active_workspace() -
         )
         mqtt.remove_subscription.assert_awaited_once_with(updated)
         assert active.workspace.subscriptions == ()
-        assert brokers.update_observer_workspace.call_count == 3
+        assert brokers.replace_subscriptions.call_count == 3
 
     await scenario()
 

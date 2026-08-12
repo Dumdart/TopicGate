@@ -13,9 +13,9 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
     profile.config = MqttConfig("broker", 1883, "observer", "entered-secret")
     profile.workspace.subscriptions = ()
     profile.workspace.model = MagicMock()
-    broker_repository = MagicMock()
-    broker_repository.get_profile.return_value = profile
-    broker_repository.get_all_profiles.return_value = (profile,)
+    broker_profiles = MagicMock()
+    broker_profiles.get_profile.return_value = profile
+    broker_profiles.get_all_profiles.return_value = (profile,)
     credential_store = MagicMock()
 
     with (
@@ -24,8 +24,8 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
             return_value=database,
         ),
         patch(
-            "topicgate.app.app_dependencies.BrokerRepository",
-            return_value=broker_repository,
+            "topicgate.app.app_dependencies.BrokerProfileService",
+            return_value=broker_profiles,
         ) as repository_type,
         patch("topicgate.app.app_dependencies.ObserverMqttRepository"),
     ):
@@ -38,5 +38,6 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
     repository_type.assert_called_once_with(
         database,
         credential_store=credential_store,
+        runtime_state=dependencies.broker_runtime_state,
     )
     assert dependencies.service_items == (dependencies.runtime,)

@@ -151,6 +151,18 @@ class FakeBrokerRepository:
             self.updated_mqtt.append(mqtt)
         self._active_profile_id = profile_id
 
+    def select_active_profile(self, profile_id: UUID) -> None:
+        self.activate_profile(profile_id)
+        self.updated_mqtt.append(self.get_profile(profile_id).config)
+
+    def replace_subscriptions(
+        self, workspace_id: UUID, subscriptions: tuple[Subscription, ...]
+    ) -> None:
+        profile = next(
+            item for item in self._profiles.values() if item.workspace_id == workspace_id
+        )
+        profile.workspace.subscriptions = subscriptions
+
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
         self._profiles[workspace.profile_id].workspace = workspace
 
