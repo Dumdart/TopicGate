@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QPlainTextEdit,
     QSplitter,
     QToolBar,
     QToolButton,
@@ -43,6 +44,28 @@ from topicgate.gui.components.observer_tree import ObserverTreePane
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
+
+
+def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    view_model = MainViewModel(runtime_for(repository), repository.state.topic)
+    window = MainWindow(view_model)
+
+    assert window.minimumWidth() == 1024
+    assert window.minimumHeight() == 640
+    assert window.findChild(QComboBox, "brokerSelector") is not None
+    assert window.findChild(QLabel, "brokerEndpoint").text() == "mqtt://broker:1883"
+    assert window.findChild(QLineEdit, "publishTopic").text() == repository.state.topic
+    assert window.findChild(QPlainTextEdit, "publishPayload") is not None
+    publish_payload = window.findChild(QPlainTextEdit, "publishPayload")
+    assert not window.findChild(QPushButton, "publishButton").isEnabled()
+    publish_payload.setPlainText("open")
+    assert window.findChild(QPushButton, "publishButton").isEnabled()
+    assert "#f3f4f6" in window.styleSheet()
+
+    window.close()
+    application.processEvents()
 
 
 class FakeGuiRepository:

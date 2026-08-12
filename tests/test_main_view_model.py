@@ -21,6 +21,30 @@ from topicgate.core.payload_limits import (
 )
 
 
+async def test_publish_message_supports_utf8_and_strict_base64() -> None:
+    repository = FakeObserverRepository()
+    runtime = runtime_for(repository)
+    published: list[tuple[UUID, str, bytes]] = []
+
+    async def publish(broker_id: UUID, topic: str, payload: bytes) -> None:
+        published.append((broker_id, topic, payload))
+
+    runtime.publish = publish  # type: ignore[method-assign]
+    view_model = MainViewModel(runtime)
+
+    await view_model.publish_message("home/set", "på", "utf-8")
+    await view_model.publish_message("camera/set", "/wA=", "base64")
+
+    assert published[0][1:] == ("home/set", "på".encode())
+    assert published[1][1:] == ("camera/set", b"\xff\x00")
+    try:
+        await view_model.publish_message("camera/set", "%%%", "base64")
+    except ValueError as error:
+        assert str(error) == "Payload is not valid base64."
+    else:
+        raise AssertionError("Expected invalid base64 to be rejected")
+
+
 class FakeObserverRepository:
     topic_update_interval = 0.0
     connection_status = "disconnected"

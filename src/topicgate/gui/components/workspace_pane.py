@@ -11,6 +11,7 @@ class WorkspacePane(QFrame):
         minimum_hint_width: int = 240,
     ) -> None:
         super().__init__()
+        self.setProperty("workspacePane", True)
         self._minimum_hint_width = minimum_hint_width
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setSizePolicy(

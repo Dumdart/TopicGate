@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
+from topicgate.presentation.topic_presentation import TopicTreeNode
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -112,6 +113,22 @@ class ObserverTreePane(WorkspacePane):
         else:
             self._tree.expandToDepth(1)
         self.select_topic(selected_topic)
+
+    def render_tree(
+        self,
+        nodes: tuple[TopicTreeNode, ...],
+        selected_topic: str,
+        subscriptions: tuple[Subscription, ...] = (),
+    ) -> None:
+        paths: list[str] = []
+
+        def append(items: tuple[TopicTreeNode, ...]) -> None:
+            for item in items:
+                paths.append(item.path)
+                append(item.children)
+
+        append(nodes)
+        self.render(paths, selected_topic, subscriptions)
 
     def select_topic(self, topic: str) -> None:
         item = self._items.get(topic)
@@ -260,3 +277,6 @@ class ObserverTreePane(WorkspacePane):
         source_index = self._proxy.mapToSource(current)
         topic = self._model.data(source_index, TOPIC_ROLE) or ""
         self.topic_selected.emit(str(topic))
+
+
+TopicNavigationPane = ObserverTreePane

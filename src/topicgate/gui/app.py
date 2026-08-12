@@ -1,8 +1,9 @@
 
 
-import sys
 import asyncio
-from PySide6.QtCore import QCoreApplication, QEventLoop
+import sys
+
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
@@ -11,6 +12,7 @@ from topicgate.app.app_dependencies import AppDependencies
 from topicgate.app.service_container import ServiceContainer
 from topicgate.gui.main_window import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
+from topicgate.gui.theme import apply_light_theme
 
 class App:
     def __init__(self, qt_application: QApplication):
@@ -24,6 +26,13 @@ class App:
         
 
     async def run(self) -> int:
+        stopped = asyncio.get_running_loop().create_future()
+
+        def request_shutdown() -> None:
+            if not stopped.done():
+                stopped.set_result(None)
+
+        self._qt_application.lastWindowClosed.connect(request_shutdown)
         try:
             try:
                 await self._services.start_services()
@@ -32,16 +41,23 @@ class App:
                     f"Initial MQTT connection failed: {error}"
                 )
             await self._view_model.start()
-            stopped = asyncio.get_running_loop().create_future()
-            self._qt_application.aboutToQuit.connect(
-                lambda: not stopped.done() and stopped.set_result(None)
-            )
             self._window.show()
             await stopped
             return 0
         finally:
-            await self._view_model.stop()
-            await self._services.stop_services()
+            try:
+                try:
+                    cancel_operations = getattr(
+                        self._window,
+                        "cancel_pending_operations",
+                        None,
+                    )
+                    if cancel_operations is not None:
+                        await cancel_operations()
+                finally:
+                    await self._view_model.stop()
+            finally:
+                await self._services.stop_services()
 
 
 def configure_application_identity() -> None:
@@ -53,6 +69,8 @@ def configure_application_identity() -> None:
 def run() -> int:
     configure_application_identity()
     qt_application = QApplication(sys.argv)
+    qt_application.setQuitOnLastWindowClosed(False)
+    apply_light_theme(qt_application)
     event_loop = QEventLoop(qt_application)
     asyncio.set_event_loop(event_loop)
 

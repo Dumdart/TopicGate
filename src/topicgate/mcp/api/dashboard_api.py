@@ -12,6 +12,7 @@ from topicgate.core.models.observer_model import TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.mcp.api.mcp_api import MCPApi
+from topicgate.mcp.api.dashboard_snapshot import DashboardSnapshotBuilder
 
 try:
     from fastmcp import FastMCPApp
@@ -44,6 +45,7 @@ class DashboardAPI(MCPApi):
 
     def __init__(self, runtime: TopicGateRuntime):
         self._runtime = runtime
+        self._snapshot_builder = DashboardSnapshotBuilder(runtime)
         self._app: Any | None = None
         self.open_topicgate_dashboard: Any | None = None
 
@@ -89,34 +91,7 @@ class DashboardAPI(MCPApi):
         self._select_dashboard_path = select_dashboard_path
 
     def _snapshot(self) -> dict[str, Any]:
-        active_broker = self._runtime.active_broker
-        broker_id = active_broker.id
-        subscriptions = tuple(self._runtime.list_subscriptions(broker_id))
-        observed_topics = tuple(self._runtime.list_topics())
-        visible_topics = tuple(
-            topic
-            for topic in observed_topics
-            if any(
-                mqtt_filter_matches(subscription.topic_filter, topic)
-                for subscription in subscriptions
-            )
-        )
-        default_path = self._default_path(subscriptions, visible_topics)
-        status = str(self._runtime.connection_status)
-
-        return {
-            "active_broker_id": str(broker_id),
-            "active_broker_name": active_broker.name,
-            "connection_status": status,
-            "connection_status_label": status.replace("_", " ").title(),
-            "brokers": [self._broker_row(item) for item in self._runtime.list_brokers()],
-            "subscriptions": [
-                self._subscription_row(item) for item in subscriptions
-            ],
-            "topics": [self._topic_row(broker_id, topic) for topic in visible_topics],
-            "tree_rows": self._tree_rows(subscriptions, visible_topics),
-            "initial_selection": self._selection(broker_id, default_path),
-        }
+        return self._snapshot_builder.snapshot()
 
     def _build_dashboard(self, **tools: Any) -> PrefabApp:
         snapshot = self._snapshot()
@@ -375,19 +350,7 @@ class DashboardAPI(MCPApi):
             )
 
     def _selection(self, broker_id: UUID, path: str) -> dict[str, Any]:
-        subscription = self._matching_subscription(broker_id, path)
-        state = self._runtime.get_topic_state(broker_id, path) if path else None
-        topic = (
-            self._topic_detail_from_state(state)
-            if state is not None
-            else self._empty_topic_detail(path)
-        )
-        topic["dropped_message_count"] = self._runtime.dropped_message_count
-        return {
-            "path": path or "No topic selected",
-            "topic": topic,
-            "subscription": self._subscription_detail(subscription),
-        }
+        return self._snapshot_builder.selection(broker_id, path)
 
     def _matching_subscription(
         self,

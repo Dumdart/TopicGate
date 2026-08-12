@@ -1,6 +1,9 @@
 import asyncio
-import json
+import binascii
+from base64 import b64decode
+from contextlib import asynccontextmanager
 from contextlib import suppress
+from typing import AsyncIterator
 from uuid import UUID
 
 from PySide6.QtCore import QObject, Signal
@@ -10,11 +13,15 @@ from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
-from topicgate.core.payload_limits import (
-    MAX_FORMATTED_JSON_CHARACTERS,
-    MAX_RENDERED_PAYLOAD_BYTES,
-)
 from topicgate.app.topicgate_runtime import TopicGateRuntime
+from topicgate.presentation.topic_presentation import (
+    TopicDetail,
+    TopicTreeNode,
+    build_topic_tree,
+    collect_visible_topic_paths,
+    matching_subscription,
+    topic_detail,
+)
 from topicgate.services.observer_model_service import ObserverModelService
 
 
@@ -27,6 +34,8 @@ class MainViewModel(QObject):
     connection_changed = Signal()
     configuration_changed = Signal()
     log_message = Signal(str)
+    operation_state_changed = Signal()
+    operation_failed = Signal(str, str)
 
     def __init__(
         self,
@@ -43,6 +52,7 @@ class MainViewModel(QObject):
             runtime.connection_status
         )
         self._reported_dropped_messages = 0
+        self._busy_operations: set[str] = set()
 
     @property
     def title(self) -> str:
@@ -54,18 +64,7 @@ class MainViewModel(QObject):
 
     @property
     def decoded_payload(self) -> str:
-        if self._state is None:
-            return "Waiting for a message"
-        payload = self._state.payload[:MAX_RENDERED_PAYLOAD_BYTES]
-        notice = self._payload_truncation_notice()
-        try:
-            decoded = payload.decode("utf-8")
-        except UnicodeDecodeError:
-            return "Binary payload (see raw payload below)" + notice
-
-        if not notice:
-            decoded = self._format_json(decoded)
-        return decoded + notice
+        return self.topic_detail.decoded_payload
 
     @property
     def value(self) -> str:
@@ -74,51 +73,23 @@ class MainViewModel(QObject):
 
     @property
     def raw_payload(self) -> str:
-        if self._state is None:
-            return "-"
-        payload = self._state.payload[:MAX_RENDERED_PAYLOAD_BYTES]
-        return payload.hex(" ") + self._payload_truncation_notice()
+        return self.topic_detail.raw_payload
 
-    def _payload_truncation_notice(self) -> str:
-        if self._state is None:
-            return ""
-        payload_size = self._state.payload_size or len(self._state.payload)
-        visible_size = min(len(self._state.payload), MAX_RENDERED_PAYLOAD_BYTES)
-        if payload_size <= visible_size:
-            return ""
-        return (
-            f"\n\n[Payload truncated: showing {visible_size} of "
-            f"{payload_size} bytes]"
+    @property
+    def topic_detail(self) -> TopicDetail:
+        return topic_detail(
+            self._state,
+            self._topic,
+            self._runtime.dropped_message_count,
         )
-
-    @staticmethod
-    def _format_json(decoded: str) -> str:
-        try:
-            value = json.loads(decoded)
-            chunks: list[str] = []
-            length = 0
-            encoder = json.JSONEncoder(indent=2, ensure_ascii=False)
-            for chunk in encoder.iterencode(value):
-                remaining = MAX_FORMATTED_JSON_CHARACTERS - length
-                if len(chunk) > remaining:
-                    chunks.append(chunk[:remaining])
-                    chunks.append("\n\n[Formatted JSON truncated]")
-                    break
-                chunks.append(chunk)
-                length += len(chunk)
-            return "".join(chunks)
-        except (json.JSONDecodeError, RecursionError, TypeError):
-            return decoded
 
     @property
     def received_at(self) -> str:
-        if self._state is None:
-            return "-"
-        return self._state.recieved_at.isoformat(timespec="seconds")
+        return self.topic_detail.received_at
 
     @property
     def quality_of_service(self) -> str:
-        return "-" if self._state is None else str(self._state.qos)
+        return self.topic_detail.qos_label
 
     @property
     def retained(self) -> str:
@@ -126,7 +97,7 @@ class MainViewModel(QObject):
 
     @property
     def message_count(self) -> str:
-        return "0" if self._state is None else str(self._state.message_count)
+        return str(self.topic_detail.message_count)
 
     @property
     def dropped_message_count(self) -> str:
@@ -135,6 +106,13 @@ class MainViewModel(QObject):
     @property
     def connection_status(self) -> str:
         return self._connection_status
+
+    def is_busy(self, operation: str) -> bool:
+        return operation in self._busy_operations
+
+    @property
+    def any_operation_busy(self) -> bool:
+        return bool(self._busy_operations)
 
     @property
     def mqtt_config(self) -> MqttConfig:
@@ -156,37 +134,24 @@ class MainViewModel(QObject):
     def topic_paths(self) -> list[str]:
         subscriptions = self.subscriptions
         model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        paths = {subscription.topic_filter for subscription in subscriptions}
         observed_topics = set(ObserverModelService.get_all_topics(model))
         observed_topics.update(model.topic_states)
-        paths.update(
-            topic
-            for topic in observed_topics
-            if any(
-                mqtt_filter_matches(subscription.topic_filter, topic)
-                for subscription in subscriptions
-            )
+        return list(collect_visible_topic_paths(subscriptions, observed_topics))
+
+    @property
+    def topic_tree(self) -> tuple[TopicTreeNode, ...]:
+        model = self._runtime.get_observer_model(self.active_broker_profile.id)
+        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics.update(model.topic_states)
+        return build_topic_tree(
+            self.topic_paths,
+            self.subscriptions,
+            observed_topics,
         )
-        return sorted(paths, key=str.casefold)
 
     @property
     def selected_subscription(self) -> Subscription | None:
-        if not self._topic:
-            return None
-        matches = [
-            subscription
-            for subscription in self.subscriptions
-            if mqtt_filter_matches(subscription.topic_filter, self._topic)
-        ]
-        if not matches:
-            return None
-        return max(
-            matches,
-            key=lambda item: (
-                item.topic_filter == self._topic,
-                len(item.topic_filter.replace("#", "").replace("+", "")),
-            ),
-        )
+        return matching_subscription(self.subscriptions, self._topic)
 
     async def start(self) -> None:
         """Load the current value and listen for messages and connection changes."""
@@ -248,55 +213,61 @@ class MainViewModel(QObject):
         self.state_changed.emit()
 
     async def add_subscription(self, subscription: Subscription) -> None:
-        await self._runtime.add_subscription(
-            self.active_broker_profile.id,
-            subscription,
-        )
-        self.log_message.emit(f"Added subscription: {subscription.topic_filter}")
-        self.topics_changed.emit()
-        self.subscriptions_changed.emit()
+        async with self._operation("subscription"):
+            await self._runtime.add_subscription(
+                self.active_broker_profile.id,
+                subscription,
+            )
+            self.log_message.emit(f"Added subscription: {subscription.topic_filter}")
+            self.topics_changed.emit()
+            self.subscriptions_changed.emit()
 
     async def remove_subscription(self, subscription: Subscription) -> None:
-        await self._runtime.remove_subscription(
-            self.active_broker_profile.id,
-            subscription,
-        )
-        self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
-        if self._topic not in self.topic_paths:
-            self._topic = ""
-            self.refresh()
-        self.topics_changed.emit()
-        self.subscriptions_changed.emit()
+        async with self._operation("subscription"):
+            await self._runtime.remove_subscription(
+                self.active_broker_profile.id,
+                subscription,
+            )
+            self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
+            if self._topic not in self.topic_paths:
+                self._topic = ""
+                self.refresh()
+            self.topics_changed.emit()
+            self.subscriptions_changed.emit()
 
     async def update_subscription(
         self, original_filter: str, subscription: Subscription
     ) -> None:
-        await self._runtime.update_subscription(
-            self.active_broker_profile.id,
-            original_filter,
-            subscription,
-        )
-        self.log_message.emit(
-            f"Updated subscription: {original_filter} -> {subscription.topic_filter}"
-        )
-        if self._topic == original_filter:
-            self._topic = subscription.topic_filter
-            self.refresh()
-        self.topics_changed.emit()
-        self.subscriptions_changed.emit()
+        async with self._operation("subscription"):
+            await self._runtime.update_subscription(
+                self.active_broker_profile.id,
+                original_filter,
+                subscription,
+            )
+            self.log_message.emit(
+                f"Updated subscription: {original_filter} -> {subscription.topic_filter}"
+            )
+            if self._topic == original_filter:
+                self._topic = subscription.topic_filter
+                self.refresh()
+            self.topics_changed.emit()
+            self.subscriptions_changed.emit()
 
     async def reconnect_to_broker(self) -> None:
-        self.log_message.emit("Reconnect requested")
-        await self._runtime.reconnect()
+        async with self._operation("connection"):
+            self.log_message.emit("Reconnect requested")
+            await self._runtime.reconnect()
 
     async def connect_to_broker(self) -> None:
-        self.log_message.emit("Connect requested")
-        await self._runtime.connect()
+        async with self._operation("connection"):
+            self.log_message.emit("Connect requested")
+            await self._runtime.connect()
 
 
     async def disconnect_from_broker(self) -> None:
-        self.log_message.emit("Disconnect requested")
-        await self._runtime.disconnect()
+        async with self._operation("connection"):
+            self.log_message.emit("Disconnect requested")
+            await self._runtime.disconnect()
 
     async def update_mqtt_config(self, mqtt_config: MqttConfig) -> None:
         """Apply broker settings before retaining them in application settings."""
@@ -325,31 +296,31 @@ class MainViewModel(QObject):
         profile_name: str | None = None,
     ) -> None:
         """Connect with a profile and make it active only after success."""
-        profile = self._runtime.get_broker(profile_id)
-        profile_changed = profile.id != self.active_broker_profile.id
-
-        self.log_message.emit(
-            f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
-        )
-        try:
-            await self._runtime.activate_broker(
-                profile_id,
-                mqtt_config,
-                profile_name,
+        async with self._operation("broker"):
+            profile = self._runtime.get_broker(profile_id)
+            profile_changed = profile.id != self.active_broker_profile.id
+            self.log_message.emit(
+                f"Connecting to MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
             )
-        except Exception as error:
-            self.log_message.emit(f"Broker update failed: {error}")
-            raise
-        if profile_changed:
-            await self._restart_observer_tasks()
-            self._topic = ""
-            self.refresh()
-            self.topics_changed.emit()
-            self.subscriptions_changed.emit()
-        self.configuration_changed.emit()
-        self.log_message.emit(
-            f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
-        )
+            try:
+                await self._runtime.activate_broker(
+                    profile_id,
+                    mqtt_config,
+                    profile_name,
+                )
+            except Exception as error:
+                self.log_message.emit(f"Broker update failed: {error}")
+                raise
+            if profile_changed:
+                await self._restart_observer_tasks()
+                self._topic = ""
+                self.refresh()
+                self.topics_changed.emit()
+                self.subscriptions_changed.emit()
+            self.configuration_changed.emit()
+            self.log_message.emit(
+                f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
+            )
 
     def save_broker_profile(
         self,
@@ -395,24 +366,63 @@ class MainViewModel(QObject):
                 "Connecting to MQTT broker: "
                 f"{replacement.config.host}:{replacement.config.port}"
             )
-        try:
+        async with self._operation("broker"):
             await self._runtime.delete_broker(profile_id)
-        except Exception as error:
             if active_profile_id == profile_id:
-                self.log_message.emit(f"Broker update failed: {error}")
-            raise
-        if active_profile_id == profile_id:
-            self._topic = ""
-            self.refresh()
-            self.topics_changed.emit()
-            self.subscriptions_changed.emit()
+                self._topic = ""
+                self.refresh()
+                self.topics_changed.emit()
+                self.subscriptions_changed.emit()
+                self.configuration_changed.emit()
+                active = self.active_broker_profile
+                self.log_message.emit(
+                    f"Updated MQTT broker: {active.config.host}:{active.config.port}"
+                )
             self.configuration_changed.emit()
-            active = self.active_broker_profile
-            self.log_message.emit(
-                f"Updated MQTT broker: {active.config.host}:{active.config.port}"
+            self.log_message.emit(f"Deleted broker profile: {profile.name}")
+
+    async def publish_message(
+        self,
+        topic: str,
+        payload: str,
+        encoding: str = "utf-8",
+    ) -> None:
+        topic = topic.strip()
+        if not topic:
+            raise ValueError("A publish topic is required.")
+        if encoding == "utf-8":
+            payload_bytes = payload.encode("utf-8")
+        elif encoding == "base64":
+            try:
+                payload_bytes = b64decode(payload, validate=True)
+            except (binascii.Error, ValueError) as error:
+                raise ValueError("Payload is not valid base64.") from error
+        else:
+            raise ValueError("Encoding must be UTF-8 or base64.")
+        async with self._operation("publish"):
+            await self._runtime.publish(
+                self.active_broker_profile.id,
+                topic,
+                payload_bytes,
             )
-        self.configuration_changed.emit()
-        self.log_message.emit(f"Deleted broker profile: {profile.name}")
+            self.log_message.emit(f"Published message: {topic}")
+
+    def report_operation_error(self, title: str, error: BaseException) -> None:
+        message = str(error)
+        self.log_message.emit(f"{title}: {message}")
+        self.operation_failed.emit(title, message)
+
+    @asynccontextmanager
+    async def _operation(self, name: str) -> AsyncIterator[None]:
+        if name in self._busy_operations:
+            raise RuntimeError(f"The {name} operation is already in progress.")
+        self._busy_operations.add(name)
+        self.operation_state_changed.emit()
+        try:
+            yield
+        finally:
+            self._busy_operations.discard(name)
+            self.operation_state_changed.emit()
 
     async def _observe_messages(self) -> None:
         async for message in self._runtime.messages():

@@ -21,3 +21,6 @@ class LogConsoleDock(QDockWidget):
     def append_message(self, message: str) -> None:
         timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
         self._console.appendPlainText(f"{timestamp}  {message}")
+
+
+LogConsole = LogConsoleDock
