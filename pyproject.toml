@@ -16,10 +16,18 @@ dependencies = [
     "qasync",
     "sqlalchemy",
     "keyring",
+    "fastmcp",
+]
+
+[project.optional-dependencies]
+apps = [
+    "fastmcp[apps]",
+    "prefab-ui==0.20.2",
 ]
 
 [project.scripts]
-topicgate = "topicgate.__main__:run"
+topicgate = "topicgate.mcp.server:run"
+topicgate-gui = "topicgate.gui.app:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]

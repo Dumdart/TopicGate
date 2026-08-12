@@ -1,7 +1,7 @@
 # Database
-smart_observer.db
-topicgate.db
+topic_gate.db
 
 # Distribution / build artifacts
 *.egg-info/
 __pycache__/
+.venv

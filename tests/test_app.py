@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
 
-from topicgate.__main__ import App, configure_application_identity
+from topicgate.gui.app import App, configure_application_identity
 
 
 def test_application_uses_topicgate_identity() -> None:
