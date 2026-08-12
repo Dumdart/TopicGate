@@ -17,8 +17,12 @@ dependencies = [
     "sqlalchemy",
     "keyring",
     "fastmcp",
+]
+
+[project.optional-dependencies]
+apps = [
     "fastmcp[apps]",
-    "prefab-ui"
+    "prefab-ui==0.20.2",
 ]
 
 [project.scripts]

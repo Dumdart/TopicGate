@@ -8,6 +8,7 @@ from topicgate.app.app_dependencies import AppDependencies
 from topicgate.app.service_container import ServiceContainer
 from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
+from topicgate.mcp.api.dashboard_api import DashboardAPI
 from topicgate.mcp.api.mcp_api import McpApiContainer
 from topicgate.mcp.api.publish_api import PublishAPI
 from topicgate.mcp.api.subscription_api import SubscriptionAPI
@@ -36,6 +37,7 @@ class Server:
                 PublishAPI(runtime),
                 SubscriptionAPI(runtime),
                 TopicAPI(runtime),
+                DashboardAPI(runtime),
             ]
         )
         self.mcp_container.register(self.mcp)
