@@ -3,7 +3,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from topicgate.core.config.mqtt_config import MqttConfig
-from topicgate.core.interfaces.mqtt_repository import MqttRepository
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
@@ -22,7 +21,7 @@ from topicgate.processors.subscription_manager import SubscriptionManager
 from topicgate.services.observer_model_service import ObserverModelService
 
 
-class ObserverMqttRepository(MqttRepository[ObserverModel]):
+class ObserverMqttRepository:
     """Observe messages matching the supplied absolute MQTT topic filters."""
 
     topic_update_interval = TOPIC_TREE_REFRESH_INTERVAL_SECONDS

@@ -4,15 +4,13 @@ from uuid import UUID
 
 from topicgate.app.service_item import ServiceItem
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.interfaces.broker_profile_store import BrokerProfileStore
+from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
-from topicgate.infrastructure.repository.broker_repository import BrokerRepository
-from topicgate.infrastructure.repository.observer_mqtt_repository import (
-    ObserverMqttRepository,
-)
 
 
 class TopicGateRuntime(ServiceItem):
@@ -20,11 +18,11 @@ class TopicGateRuntime(ServiceItem):
 
     def __init__(
         self,
-        broker_repository: BrokerRepository,
-        mqtt_repositories: dict[UUID, ObserverMqttRepository],
+        broker_repository: BrokerProfileStore,
+        mqtt_repositories: dict[UUID, ObserverRepository],
         active_broker_id: UUID | None = None,
         mqtt_repository_factory: Callable[
-            [BrokerProfile], ObserverMqttRepository
+            [BrokerProfile], ObserverRepository
         ] | None = None,
     ) -> None:
         self._brokers = broker_repository
@@ -34,16 +32,12 @@ class TopicGateRuntime(ServiceItem):
             else active_broker_id
         )
         self._mqtt_repositories = mqtt_repositories
-        self._mqtt_repository_factory = (
-            self._create_mqtt_repository
-            if mqtt_repository_factory is None
-            else mqtt_repository_factory
-        )
+        self._mqtt_repository_factory = mqtt_repository_factory
         if self._active_broker_id not in self._mqtt_repositories:
             raise ValueError("The active broker requires an MQTT repository.")
 
     @property
-    def active_repo(self) -> ObserverMqttRepository:
+    def active_repo(self) -> ObserverRepository:
         return self._mqtt_repositories[self._active_broker_id]
 
     async def start(self) -> None:
@@ -116,6 +110,8 @@ class TopicGateRuntime(ServiceItem):
         await self.active_repo.reconnect()
 
     def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerSummary:
+        if self._mqtt_repository_factory is None:
+            raise RuntimeError("An observer repository factory is required.")
         profile = self._brokers.create_profile(name, mqtt_config)
         self._mqtt_repositories[profile.id] = self._mqtt_repository_factory(profile)
         return self._broker_summary(profile)
@@ -246,14 +242,6 @@ class TopicGateRuntime(ServiceItem):
 
     def _get_broker_profile(self, broker_id: UUID | None = None) -> BrokerProfile:
         return self._brokers.get_profile(broker_id)
-
-    @staticmethod
-    def _create_mqtt_repository(profile: BrokerProfile) -> ObserverMqttRepository:
-        return ObserverMqttRepository(
-            profile.config,
-            list(profile.workspace.subscriptions),
-            profile.workspace.model,
-        )
 
     @staticmethod
     def _config_with_stored_password(

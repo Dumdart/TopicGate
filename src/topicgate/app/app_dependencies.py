@@ -1,7 +1,10 @@
 from pathlib import Path
+from uuid import UUID
 
 from topicgate.app.service_item import ServiceItem
 from topicgate.app.topicgate_runtime import TopicGateRuntime
+from topicgate.core.interfaces.observer_repository import ObserverRepository
+from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.credentials.os_credential_store import OSCredentialStore
@@ -31,12 +34,8 @@ class AppDependencies:
             credential_store=self.credential_store,
         )
         profile = self.broker_repository.get_profile()
-        self.observer_model_repositories = {
-            item.id: ObserverMqttRepository(
-                item.config,
-                list(item.workspace.subscriptions),
-                item.workspace.model,
-            )
+        self.observer_model_repositories: dict[UUID, ObserverRepository] = {
+            item.id: self._create_observer_repository(item)
             for item in self.broker_repository.get_all_profiles()
         }
         self.observer_model_repository = self.observer_model_repositories[profile.id]
@@ -44,7 +43,16 @@ class AppDependencies:
             self.broker_repository,
             self.observer_model_repositories,
             profile.id,
+            self._create_observer_repository,
         )
         self.service_items: tuple[ServiceItem, ...] = (
             self.runtime,
+        )
+
+    @staticmethod
+    def _create_observer_repository(profile: BrokerProfile) -> ObserverRepository:
+        return ObserverMqttRepository(
+            profile.config,
+            list(profile.workspace.subscriptions),
+            profile.workspace.model,
         )

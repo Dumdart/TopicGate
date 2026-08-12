@@ -68,7 +68,16 @@ def runtime_with(
     mqtt.dropped_message_count = 0
     mqtt.topic_update_interval = 0.1
     repositories = {item.id: mqtt for item in profiles}
-    return TopicGateRuntime(brokers, repositories, active_id), brokers, mqtt
+    return (
+        TopicGateRuntime(
+            brokers,
+            repositories,
+            active_id,
+            lambda _profile: mqtt,
+        ),
+        brokers,
+        mqtt,
+    )
 
 
 async def test_runtime_owns_the_mqtt_lifecycle() -> None:
