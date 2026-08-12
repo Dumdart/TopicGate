@@ -397,7 +397,7 @@ def test_observer_tree_adds_trash_buttons_only_to_subscription_filters() -> None
     application.processEvents()
 
 
-def test_subscription_trash_button_runs_the_removal_workflow() -> None:
+async def test_subscription_trash_button_runs_the_removal_workflow() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
@@ -435,7 +435,7 @@ def test_subscription_trash_button_runs_the_removal_workflow() -> None:
         window.close()
         application.processEvents()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_broker_settings_dialog_loads_current_configuration_and_validates_input() -> None:
@@ -647,7 +647,7 @@ def test_profile_menu_edits_an_inactive_profile_without_connecting() -> None:
     application.processEvents()
 
 
-def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
+async def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
@@ -680,10 +680,10 @@ def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
         window.close()
         application.processEvents()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
+async def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
@@ -708,7 +708,7 @@ def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
         window.close()
         application.processEvents()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_tls_defaults_port_only_until_the_user_changes_it() -> None:
@@ -739,7 +739,7 @@ def test_tls_defaults_port_only_until_the_user_changes_it() -> None:
     application.processEvents()
 
 
-def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> None:
+async def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
@@ -764,10 +764,10 @@ def test_applying_broker_settings_updates_the_view_model_and_closes_dialog() -> 
         window.close()
         application.processEvents()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
+async def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
     class FailingGuiRepository(FakeGuiRepository):
         async def update_broker(
             self,
@@ -805,4 +805,4 @@ def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
         window.close()
         application.processEvents()
 
-    asyncio.run(scenario())
+    await scenario()

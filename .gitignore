@@ -5,3 +5,5 @@ topic_gate.db
 *.egg-info/
 __pycache__/
 .venv
+.pytest_cache/
+.pytest-tmp/

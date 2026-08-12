@@ -189,7 +189,7 @@ def runtime_for(
     )
 
 
-def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
+async def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
     async def scenario() -> None:
         topic = "SmartHome/Huehnerstall/door/status"
         repository = FakeObserverRepository()
@@ -209,10 +209,10 @@ def test_view_model_displays_and_refreshes_the_selected_topic_state() -> None:
 
         await view_model.stop()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_view_model_batches_notifications_and_reports_dropped_messages() -> None:
+async def test_view_model_batches_notifications_and_reports_dropped_messages() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         repository.dropped_message_count = 4
@@ -238,10 +238,10 @@ def test_view_model_batches_notifications_and_reports_dropped_messages() -> None
             "Dropped 4 MQTT messages during admission (4 total)",
         ]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_view_model_throttles_topic_tree_updates() -> None:
+async def test_view_model_throttles_topic_tree_updates() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         repository.topic_update_interval = 0.02
@@ -265,7 +265,7 @@ def test_view_model_throttles_topic_tree_updates() -> None:
         assert topic_changes == [True]
         await view_model.stop()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_discovered_topic_updates_details_and_only_matching_filter_is_editable() -> None:
@@ -355,7 +355,7 @@ def test_mqtt_filter_matching_supports_wildcards_and_system_topic_rules() -> Non
     assert mqtt_filter_matches("$SYS/#", "$SYS/broker/uptime")
 
 
-def test_connection_commands_are_forwarded_to_the_repository() -> None:
+async def test_connection_commands_are_forwarded_to_the_repository() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         view_model = MainViewModel(runtime_for(repository))
@@ -370,10 +370,10 @@ def test_connection_commands_are_forwarded_to_the_repository() -> None:
             "disconnect",
         ]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_mqtt_configuration_is_applied_then_stored() -> None:
+async def test_mqtt_configuration_is_applied_then_stored() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         initial = MqttConfig("old", 1883, "", "")
@@ -397,10 +397,10 @@ def test_mqtt_configuration_is_applied_then_stored() -> None:
             "Updated MQTT broker: new:8883",
         ]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_switching_broker_profile_activates_its_workspace_after_connecting() -> None:
+async def test_switching_broker_profile_activates_its_workspace_after_connecting() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
@@ -413,10 +413,10 @@ def test_switching_broker_profile_activates_its_workspace_after_connecting() -> 
         assert view_model.active_broker_profile.id == local_profile.id
         assert view_model.mqtt_config == local_profile.config
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_switching_broker_profile_moves_live_message_observation() -> None:
+async def test_switching_broker_profile_moves_live_message_observation() -> None:
     async def scenario() -> None:
         brokers = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
         default_profile, selected_profile = brokers.get_all_profiles()
@@ -446,7 +446,7 @@ def test_switching_broker_profile_moves_live_message_observation() -> None:
         assert "garage/status" in view_model.topic_paths
         await view_model.stop()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> None:
@@ -471,7 +471,7 @@ def test_saving_inactive_broker_profile_does_not_connect_or_activate_it() -> Non
     assert saved.password_configured
 
 
-def test_profile_operations_allow_credentials_without_tls() -> None:
+async def test_profile_operations_allow_credentials_without_tls() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(
@@ -493,10 +493,10 @@ def test_profile_operations_allow_credentials_without_tls() -> None:
         assert len(broker_repository.get_all_profiles()) == 3
         assert repository.broker_configurations == [insecure]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
+async def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(
@@ -536,10 +536,10 @@ def test_switching_broker_profile_replaces_the_visible_workspace_tree() -> None:
         assert view_model.topic_paths == ["bridge/connected"]
         assert repository.subscriptions == (Subscription("bridge/connected"),)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_view_model_creates_and_renames_broker_profiles() -> None:
+async def test_view_model_creates_and_renames_broker_profiles() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
@@ -564,10 +564,10 @@ def test_view_model_creates_and_renames_broker_profiles() -> None:
         assert changes == [True, True]
         assert logs[0] == "Created broker profile: Remote"
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_deleting_active_profile_switches_before_removing_it() -> None:
+async def test_deleting_active_profile_switches_before_removing_it() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("default", 1883, "", ""))
@@ -581,10 +581,10 @@ def test_deleting_active_profile_switches_before_removing_it() -> None:
         assert deleted_profile not in view_model.broker_profiles
         assert repository.broker_configurations == [replacement.config]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_failed_mqtt_configuration_is_not_stored() -> None:
+async def test_failed_mqtt_configuration_is_not_stored() -> None:
     class FailingObserverRepository(FakeObserverRepository):
         async def update_broker(
             self,
@@ -615,10 +615,10 @@ def test_failed_mqtt_configuration_is_not_stored() -> None:
             "Broker update failed: broker unavailable",
         ]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_removing_subscription_updates_topics_and_clears_stale_selection() -> None:
+async def test_removing_subscription_updates_topics_and_clears_stale_selection() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         subscription = Subscription("SmartHome/#")
@@ -643,10 +643,10 @@ def test_removing_subscription_updates_topics_and_clears_stale_selection() -> No
         assert changed == ["state", "topics", "subscriptions"]
         assert logs == ["Removed subscription: SmartHome/#"]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> None:
+async def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         subscription = Subscription("SmartHome/kitchen/status")
@@ -663,10 +663,10 @@ def test_removing_subscription_hides_its_cached_topic_and_clears_selection() -> 
         assert view_model.topic == ""
         assert view_model.topic_paths == []
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
+async def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         subscription = Subscription("SmartHome/kitchen/status")
@@ -698,10 +698,10 @@ def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
         assert view_model.topic == ""
         assert view_model.topic_paths == []
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_removing_subscription_keeps_topics_covered_by_another_filter() -> None:
+async def test_removing_subscription_keeps_topics_covered_by_another_filter() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         removed = Subscription("SmartHome/kitchen/status")
@@ -718,4 +718,4 @@ def test_removing_subscription_keeps_topics_covered_by_another_filter() -> None:
             removed.topic_filter,
         ]
 
-    asyncio.run(scenario())
+    await scenario()

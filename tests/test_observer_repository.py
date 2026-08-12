@@ -66,7 +66,7 @@ def test_repository_updates_the_broker_profile_observer_model() -> None:
     assert profile_model.topic_states[message.topic].payload == b"open"
 
 
-def test_repository_updates_topic_state_before_publishing_message() -> None:
+async def test_repository_updates_topic_state_before_publishing_message() -> None:
     async def scenario() -> None:
         repository, _ = build_repository()
         message = MqttMessage(
@@ -80,7 +80,7 @@ def test_repository_updates_topic_state_before_publishing_message() -> None:
         assert await anext(stream) == message
         await stream.aclose()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_message_notification_backlog_is_bounded() -> None:
@@ -101,7 +101,7 @@ def test_message_notification_backlog_is_bounded() -> None:
     ).encode()
 
 
-def test_repository_delegates_subscription_operations() -> None:
+async def test_repository_delegates_subscription_operations() -> None:
     async def scenario() -> None:
         repository, manager = build_repository()
         original = Subscription("SmartHome/old/#")
@@ -117,10 +117,10 @@ def test_repository_delegates_subscription_operations() -> None:
         manager.remove.assert_awaited_once_with(original)
         manager.update.assert_awaited_once_with(original.topic_filter, replacement)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_removing_subscription_clears_uncovered_retained_state() -> None:
+async def test_removing_subscription_clears_uncovered_retained_state() -> None:
     async def scenario() -> None:
         repository, manager = build_repository()
         removed = Subscription("devices/#")
@@ -149,10 +149,10 @@ def test_removing_subscription_clears_uncovered_retained_state() -> None:
             repository.get(), remaining.topic_filter
         ) is not None
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_start_connects_then_activates_subscription_manager() -> None:
+async def test_start_connects_then_activates_subscription_manager() -> None:
     async def scenario() -> None:
         repository, manager = build_repository()
         repository._mqtt_gate.start = AsyncMock()
@@ -167,10 +167,10 @@ def test_start_connects_then_activates_subscription_manager() -> None:
         assert await anext(status_stream) == ConnectionStatus.CONNECTED
         await status_stream.aclose()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_stop_deactivates_manager_before_stopping_mqtt_gate() -> None:
+async def test_stop_deactivates_manager_before_stopping_mqtt_gate() -> None:
     async def scenario() -> None:
         repository, manager = build_repository()
         repository._is_running = True
@@ -190,10 +190,10 @@ def test_stop_deactivates_manager_before_stopping_mqtt_gate() -> None:
         assert events == ["deactivate", "stop"]
         assert repository.connection_status == ConnectionStatus.DISCONNECTED
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_connected_and_disconnected_callbacks_delegate_to_manager() -> None:
+async def test_connected_and_disconnected_callbacks_delegate_to_manager() -> None:
     async def scenario() -> None:
         repository, manager = build_repository()
         repository._is_running = True
@@ -205,10 +205,10 @@ def test_connected_and_disconnected_callbacks_delegate_to_manager() -> None:
         manager.disconnect.assert_called_once()
         assert repository.connection_status == ConnectionStatus.RECONNECTING
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_startup_failure_stops_gate_and_leaves_repository_disconnected() -> None:
+async def test_startup_failure_stops_gate_and_leaves_repository_disconnected() -> None:
     async def scenario() -> None:
         repository, manager = build_repository()
         repository._mqtt_gate.start = AsyncMock(
@@ -227,10 +227,10 @@ def test_startup_failure_stops_gate_and_leaves_repository_disconnected() -> None
         manager.activate.assert_not_awaited()
         assert repository.connection_status == ConnectionStatus.DISCONNECTED
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> None:
+async def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> None:
     async def scenario() -> None:
         repository, previous_manager = build_repository()
         subscription = Subscription("SmartHome/door/#", qos=2)
@@ -277,10 +277,10 @@ def test_update_broker_replaces_gate_and_manager_preserving_subscriptions() -> N
         replacement_gate.start.assert_awaited_once()
         replacement_manager.activate.assert_awaited_once()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_update_broker_replaces_subscriptions_for_the_selected_profile() -> None:
+async def test_update_broker_replaces_subscriptions_for_the_selected_profile() -> None:
     async def scenario() -> None:
         repository, previous_manager = build_repository()
         previous_manager.subscriptions = (Subscription("SmartHome/default/#"),)
@@ -309,10 +309,10 @@ def test_update_broker_replaces_subscriptions_for_the_selected_profile() -> None
 
         assert mqtt_gate.call_args.args[2] == list(profile_subscriptions)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_update_broker_connects_when_previously_disconnected() -> None:
+async def test_update_broker_connects_when_previously_disconnected() -> None:
     async def scenario() -> None:
         repository, _ = build_repository()
         replacement_gate = MagicMock()
@@ -340,10 +340,10 @@ def test_update_broker_connects_when_previously_disconnected() -> None:
         replacement_manager.activate.assert_awaited_once()
         assert repository.connection_status == ConnectionStatus.CONNECTED
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_failed_broker_update_restores_the_previous_connection() -> None:
+async def test_failed_broker_update_restores_the_previous_connection() -> None:
     async def scenario() -> None:
         repository, previous_manager = build_repository()
         repository._is_running = True
@@ -379,4 +379,4 @@ def test_failed_broker_update_restores_the_previous_connection() -> None:
         previous_gate.start.assert_awaited_once()
         assert repository.connection_status == ConnectionStatus.CONNECTED
 
-    asyncio.run(scenario())
+    await scenario()

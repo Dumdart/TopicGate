@@ -15,7 +15,7 @@ def test_application_uses_topicgate_identity() -> None:
     assert QGuiApplication.applicationDisplayName() == "TopicGate Desktop"
 
 
-def test_app_remains_open_when_initial_mqtt_connection_fails() -> None:
+async def test_app_remains_open_when_initial_mqtt_connection_fails() -> None:
     async def scenario() -> None:
         app = object.__new__(App)
         app._services = MagicMock()
@@ -41,4 +41,4 @@ def test_app_remains_open_when_initial_mqtt_connection_fails() -> None:
         app._view_model.stop.assert_awaited_once()
         app._services.stop_services.assert_awaited_once()
 
-    asyncio.run(scenario())
+    await scenario()

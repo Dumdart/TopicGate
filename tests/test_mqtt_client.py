@@ -114,7 +114,7 @@ def config():
     )
 
 
-def test_async_gate_registers_message_callback_before_subscribing():
+async def test_async_gate_registers_message_callback_before_subscribing():
     async def scenario():
         FakePahoClient.instances.clear()
         with patch("topicgate.infrastructure.mqtt.mqtt_client.paho.Client", FakePahoClient):
@@ -125,10 +125,10 @@ def test_async_gate_registers_message_callback_before_subscribing():
             assert events.index("message_callback_add") < events.index("subscribe")
             await gate.stop()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_tls_client_can_disconnect_and_reconnect() -> None:
+async def test_tls_client_can_disconnect_and_reconnect() -> None:
     async def scenario() -> None:
         FakePahoClient.instances.clear()
         tls_config = MqttConfig(
@@ -154,10 +154,10 @@ def test_tls_client_can_disconnect_and_reconnect() -> None:
             event[0] for event in events
         ].index("username_pw_set")
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_async_gate_publishes_through_the_connected_client() -> None:
+async def test_async_gate_publishes_through_the_connected_client() -> None:
     async def scenario() -> None:
         FakePahoClient.instances.clear()
         with patch(
@@ -173,10 +173,10 @@ def test_async_gate_publishes_through_the_connected_client() -> None:
             FakePahoClient.instances[0].events
         )
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_client_configures_credentials_without_tls() -> None:
+async def test_client_configures_credentials_without_tls() -> None:
     async def scenario() -> None:
         FakePahoClient.instances.clear()
         with patch(
@@ -193,10 +193,10 @@ def test_client_configures_credentials_without_tls() -> None:
         assert ("username_pw_set", "observer", "secret") in events
         assert not any(event[0] == "tls_set" for event in events)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
+async def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
     async def scenario():
         FakePahoClient.instances.clear()
 
@@ -228,7 +228,7 @@ def test_async_gate_subscribes_all_configured_topics_with_custom_callback():
             await gate.stop()
             assert not gate.is_started
 
-    asyncio.run(scenario())
+    await scenario()
 
 
 def test_mqtt_gate_has_no_topics_when_none_are_configured():
@@ -257,7 +257,7 @@ def test_gate_preserves_per_subscription_qos_and_retain_options():
     assert subscription.retain_handling == 1
 
 
-def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
+async def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
     async def scenario():
         received = asyncio.Event()
         values = []
@@ -275,10 +275,10 @@ def test_async_unsubscribe_preserves_mqtt_v5_callback_argument_order():
 
         assert values == [13, "properties", ["success"]]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
+async def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
     async def scenario():
         received = asyncio.Event()
         values = []
@@ -300,10 +300,10 @@ def test_async_disconnect_normalizes_paho_v1_mqtt5_callback_arguments():
 
         assert values == [None, "reason", "properties"]
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_async_message_callback_is_awaited_on_application_loop():
+async def test_async_message_callback_is_awaited_on_application_loop():
     async def scenario():
         received = asyncio.Event()
         received_message = None
@@ -329,10 +329,10 @@ def test_async_message_callback_is_awaited_on_application_loop():
             topic="SmartHome/door/status", payload=b"on", qos=1, retain=False
         )
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_message_callback_bounds_attacker_controlled_payload() -> None:
+async def test_message_callback_bounds_attacker_controlled_payload() -> None:
     async def scenario() -> None:
         received = asyncio.Event()
         received_message = None
@@ -362,10 +362,10 @@ def test_message_callback_bounds_attacker_controlled_payload() -> None:
         assert received_message.payload == payload[:MAX_STORED_PAYLOAD_BYTES]
         assert received_message.payload_size == len(payload)
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_message_callback_flood_is_bounded_before_loop_scheduling() -> None:
+async def test_message_callback_flood_is_bounded_before_loop_scheduling() -> None:
     async def scenario() -> None:
         received: list[MqttMessage] = []
         release_callback = asyncio.Event()
@@ -433,10 +433,10 @@ def test_message_callback_flood_is_bounded_before_loop_scheduling() -> None:
             MAX_PENDING_INGRESS_MESSAGES + overflow
         ).encode()
 
-    asyncio.run(scenario())
+    await scenario()
 
 
-def test_message_callback_drops_deep_topic_before_loop_scheduling() -> None:
+async def test_message_callback_drops_deep_topic_before_loop_scheduling() -> None:
     async def scenario() -> None:
         received: list[MqttMessage] = []
 
@@ -471,4 +471,4 @@ def test_message_callback_drops_deep_topic_before_loop_scheduling() -> None:
         assert received == []
         assert client.dropped_message_count == 1
 
-    asyncio.run(scenario())
+    await scenario()
