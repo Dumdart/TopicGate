@@ -1,0 +1,36 @@
+from PySide6.QtWidgets import QApplication
+
+
+LIGHT_THEME = """
+QWidget { color: #202124; font-size: 13px; }
+QMainWindow, QWidget#applicationRoot { background: #f3f4f6; }
+QFrame[workspacePane="true"], QFrame#applicationHeader { background: #ffffff; border: 1px solid #c8ced6; border-radius: 8px; }
+QLabel#applicationTitle { font-size: 22px; font-weight: 650; }
+QLabel#sectionTitle, QLabel#workspaceHeading { color: #4b5563; font-weight: 650; }
+QLabel#sectionTitle { font-size: 11px; }
+QLabel#workspaceHeading { font-size: 15px; }
+QLineEdit, QPlainTextEdit, QComboBox, QTreeView { background: #ffffff; border: 1px solid #b8c0ca; border-radius: 5px; padding: 5px; selection-background-color: #dce9f7; }
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QTreeView:focus { border: 1px solid #4f6f91; }
+QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled { color: #737b85; background: #f1f3f5; border-color: #c8ced6; }
+QPlainTextEdit#decodedPayload, QPlainTextEdit#rawPayload { background: #fbfcfd; }
+QPlainTextEdit#decodedPayload:focus, QPlainTextEdit#rawPayload:focus { background: #ffffff; }
+QPushButton, QToolButton { background: #ffffff; border: 1px solid #b8c0ca; border-radius: 5px; padding: 6px 11px; }
+QPushButton:hover, QToolButton:hover { background: #f7f8fa; border-color: #89939f; }
+QPushButton:pressed, QToolButton:pressed { background: #eceff3; }
+QPushButton:disabled, QToolButton:disabled { color: #737b85; background: #f1f3f5; border-color: #c8ced6; }
+QPushButton[primary="true"] { color: #ffffff; background: #405d7a; border-color: #405d7a; }
+QMenuBar, QMenu, QDockWidget { background: #ffffff; }
+QMenuBar { border-bottom: 1px solid #c8ced6; }
+QHeaderView::section { color: #4b5563; background: #f3f5f7; border: 0; border-bottom: 1px solid #c8ced6; padding: 6px; font-weight: 600; }
+QTreeView { alternate-background-color: #fafbfc; }
+QTreeView::item { border-left: 3px solid transparent; padding: 3px 2px; }
+QTreeView::item:hover { color: #202124; background: #eef2f6; border-left-color: #9aa8b6; }
+QTreeView::item:selected { color: #202124; background: #dce9f7; border-left-color: #405d7a; }
+QSplitter::handle:horizontal { background: #e4e7eb; border-left: 1px solid #c8ced6; border-right: 1px solid #c8ced6; width: 8px; }
+QSplitter::handle:vertical { background: #e4e7eb; border-top: 1px solid #c8ced6; border-bottom: 1px solid #c8ced6; height: 8px; }
+QDockWidget { border-top: 1px solid #c8ced6; }
+"""
+
+
+def apply_light_theme(application: QApplication) -> None:
+    application.setStyleSheet(LIGHT_THEME)

@@ -1,21 +1,24 @@
 import asyncio
 from collections.abc import Coroutine
+from contextlib import suppress
 from typing import Any
 from uuid import UUID
 
 from PySide6.QtCore import QByteArray, QSettings, Qt
 from PySide6.QtGui import QAction, QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (
-    QApplication,
     QMainWindow,
     QMenu,
     QMessageBox,
     QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.about_dialog import AboutDialog
+from topicgate.gui.components.application_header import ApplicationHeader
 from topicgate.gui.components.add_subscription_dialog import AddSubscriptionDialog
 from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
@@ -23,12 +26,14 @@ from topicgate.gui.components.broker_settings_dialog import (
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.log_console import LogConsoleDock
 from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.components.publish_pane import PublishPane
 from topicgate.gui.components.subscription_settings import (
     SubscriptionSettingsPane,
 )
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.settings_migration import migrate_legacy_settings
+from topicgate.gui.theme import LIGHT_THEME
 
 
 class MainWindow(QMainWindow):
@@ -41,11 +46,14 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self._view_model = view_model
+        self._operation_tasks: set[asyncio.Task[None]] = set()
+        self._accepting_operations = True
         self._settings = settings or QSettings()
         if settings is None:
             migrate_legacy_settings(self._settings)
         self.setWindowTitle(view_model.title)
         self.setObjectName("mainWindow")
+        self.setStyleSheet(LIGHT_THEME)
 
         self._create_workspace()
         self._create_actions()
@@ -56,9 +64,21 @@ class MainWindow(QMainWindow):
         self._render_all()
 
     def _create_workspace(self) -> None:
+        self._header = ApplicationHeader()
         self._observer_tree = ObserverTreePane()
         self._topic_details = TopicDetailsPane()
         self._subscription_settings = SubscriptionSettingsPane()
+        self._publish_pane = PublishPane()
+        self._header.broker_selected.connect(self._confirm_broker_profile_switch)
+        self._header.connect_requested.connect(
+            lambda: self._run_async(self._view_model.connect_to_broker())
+        )
+        self._header.reconnect_requested.connect(
+            lambda: self._run_async(self._view_model.reconnect_to_broker())
+        )
+        self._header.disconnect_requested.connect(
+            lambda: self._run_async(self._view_model.disconnect_from_broker())
+        )
         self._observer_tree.topic_selected.connect(self._view_model.select_topic)
         self._observer_tree.add_filter_requested.connect(
             self._show_add_filter_dialog
@@ -81,19 +101,40 @@ class MainWindow(QMainWindow):
         self._subscription_settings.apply_requested.connect(
             self._apply_subscription
         )
+        self._publish_pane.publish_requested.connect(
+            lambda topic, payload, encoding: self._run_async(
+                self._view_model.publish_message(topic, payload, encoding)
+            )
+        )
+
+        context = QWidget()
+        context.setObjectName("contextPanel")
+        context_layout = QVBoxLayout(context)
+        context_layout.setContentsMargins(0, 0, 0, 0)
+        context_layout.setSpacing(8)
+        context_layout.addWidget(self._subscription_settings, 3)
+        context_layout.addWidget(self._publish_pane, 2)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.setObjectName("workspaceSplitter")
         self._splitter.setChildrenCollapsible(False)
         self._splitter.addWidget(self._observer_tree)
         self._splitter.addWidget(self._topic_details)
-        self._splitter.addWidget(self._subscription_settings)
+        self._splitter.addWidget(context)
         self._splitter.setStretchFactor(0, 4)
         self._splitter.setStretchFactor(1, 4)
         self._splitter.setStretchFactor(2, 2)
-        self.setCentralWidget(self._splitter)
-        self.resize(1220, 760)
-        self._splitter.setSizes([420, 430, 270])
+        root = QWidget()
+        root.setObjectName("applicationRoot")
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(10)
+        root_layout.addWidget(self._header)
+        root_layout.addWidget(self._splitter, 1)
+        self.setCentralWidget(root)
+        self.setMinimumSize(1024, 640)
+        self.resize(1280, 800)
+        self._splitter.setSizes([330, 580, 330])
 
     def _create_actions(self) -> None:
         self._connection_controls = ConnectionControls(self)
@@ -142,9 +183,7 @@ class MainWindow(QMainWindow):
 
         self._quit_action = QAction("Quit", self)
         self._quit_action.setShortcut("Ctrl+Q")
-        self._quit_action.triggered.connect(
-            lambda: QApplication.instance() and QApplication.instance().quit()
-        )
+        self._quit_action.triggered.connect(self.close)
 
         self._about_action = QAction("About TopicGate", self)
         self._about_action.setObjectName("aboutAction")
@@ -171,9 +210,10 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self._about_action)
 
         self.menuBar().setCornerWidget(
-            self._connection_controls.status_label,
+            self._header.status,
             Qt.Corner.TopRightCorner,
         )
+
 
     def _create_log_dock(self) -> None:
         self._log_dock = LogConsoleDock(self)
@@ -196,6 +236,8 @@ class MainWindow(QMainWindow):
         self._view_model.subscriptions_changed.connect(self._render_settings)
         self._view_model.connection_changed.connect(self._render_connection)
         self._view_model.configuration_changed.connect(self._render_broker_profiles)
+        self._view_model.operation_state_changed.connect(self._render_operation_state)
+        self._view_model.operation_failed.connect(self._show_operation_error)
         self._view_model.log_message.connect(self._log_dock.append_message)
 
     def _render_all(self) -> None:
@@ -206,14 +248,15 @@ class MainWindow(QMainWindow):
         self._render_broker_profiles()
 
     def _render_tree(self) -> None:
-        self._observer_tree.render(
-            self._view_model.topic_paths,
+        self._observer_tree.render_tree(
+            self._view_model.topic_tree,
             self._view_model.topic,
             self._view_model.subscriptions,
         )
 
     def _render_details(self) -> None:
         self._topic_details.render(self._view_model)
+        self._render_publish()
 
     def _render_settings(self) -> None:
         self._subscription_settings.render(
@@ -223,6 +266,8 @@ class MainWindow(QMainWindow):
 
     def _render_connection(self) -> None:
         self._connection_controls.render(self._view_model.connection_status)
+        self._render_header()
+        self._render_publish()
 
     def _render_broker_profiles(self) -> None:
         self._observer_tree.render_broker_profiles(
@@ -232,6 +277,32 @@ class MainWindow(QMainWindow):
         self._delete_broker_profile_action.setEnabled(
             len(self._view_model.broker_profiles) > 1
         )
+        self._render_header()
+
+    def _render_header(self) -> None:
+        self._header.render(
+            self._view_model.broker_profiles,
+            self._view_model.active_broker_profile,
+            self._view_model.connection_status,
+            self._view_model.is_busy("broker")
+            or self._view_model.is_busy("connection"),
+        )
+
+    def _render_publish(self) -> None:
+        self._publish_pane.render(
+            self._view_model.topic,
+            self._view_model.connection_status == "connected",
+            self._view_model.is_busy("publish"),
+        )
+
+    def _render_operation_state(self) -> None:
+        self._render_header()
+        self._render_publish()
+        busy = self._view_model.is_busy("subscription")
+        self._subscription_settings.setEnabled(not busy)
+
+    def _show_operation_error(self, title: str, message: str) -> None:
+        QMessageBox.warning(self, title, message)
 
     def _apply_subscription(
         self,
@@ -402,17 +473,35 @@ class MainWindow(QMainWindow):
         self._run_async(self._view_model.remove_subscription(subscription))
 
     def _run_async(self, operation: Coroutine[Any, Any, None]) -> None:
+        if not self._accepting_operations:
+            operation.close()
+            return
         task = asyncio.create_task(operation)
+        self._operation_tasks.add(task)
 
         def report_error(completed: asyncio.Task[None]) -> None:
             if completed.cancelled():
                 return
             error = completed.exception()
             if error is not None:
-                self._log_dock.append_message(f"Error: {error}")
-                QMessageBox.warning(self, "Operation failed", str(error))
+                self._view_model.report_operation_error(
+                    "Operation failed",
+                    error,
+                )
 
         task.add_done_callback(report_error)
+        task.add_done_callback(self._operation_tasks.discard)
+
+    async def cancel_pending_operations(self) -> None:
+        """Cancel window-owned commands before runtime services stop."""
+        self._accepting_operations = False
+        tasks = tuple(self._operation_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+        self._operation_tasks.clear()
 
     def _restore_state(self) -> None:
         splitter_state = self._settings.value("workspace/splitter")
@@ -435,6 +524,7 @@ class MainWindow(QMainWindow):
         self._log_dock.setVisible(log_visible)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._accepting_operations = False
         self._settings.setValue(
             "workspace/splitter",
             self._splitter.saveState(),

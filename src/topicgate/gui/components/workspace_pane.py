@@ -11,6 +11,7 @@ class WorkspacePane(QFrame):
         minimum_hint_width: int = 240,
     ) -> None:
         super().__init__()
+        self.setProperty("workspacePane", True)
         self._minimum_hint_width = minimum_hint_width
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setSizePolicy(
@@ -20,7 +21,7 @@ class WorkspacePane(QFrame):
 
         self.content_layout = QVBoxLayout(self)
         heading = QLabel(title)
-        heading.setStyleSheet("font-size: 15px; font-weight: 600;")
+        heading.setObjectName("workspaceHeading")
         self.content_layout.addWidget(heading)
 
     def minimumSizeHint(self) -> QSize:

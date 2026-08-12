@@ -12,6 +12,7 @@ from topicgate.core.models.observer_model import TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.mcp.api.mcp_api import MCPApi
+from topicgate.mcp.api.dashboard_snapshot import DashboardSnapshotBuilder
 
 try:
     from fastmcp import FastMCPApp
@@ -44,6 +45,7 @@ class DashboardAPI(MCPApi):
 
     def __init__(self, runtime: TopicGateRuntime):
         self._runtime = runtime
+        self._snapshot_builder = DashboardSnapshotBuilder(runtime)
         self._app: Any | None = None
         self.open_topicgate_dashboard: Any | None = None
 
@@ -89,34 +91,7 @@ class DashboardAPI(MCPApi):
         self._select_dashboard_path = select_dashboard_path
 
     def _snapshot(self) -> dict[str, Any]:
-        active_broker = self._runtime.active_broker
-        broker_id = active_broker.id
-        subscriptions = tuple(self._runtime.list_subscriptions(broker_id))
-        observed_topics = tuple(self._runtime.list_topics())
-        visible_topics = tuple(
-            topic
-            for topic in observed_topics
-            if any(
-                mqtt_filter_matches(subscription.topic_filter, topic)
-                for subscription in subscriptions
-            )
-        )
-        default_path = self._default_path(subscriptions, visible_topics)
-        status = str(self._runtime.connection_status)
-
-        return {
-            "active_broker_id": str(broker_id),
-            "active_broker_name": active_broker.name,
-            "connection_status": status,
-            "connection_status_label": status.replace("_", " ").title(),
-            "brokers": [self._broker_row(item) for item in self._runtime.list_brokers()],
-            "subscriptions": [
-                self._subscription_row(item) for item in subscriptions
-            ],
-            "topics": [self._topic_row(broker_id, topic) for topic in visible_topics],
-            "tree_rows": self._tree_rows(subscriptions, visible_topics),
-            "initial_selection": self._selection(broker_id, default_path),
-        }
+        return self._snapshot_builder.snapshot()
 
     def _build_dashboard(self, **tools: Any) -> PrefabApp:
         snapshot = self._snapshot()
@@ -134,7 +109,7 @@ class DashboardAPI(MCPApi):
                 gap=0,
                 css_class=(
                     "grid-cols-1 lg:grid-cols-[21rem_minmax(0,1fr)] "
-                    "min-h-[calc(100vh-5.75rem)] border-t border-[#202124]/10"
+                    "min-h-[calc(100vh-5.75rem)] border-t border-[#c8ced6]"
                 ),
             ):
                 self._build_tree(tools)
@@ -183,7 +158,7 @@ class DashboardAPI(MCPApi):
                         ),
                     ),
                     css_class=(
-                        "h-11 border-[#202124]/15 bg-[#ffffff] "
+                        "h-11 border-[#b8c0ca] bg-[#ffffff] "
                         "text-sm text-[#202124]"
                     ),
                 ):
@@ -207,7 +182,7 @@ class DashboardAPI(MCPApi):
         with Column(
             gap=0,
             css_class=(
-                "border-b border-[#202124]/10 bg-[#ffffff] px-4 py-7 "
+                "border-b border-[#c8ced6] bg-[#ffffff] px-4 py-7 "
                 "lg:border-b-0 lg:border-r lg:px-5 lg:py-8"
             ),
         ):
@@ -264,7 +239,7 @@ class DashboardAPI(MCPApi):
         selected: bool,
     ) -> None:
         selected_class = (
-            "border-l-[#4b5563] bg-[#f3f4f6] text-[#202124]"
+            "border-l-[#405d7a] bg-[#dce9f7] text-[#202124]"
             if selected
             else "border-l-transparent text-[#202124]/75"
         )
@@ -281,8 +256,8 @@ class DashboardAPI(MCPApi):
             ),
             css_class=(
                 "h-9 w-full justify-start rounded-none border-l-2 px-2 "
-                "font-mono text-[13px] font-normal hover:border-l-[#4b5563] "
-                f"hover:bg-[#f3f4f6] hover:text-[#202124] {selected_class}"
+                "font-mono text-[13px] font-normal hover:border-l-[#9aa8b6] "
+                f"hover:bg-[#eef2f6] hover:text-[#202124] {selected_class}"
             ),
         )
 
@@ -301,7 +276,8 @@ class DashboardAPI(MCPApi):
             )
             with Div(
                 css_class=(
-                    "min-h-44 border-l-4 border-[#4b5563] bg-[#ffffff] "
+                    "min-h-44 rounded-lg border border-[#c8ced6] border-l-4 "
+                    "border-l-[#405d7a] bg-[#fbfcfd] "
                     "px-8 py-8 lg:min-h-52 lg:px-10 lg:py-10"
                 )
             ):
@@ -318,8 +294,9 @@ class DashboardAPI(MCPApi):
                 columns=None,
                 gap=0,
                 css_class=(
-                    "mt-10 grid-cols-1 xl:grid-cols-2 "
-                    "xl:divide-x xl:divide-[#202124]/10"
+                    "mt-10 grid-cols-1 rounded-lg border border-[#c8ced6] "
+                    "bg-[#ffffff] px-8 py-8 xl:grid-cols-2 "
+                    "xl:divide-x xl:divide-[#c8ced6]"
                 ),
             ):
                 self._build_metadata()
@@ -332,7 +309,7 @@ class DashboardAPI(MCPApi):
                 level=2,
                 css_class=(
                     "mb-1 text-xs font-semibold uppercase tracking-[0.18em] "
-                    "text-[#202124]/55"
+                    "text-[#4b5563]"
                 ),
             )
             self._detail_row("Encoding", STATE.selection.topic.payload_encoding)
@@ -346,13 +323,13 @@ class DashboardAPI(MCPApi):
             )
 
     def _build_subscription_settings(self) -> None:
-        with Column(gap=4, css_class="border-t border-[#202124]/10 pt-9 xl:border-t-0 xl:pl-12"):
+        with Column(gap=4, css_class="border-t border-[#c8ced6] pt-9 xl:border-t-0 xl:pl-12"):
             Heading(
                 "Subscription",
                 level=2,
                 css_class=(
                     "mb-1 text-xs font-semibold uppercase tracking-[0.18em] "
-                    "text-[#202124]/55"
+                    "text-[#4b5563]"
                 ),
             )
             self._detail_row("Filter", STATE.selection.subscription.topic_filter, code=True)
@@ -367,7 +344,7 @@ class DashboardAPI(MCPApi):
     @staticmethod
     def _detail_row(label: str, value: Any, *, code: bool = False) -> None:
         with Grid(columns=2, gap=3, css_class="grid-cols-[8rem_minmax(0,1fr)] text-sm"):
-            Text(label, css_class="text-[#202124]/55")
+            Text(label, css_class="text-[#5f6368]")
             Text(
                 f"{value}",
                 code=code,
@@ -375,19 +352,7 @@ class DashboardAPI(MCPApi):
             )
 
     def _selection(self, broker_id: UUID, path: str) -> dict[str, Any]:
-        subscription = self._matching_subscription(broker_id, path)
-        state = self._runtime.get_topic_state(broker_id, path) if path else None
-        topic = (
-            self._topic_detail_from_state(state)
-            if state is not None
-            else self._empty_topic_detail(path)
-        )
-        topic["dropped_message_count"] = self._runtime.dropped_message_count
-        return {
-            "path": path or "No topic selected",
-            "topic": topic,
-            "subscription": self._subscription_detail(subscription),
-        }
+        return self._snapshot_builder.selection(broker_id, path)
 
     def _matching_subscription(
         self,

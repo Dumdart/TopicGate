@@ -70,6 +70,11 @@ def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:
     assert "Metadata" in rendered
     assert "Subscription" in rendered
     assert "Connected" in rendered
+    assert "border-[#c8ced6]" in rendered
+    assert "border-[#b8c0ca]" in rendered
+    assert "bg-[#dce9f7]" in rendered
+    assert "border-l-[#405d7a]" in rendered
+    assert "bg-[#fbfcfd]" in rendered
     for removed_label in (
         "Observer Tree",
         "Details / Stats",

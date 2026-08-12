@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QPlainTextEdit,
     QSplitter,
     QToolBar,
     QToolButton,
@@ -43,6 +44,38 @@ from topicgate.gui.components.observer_tree import ObserverTreePane
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
+
+
+def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    view_model = MainViewModel(runtime_for(repository), repository.state.topic)
+    settings = QSettings(
+        str(Path(".pytest_cache/redesigned-window.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    window = MainWindow(view_model, settings)
+
+    assert window.minimumWidth() == 1024
+    assert window.minimumHeight() == 640
+    assert window.findChild(QComboBox, "brokerSelector") is not None
+    assert window.findChild(QLabel, "brokerEndpoint").text() == "mqtt://broker:1883"
+    assert window.findChild(QLineEdit, "publishTopic").text() == repository.state.topic
+    assert window.findChild(QPlainTextEdit, "publishPayload") is not None
+    publish_payload = window.findChild(QPlainTextEdit, "publishPayload")
+    assert not window.findChild(QPushButton, "publishButton").isEnabled()
+    publish_payload.setPlainText("open")
+    assert window.findChild(QPushButton, "publishButton").isEnabled()
+    assert "#f3f4f6" in window.styleSheet()
+    assert "border: 1px solid #c8ced6" in window.styleSheet()
+    assert "QTreeView::item:selected" in window.styleSheet()
+    assert "border-left-color: #405d7a" in window.styleSheet()
+    assert "QSplitter::handle:horizontal" in window.styleSheet()
+    assert "color: #737b85" in window.styleSheet()
+
+    window.close()
+    application.processEvents()
 
 
 class FakeGuiRepository:

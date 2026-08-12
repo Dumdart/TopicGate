@@ -146,3 +146,6 @@ class SubscriptionSettingsPane(WorkspacePane):
         )
         combo.addItems(items)
         return combo
+
+
+SubscriptionEditor = SubscriptionSettingsPane
