@@ -1,110 +1,117 @@
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.database_context import DatabaseContext
-from sqlalchemy import select
-
-from topicgate.infrastructure.database.mappers.subscription_mapper import (
-    SubscriptionMapper,
-)
-from topicgate.infrastructure.database.models.subscription_row import (
-    SubscriptionRow,
+from topicgate.infrastructure.database.mappers.subscription_mapper import SubscriptionMapper
+from topicgate.infrastructure.database.models.observer_workspace_row import (
+    ObserverWorkspaceRow,
 )
 
 
 class SubscriptionRepository:
-    """Persists MQTT subscriptions using their topic filter as the unique key."""
+    """Persist subscriptions within an observer workspace boundary."""
 
-    def __init__(
-        self,
-        db: DatabaseContext,
-        subscriptions: list[Subscription] | None = None,
-    ) -> None:
+    def __init__(self, db: DatabaseContext) -> None:
         self._db = db
-        self.is_updated = False
-        for subscription in subscriptions or []:
-            if self.get_subscription_by_topic(subscription.topic_filter) is None:
-                self.create_subscription(subscription)
 
-    def get_subscription_by_topic(self, topic_filter: str) -> Subscription | None:
+    def list_for_workspace(self, workspace_id: UUID) -> tuple[Subscription, ...]:
         with self._db.session() as session:
-            row = session.scalar(
-                select(SubscriptionRow).where(
-                    SubscriptionRow.topic_filter == topic_filter
+            workspace = self._workspace(session, workspace_id)
+            return tuple(
+                SubscriptionMapper.to_subscription(row)
+                for row in workspace.subscriptions
+            )
+
+    def add(self, workspace_id: UUID, subscription: Subscription) -> Subscription:
+        with self._db.session() as session:
+            workspace = self._workspace(session, workspace_id)
+            if self._find(workspace, subscription.topic_filter) is not None:
+                raise ValueError(
+                    f"A subscription for {subscription.topic_filter!r} already exists."
                 )
+            workspace.subscriptions.append(
+                SubscriptionMapper.to_subscription_row(subscription)
             )
-            return SubscriptionMapper.to_subscription(row) if row else None
-
-    def get_subscription_by_id(self, subscription_id: int) -> Subscription | None:
-        with self._db.session() as session:
-            row = session.scalar(
-                select(SubscriptionRow).where(SubscriptionRow.id == subscription_id)
-            )
-            return SubscriptionMapper.to_subscription(row) if row else None
-
-    def get_all_subscriptions(self) -> list[Subscription]:
-        with self._db.session() as session:
-            rows = session.scalars(
-                select(SubscriptionRow).order_by(SubscriptionRow.id)
-            ).all()
-            return [SubscriptionMapper.to_subscription(row) for row in rows]
-
-    def create_subscription(self, subscription: Subscription) -> Subscription:
-        if self.get_subscription_by_topic(subscription.topic_filter) is not None:
-            raise ValueError(
-                f"A subscription for {subscription.topic_filter!r} already exists."
-            )
-
-        with self._db.session() as session:
-            session.add(SubscriptionMapper.to_subscription_row(subscription))
             session.commit()
-            self.is_updated = True
-        return subscription
+            return subscription
 
-    def update_subscription(
+    def update(
         self,
-        topic_filter: str,
+        workspace_id: UUID,
+        original_filter: str,
         subscription: Subscription,
     ) -> Subscription:
         with self._db.session() as session:
-            row = session.scalar(
-                select(SubscriptionRow).where(
-                    SubscriptionRow.topic_filter == topic_filter
-                )
-            )
+            workspace = self._workspace(session, workspace_id)
+            row = self._find(workspace, original_filter)
             if row is None:
-                raise KeyError(f"Unknown subscription {topic_filter!r}.")
-
-            if subscription.topic_filter != topic_filter:
-                existing = session.scalar(
-                    select(SubscriptionRow).where(
-                        SubscriptionRow.topic_filter == subscription.topic_filter
-                    )
+                raise KeyError(f"Unknown subscription {original_filter!r}.")
+            duplicate = self._find(workspace, subscription.topic_filter)
+            if duplicate is not None and duplicate is not row:
+                raise ValueError(
+                    f"A subscription for {subscription.topic_filter!r} already exists."
                 )
-                if existing is not None:
-                    raise ValueError(
-                        f"A subscription for {subscription.topic_filter!r} already exists."
-                    )
-
             row.topic_filter = subscription.topic_filter
             row.qos = subscription.qos
             row.retain_as_published = subscription.retain_as_published
             row.retain_handling = subscription.retain_handling
             session.commit()
-            self.is_updated = True
-        return subscription
+            return subscription
 
-    def delete_subscription(self, topic_filter: str) -> Subscription:
+    def remove(self, workspace_id: UUID, topic_filter: str) -> Subscription:
         with self._db.session() as session:
-            row = session.scalar(
-                select(SubscriptionRow).where(
-                    SubscriptionRow.topic_filter == topic_filter
-                )
-            )
+            workspace = self._workspace(session, workspace_id)
+            row = self._find(workspace, topic_filter)
             if row is None:
                 raise KeyError(f"Unknown subscription {topic_filter!r}.")
-
             subscription = SubscriptionMapper.to_subscription(row)
+            workspace.subscriptions.remove(row)
             session.delete(row)
             session.commit()
-            self.is_updated = True
-        return subscription
+            return subscription
+
+    def replace_all(
+        self,
+        workspace_id: UUID,
+        subscriptions: tuple[Subscription, ...],
+    ) -> None:
+        filters = [item.topic_filter for item in subscriptions]
+        if len(filters) != len(set(filters)):
+            raise ValueError("Subscription topic filters must be unique per workspace.")
+        with self._db.session() as session:
+            workspace = self._workspace(session, workspace_id)
+            previous_rows = list(workspace.subscriptions)
+            workspace.subscriptions = []
+            session.flush()
+            for row in previous_rows:
+                session.delete(row)
+            workspace.subscriptions = [
+                SubscriptionMapper.to_subscription_row(item)
+                for item in subscriptions
+            ]
+            session.commit()
+
+    @staticmethod
+    def _workspace(session, workspace_id: UUID) -> ObserverWorkspaceRow:
+        workspace = session.scalar(
+            select(ObserverWorkspaceRow)
+            .options(selectinload(ObserverWorkspaceRow.subscriptions))
+            .where(ObserverWorkspaceRow.id == workspace_id)
+        )
+        if workspace is None:
+            raise KeyError(f"Unknown observer workspace: {workspace_id}")
+        return workspace
+
+    @staticmethod
+    def _find(workspace: ObserverWorkspaceRow, topic_filter: str):
+        return next(
+            (
+                row
+                for row in workspace.subscriptions
+                if row.topic_filter == topic_filter
+            ),
+            None,
+        )

@@ -25,5 +25,16 @@ class DatabaseContext:
         with self._sessions() as session:
             yield session
 
+    @contextmanager
+    def transaction(self) -> Iterator[Session]:
+        """Share one commit or rollback across cooperating repositories."""
+        with self._sessions() as session:
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
     def dispose(self) -> None:
         self._engine.dispose()

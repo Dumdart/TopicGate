@@ -4,7 +4,6 @@ from uuid import UUID
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel
-from topicgate.core.models.observer_workspace import ObserverWorkspace
 
 
 class BrokerProfileStore(Protocol):
@@ -20,17 +19,8 @@ class BrokerProfileStore(Protocol):
 
     def delete_profile(self, profile_id: UUID, /) -> BrokerProfile: ...
 
-    def activate_profile(
-        self,
-        profile_id: UUID,
-        mqtt: MqttConfig | None = None,
-        /,
-    ) -> None: ...
+    def select_active_profile(self, profile_id: UUID, /) -> None: ...
 
-    def update_observer_workspace(
-        self,
-        workspace: ObserverWorkspace,
-        /,
-    ) -> None: ...
+    def replace_subscriptions(self, workspace_id: UUID, subscriptions, /) -> None: ...
 
     def update_observer_model(self, model: ObserverModel, /) -> None: ...

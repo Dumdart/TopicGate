@@ -170,7 +170,7 @@ class TopicGateRuntime(ServiceItem):
         self._brokers.update_profile(profile)
         if broker_id != previous_broker_id:
             self._brokers.update_observer_model(previous_repo.get())
-        self._brokers.activate_profile(broker_id, config)
+        self._brokers.select_active_profile(broker_id)
         if broker_id != previous_broker_id:
             self._active_broker_id = broker_id
         return self.active_broker
@@ -220,9 +220,11 @@ class TopicGateRuntime(ServiceItem):
         await self.active_repo.publish(topic, payload)
 
     def _persist_active_subscriptions(self) -> None:
-        workspace = self._get_broker_profile().workspace
-        workspace.subscriptions = tuple(self.active_repo.subscriptions)
-        self._brokers.update_observer_workspace(workspace)
+        workspace_id = self._get_broker_profile().workspace_id
+        self._brokers.replace_subscriptions(
+            workspace_id,
+            tuple(self.active_repo.subscriptions),
+        )
 
     def _require_active_broker(self, broker_id: UUID) -> None:
         if broker_id != self.active_broker.id:
