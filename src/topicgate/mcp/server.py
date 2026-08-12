@@ -1,6 +1,7 @@
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 
 from fastmcp import FastMCP
 
@@ -14,6 +15,8 @@ from topicgate.mcp.api.publish_api import PublishAPI
 from topicgate.mcp.api.subscription_api import SubscriptionAPI
 from topicgate.mcp.api.topic_api import TopicAPI
 from topicgate.mcp.middleware import ErrorHandlingMiddleware, LoggingMiddleware
+
+logger = logging.getLogger(__name__)
 
 class Server:
     def __init__(self):
@@ -47,11 +50,23 @@ class Server:
 
     @asynccontextmanager
     async def _lifespan(self, _server: FastMCP) -> AsyncIterator[None]:
+        startup_failed = False
         try:
-            await self.services.start_services()
+            try:
+                await self.services.start_services()
+            except ConnectionError as error:
+                startup_failed = True
+                logger.warning(
+                    "Initial MQTT connection failed; MCP started disconnected: %s",
+                    error,
+                )
             yield
         finally:
-            await self.services.stop_services()
+            try:
+                await self.services.stop_services()
+            finally:
+                if startup_failed:
+                    await self.dependencies.runtime.stop()
 
 def run() -> int:
     server = Server()

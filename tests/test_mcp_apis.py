@@ -10,12 +10,12 @@ from fastmcp import Client, FastMCP
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.observer_model import TopicState
 from topicgate.core.models.subscription import Subscription
-from topicgate.mcp.connection_api import ConnectionAPI
-from topicgate.mcp.mcp_api import McpApiContainer
-from topicgate.mcp.publish_api import PublishAPI
+from topicgate.mcp.api.connection_api import ConnectionAPI
+from topicgate.mcp.api.mcp_api import McpApiContainer
+from topicgate.mcp.api.publish_api import PublishAPI
 from topicgate.mcp.server import Server
-from topicgate.mcp.subscription_api import SubscriptionAPI
-from topicgate.mcp.topic_api import TopicAPI
+from topicgate.mcp.api.subscription_api import SubscriptionAPI
+from topicgate.mcp.api.topic_api import TopicAPI
 
 
 def mcp_runtime() -> MagicMock:
