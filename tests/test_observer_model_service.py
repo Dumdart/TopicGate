@@ -140,7 +140,7 @@ def test_deep_legacy_tree_copy_and_traversal_are_iterative() -> None:
 def test_observer_tree_rejects_nodes_beyond_budget_before_mutation() -> None:
     model = ObserverModel(root_stats=[])
     with patch(
-        "topicgate.services.observer_model_service.MAX_OBSERVER_NODES", 3
+        "topicgate.processors.observer_model_processor.MAX_OBSERVER_NODES", 3
     ):
         ObserverModelProcessor.add_topics(model, ["a/b/c"])
         try:

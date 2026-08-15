@@ -24,35 +24,35 @@ class AppDependencies:
         data_dir: Path | None = None,
         credential_store: CredentialStore | None = None,
     ) -> None:
+
         database_path = prepare_database_path(data_dir)
         self._db_context = DatabaseContext(sqlite_url(database_path))
         self.credential_store = (
             OSCredentialStore() if credential_store is None else credential_store
         )
+
         self.broker_runtime_state = BrokerRuntimeState()
         self.broker_profiles = BrokerProfileService(
             self._db_context,
             credential_store=self.credential_store,
             runtime_state=self.broker_runtime_state,
         )
-        self.broker_repository = self.broker_profiles.brokers
-        self.broker_config_repository = self.broker_profiles.configs
-        self.subscription_repository = self.broker_profiles.subscriptions
         profile = self.broker_profiles.get_profile()
-        self.observer_model_repositories = self.broker_runtime_state.repositories
-        self.observer_model_repositories.update(
+
+        self.broker_runtime_state.repositories.update(
             {
                 item.id: self._create_observer_repository(item)
                 for item in self.broker_profiles.get_all_profiles()
             }
         )
-        self.observer_model_repository = self.observer_model_repositories[profile.id]
+
         self.runtime = TopicGateRuntime(
             self.broker_profiles,
-            self.observer_model_repositories,
+             self.broker_runtime_state.repositories,
             profile.id,
             self._create_observer_repository,
         )
+
         self.service_items: tuple[ServiceItem, ...] = (
             self.runtime,
         )

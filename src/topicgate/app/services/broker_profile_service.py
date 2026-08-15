@@ -16,6 +16,7 @@ from topicgate.infrastructure.repository.broker_repository import BrokerReposito
 from topicgate.infrastructure.repository.subscription_repository import (
     SubscriptionRepository,
 )
+from topicgate.infrastructure.repository.topic_message_repository import TopicMessageRepository
 from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
@@ -43,6 +44,7 @@ class BrokerProfileService:
         self.brokers = BrokerRepository(self._db)
         self.configs = BrokerConfigRepository(self._db)
         self.subscriptions = SubscriptionRepository(self._db)
+        self._topic_messages = TopicMessageRepository(self._db)
         self._settings_id = supplied_settings.id if supplied_settings else None
 
         identities = self.brokers.list_profiles()
