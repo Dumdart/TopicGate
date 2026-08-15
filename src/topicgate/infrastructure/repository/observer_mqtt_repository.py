@@ -18,7 +18,7 @@ from topicgate.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
 from topicgate.processors.subscription_manager import SubscriptionManager
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class ObserverMqttRepository:
@@ -49,7 +49,7 @@ class ObserverMqttRepository:
         self._subscription_manager = SubscriptionManager(
             self._mqtt_gate, self.handle_message
         )
-        ObserverModelService.rebuild(
+        ObserverModelProcessor.rebuild(
             self._state,
             (
                 subscription.topic_filter
@@ -140,7 +140,7 @@ class ObserverMqttRepository:
                 self._state = model
 
             try:
-                ObserverModelService.rebuild(
+                ObserverModelProcessor.rebuild(
                     self._state,
                     (
                         subscription.topic_filter
@@ -162,7 +162,7 @@ class ObserverMqttRepository:
                 raise
 
     def get(self) -> ObserverModel:
-        return ObserverModelService.deep_copy(self._state)
+        return ObserverModelProcessor.deep_copy(self._state)
 
     def get_value(self, topic: str) -> bytes | None:
         state = self.get_state(topic)
@@ -172,7 +172,7 @@ class ObserverMqttRepository:
         return self._state.topic_states.get(topic)
 
     def get_all_topics(self) -> tuple[str, ...]:
-        return tuple(ObserverModelService.get_all_topics(self._state))
+        return tuple(ObserverModelProcessor.get_all_topics(self._state))
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
         if not self._message_processor.process(self._state, msg):
@@ -200,7 +200,7 @@ class ObserverMqttRepository:
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.add(subscription)
-            ObserverModelService.rebuild(
+            ObserverModelProcessor.rebuild(
                 self._state,
                 (
                     item.topic_filter
@@ -276,8 +276,8 @@ class ObserverMqttRepository:
                 mqtt_filter_matches(subscription.topic_filter, topic)
                 for subscription in subscriptions
             ):
-                ObserverModelService.remove_topic(self._state, topic)
-        ObserverModelService.rebuild(
+                ObserverModelProcessor.remove_topic(self._state, topic)
+        ObserverModelProcessor.rebuild(
             self._state,
             (subscription.topic_filter for subscription in subscriptions),
         )

@@ -9,7 +9,7 @@ from topicgate.core.observer_limits import (
     MAX_RETAINED_PAYLOAD_BYTES,
     ObserverModelCapacityError,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
@@ -36,7 +36,7 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
 
         while True:
             try:
-                node = ObserverModelService.find_or_create_node(
+                node = ObserverModelProcessor.find_or_create_node(
                     state, message.topic
                 )
                 break
@@ -73,4 +73,4 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
         oldest = min(candidates, key=lambda item: item.recieved_at, default=None)
         if oldest is None:
             return None
-        return ObserverModelService.remove_topic(state, oldest.topic)
+        return ObserverModelProcessor.remove_topic(state, oldest.topic)

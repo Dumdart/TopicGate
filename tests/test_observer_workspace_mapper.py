@@ -6,7 +6,7 @@ from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.mappers.observer_workspace_mapper import (
     ObserverWorkspaceMapper,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 def test_workspace_mapper_reconstructs_the_tree_from_subscriptions() -> None:
@@ -27,7 +27,7 @@ def test_workspace_mapper_reconstructs_the_tree_from_subscriptions() -> None:
     assert mapped.id == workspace.id
     assert mapped.profile_id == profile_id
     assert mapped.subscriptions == workspace.subscriptions
-    assert ObserverModelService.get_all_topics(mapped.model) == [
+    assert ObserverModelProcessor.get_all_topics(mapped.model) == [
         "SmartHome/+/status",
         "bridge/#",
     ]

@@ -5,8 +5,8 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.observer_model import TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.database_context import DatabaseContext
-from topicgate.app.broker_profile_service import BrokerProfileService
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.app.services.broker_profile_service import BrokerProfileService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
@@ -50,7 +50,7 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
         id=persisted.config.id,
     )
     assert persisted.workspace.subscriptions == profile.workspace.subscriptions
-    assert ObserverModelService.get_all_topics(persisted.workspace.model) == [
+    assert ObserverModelProcessor.get_all_topics(persisted.workspace.model) == [
         "home/+/status",
         "home/#",
     ]

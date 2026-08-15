@@ -22,7 +22,7 @@ from topicgate.presentation.topic_presentation import (
     matching_subscription,
     topic_detail,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class MainViewModel(QObject):
@@ -134,14 +134,14 @@ class MainViewModel(QObject):
     def topic_paths(self) -> list[str]:
         subscriptions = self.subscriptions
         model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics = set(ObserverModelProcessor.get_all_topics(model))
         observed_topics.update(model.topic_states)
         return list(collect_visible_topic_paths(subscriptions, observed_topics))
 
     @property
     def topic_tree(self) -> tuple[TopicTreeNode, ...]:
         model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics = set(ObserverModelProcessor.get_all_topics(model))
         observed_topics.update(model.topic_states)
         return build_topic_tree(
             self.topic_paths,

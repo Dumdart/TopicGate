@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from uuid import UUID
 
-from topicgate.app.service_item import ServiceItem
+from topicgate.app.services.service_item import ServiceItem
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.interfaces.broker_profile_store import BrokerProfileStore
 from topicgate.core.interfaces.observer_repository import ObserverRepository

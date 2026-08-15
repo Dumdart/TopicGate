@@ -1,8 +1,8 @@
 from pathlib import Path
 from uuid import UUID
 
-from topicgate.app.service_item import ServiceItem
-from topicgate.app.broker_profile_service import BrokerProfileService
+from topicgate.app.services.service_item import ServiceItem
+from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.interfaces.observer_repository import ObserverRepository

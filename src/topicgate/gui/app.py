@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
 from topicgate.app.app_dependencies import AppDependencies
-from topicgate.app.service_container import ServiceContainer
+from topicgate.app.services.service_container import ServiceContainer
 from topicgate.gui.main_window import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.theme import apply_light_theme

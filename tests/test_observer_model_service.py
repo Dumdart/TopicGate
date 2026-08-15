@@ -6,7 +6,7 @@ from topicgate.core.models.observer_model import (
     TopicNode,
     TopicState,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 TOPIC_PATHS = [
@@ -21,7 +21,7 @@ TOPIC_PATHS = [
 
 
 def build_model() -> ObserverModel:
-    return ObserverModelService.add_topics(
+    return ObserverModelProcessor.add_topics(
         ObserverModel(root_stats=[]),
         TOPIC_PATHS,
     )
@@ -30,13 +30,13 @@ def build_model() -> ObserverModel:
 def test_get_all_topics_returns_configured_leaf_topic_paths() -> None:
     model = build_model()
 
-    assert ObserverModelService.get_all_topics(model) == TOPIC_PATHS
+    assert ObserverModelProcessor.get_all_topics(model) == TOPIC_PATHS
 
 
 def test_get_all_nodes_returns_branches_and_leaf_nodes() -> None:
     model = build_model()
 
-    nodes = ObserverModelService.get_all_nodes(model)
+    nodes = ObserverModelProcessor.get_all_nodes(model)
 
     assert [node.segment for node in nodes[:4]] == [
         "SmartHome",
@@ -57,19 +57,19 @@ def test_get_all_states_and_find_node_scan_the_same_tree() -> None:
         retain=True,
         recieved_at=datetime.now(timezone.utc),
     )
-    status_node = ObserverModelService.find_node(model, state.topic)
+    status_node = ObserverModelProcessor.find_node(model, state.topic)
 
     assert status_node is not None
     status_node.state = state
 
-    assert ObserverModelService.get_all_states(model) == [state]
-    assert ObserverModelService.find_node(model, "SmartHome/missing") is None
+    assert ObserverModelProcessor.get_all_states(model) == [state]
+    assert ObserverModelProcessor.find_node(model, "SmartHome/missing") is None
 
 
 def test_deep_copy_returns_an_independent_observer_model() -> None:
     original = build_model()
 
-    copied = ObserverModelService.deep_copy(original)
+    copied = ObserverModelProcessor.deep_copy(original)
     copied.root_stats[0].children["Huehnerstall"].children["door"].children[
         "status"
     ].segment = "door-status"
@@ -87,7 +87,7 @@ def test_deep_copy_returns_an_independent_observer_model() -> None:
 def test_add_topics_builds_shared_observer_tree_paths() -> None:
     model = ObserverModel(root_stats=[])
 
-    result = ObserverModelService.add_topics(
+    result = ObserverModelProcessor.add_topics(
         model,
         [
             "SmartHome/kitchen/status",
@@ -97,7 +97,7 @@ def test_add_topics_builds_shared_observer_tree_paths() -> None:
     )
 
     assert result is model
-    assert ObserverModelService.get_all_topics(model) == [
+    assert ObserverModelProcessor.get_all_topics(model) == [
         "SmartHome/kitchen/status",
         "SmartHome/kitchen/temperature",
         "bridge/#",
@@ -113,10 +113,10 @@ def test_add_topics_builds_shared_observer_tree_paths() -> None:
 def test_add_topics_does_not_duplicate_existing_nodes() -> None:
     model = ObserverModel(root_stats=[])
 
-    ObserverModelService.add_topics(model, ["home/status", "home/status"])
+    ObserverModelProcessor.add_topics(model, ["home/status", "home/status"])
 
-    assert ObserverModelService.get_all_topics(model) == ["home/status"]
-    assert len(ObserverModelService.get_all_nodes(model)) == 2
+    assert ObserverModelProcessor.get_all_topics(model) == ["home/status"]
+    assert len(ObserverModelProcessor.get_all_nodes(model)) == 2
 
 
 def test_deep_legacy_tree_copy_and_traversal_are_iterative() -> None:
@@ -129,8 +129,8 @@ def test_deep_legacy_tree_copy_and_traversal_are_iterative() -> None:
         node = child
     model = ObserverModel(root_stats=[root])
 
-    copied = ObserverModelService.deep_copy(model)
-    copied_nodes = ObserverModelService.get_all_nodes(copied)
+    copied = ObserverModelProcessor.deep_copy(model)
+    copied_nodes = ObserverModelProcessor.get_all_nodes(copied)
 
     assert len(copied_nodes) == depth
     assert copied_nodes[-1].segment == str(depth - 1)
@@ -142,12 +142,12 @@ def test_observer_tree_rejects_nodes_beyond_budget_before_mutation() -> None:
     with patch(
         "topicgate.services.observer_model_service.MAX_OBSERVER_NODES", 3
     ):
-        ObserverModelService.add_topics(model, ["a/b/c"])
+        ObserverModelProcessor.add_topics(model, ["a/b/c"])
         try:
-            ObserverModelService.find_or_create_node(model, "a/b/c/d")
+            ObserverModelProcessor.find_or_create_node(model, "a/b/c/d")
         except ValueError:
             pass
         else:
             raise AssertionError("Expected the observer node budget to apply")
 
-    assert ObserverModelService.get_all_topics(model) == ["a/b/c"]
+    assert ObserverModelProcessor.get_all_topics(model) == ["a/b/c"]

@@ -16,7 +16,7 @@ from topicgate.infrastructure.repository.broker_repository import BrokerReposito
 from topicgate.infrastructure.repository.subscription_repository import (
     SubscriptionRepository,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class BrokerProfileService:
@@ -76,7 +76,7 @@ class BrokerProfileService:
         subscriptions = self.subscriptions.list_for_workspace(identity.workspace_id)
         model = self._runtime_state.get_model(identity.id)
         if model is None:
-            model = ObserverModelService.add_topics(
+            model = ObserverModelProcessor.add_topics(
                 ObserverModel(root_stats=[]),
                 (item.topic_filter for item in subscriptions),
             )

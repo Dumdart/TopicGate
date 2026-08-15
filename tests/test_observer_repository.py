@@ -10,7 +10,7 @@ from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 def build_repository(
@@ -145,7 +145,7 @@ async def test_removing_subscription_clears_uncovered_retained_state() -> None:
 
         assert repository.get_state("devices/untrusted") is None
         assert repository.get_value("sensors/temperature") == b"21"
-        assert ObserverModelService.find_node(
+        assert ObserverModelProcessor.find_node(
             repository.get(), remaining.topic_filter
         ) is not None
 

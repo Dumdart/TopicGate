@@ -1,5 +1,5 @@
 from topicgate.app.app_dependencies import AppDependencies
-from topicgate.app.service_item import ServiceItem
+from topicgate.app.services.service_item import ServiceItem
 
 
 class ServiceContainer:
