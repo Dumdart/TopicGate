@@ -39,15 +39,58 @@ def test_topic_message_repository_maps_dtos_and_supports_crud(tmp_path) -> None:
         with pytest.raises(KeyError, match="Unknown topic message"):
             repository.get_message(first.observation_id)
     finally:
+        repository.close()
         database.dispose()
 
 
 def test_get_latest_message_raises_when_repository_is_empty(tmp_path) -> None:
     database = DatabaseContext(f"sqlite:///{tmp_path / 'empty.db'}")
+    repository = TopicMessageRepository(database)
     try:
         with pytest.raises(KeyError, match="latest message"):
-            TopicMessageRepository(database).get_latest_message()
+            repository.get_latest_message()
     finally:
+        repository.close()
+        database.dispose()
+
+
+def test_queued_writes_are_flushed_in_order(tmp_path) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'queued.db'}")
+    repository = TopicMessageRepository(database)
+    message = _message("home/temperature", datetime.now(timezone.utc))
+    updated = replace(message, payload=b"22.0", payload_size=4, message_count=2)
+
+    try:
+        assert repository.create_message(message) == message
+        assert repository.update_message(updated) == updated
+
+        repository.flush()
+
+        assert repository.get_message(message.observation_id) == updated
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_get_all_latest_messages_returns_latest_message_per_topic(tmp_path) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'latest.db'}")
+    repository = TopicMessageRepository(database)
+    received_at = datetime.now(timezone.utc)
+    older = _message("home/temperature", received_at)
+    newer = _message("home/temperature", received_at + timedelta(seconds=1))
+    humidity = _message("home/humidity", received_at)
+
+    try:
+        repository.create_message(older)
+        repository.create_message(newer)
+        repository.create_message(humidity)
+
+        assert repository.get_all_latest_messages() == [
+            (humidity.topic, humidity),
+            (newer.topic, newer),
+        ]
+    finally:
+        repository.close()
         database.dispose()
 
 
