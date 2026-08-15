@@ -31,7 +31,6 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
     ):
         dependencies = AppDependencies(
             data_dir=tmp_path,
-            legacy_database=tmp_path / "missing.db",
             credential_store=credential_store,
         )
 

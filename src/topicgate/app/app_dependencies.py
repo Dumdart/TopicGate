@@ -22,10 +22,9 @@ class AppDependencies:
     def __init__(
         self,
         data_dir: Path | None = None,
-        legacy_database: Path | None = None,
         credential_store: CredentialStore | None = None,
     ) -> None:
-        database_path = prepare_database_path(data_dir, legacy_database)
+        database_path = prepare_database_path(data_dir)
         self._db_context = DatabaseContext(sqlite_url(database_path))
         self.credential_store = (
             OSCredentialStore() if credential_store is None else credential_store
