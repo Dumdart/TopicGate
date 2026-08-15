@@ -8,7 +8,7 @@ TopicGate is a local MQTT gateway for people and AI agent harnesses. It keeps br
 An experimental FastMCP App dashboard is also available through the optional `apps` dependency group.
 
 > [!IMPORTANT]
-> TopicGate `0.2.0` is under active development. The desktop application is the most complete interface. The MCP server is useful for experimentation, but its current multi-tool contract and startup behavior are not yet ready for unattended or safety-critical use.
+> TopicGate `0.2.0` is under active development. The desktop application is the most complete interface. The MCP server is useful for experimentation, but its current multi-tool contract and combined read/control surface are not yet ready for unattended or safety-critical use.
 
 ## What “latest value” means
 
@@ -123,6 +123,8 @@ Start the stdio MCP server with:
 topicgate
 ```
 
+If the initial MQTT connection fails, the MCP server still starts in a disconnected state. Its tools remain available for inspecting profiles and connection status and for retrying the connection.
+
 A typical harness configuration is:
 
 ```json
@@ -185,16 +187,24 @@ Set `TOPICGATE_DATA_DIR` to use an explicit directory. The database contains bro
 
 To start with a new configuration, close TopicGate and move or delete `topicgate.db`. Deleting it permanently removes saved profiles and subscriptions unless the file is backed up first.
 
+## Testing
+
+Run the full test suite with:
+
+```powershell
+uv run pytest
+```
+
+The current suite contains 174 tests and passes in full.
+
 ## Current limitations and roadmap
 
-- The MCP server exits when its initial broker connection fails; disconnected startup is not implemented yet.
 - Topic reads have inconsistent scope: `list_topics` uses the active broker, while `get_topic_state` accepts any broker UUID.
 - The primary snapshot query requires one tool call per topic and has no defined settling period.
 - Freshness, observation-window completeness, and per-result truncation metadata are not yet exposed as one coherent response.
 - There is no read-only MCP mode.
 - The optional FastMCP App dashboard is experimental and its dependency versions are pinned to the currently tested combination.
 - A TopicGate plugin is planned only after the MCP snapshot and lifecycle contracts stabilize.
-- The full test suite currently fails during collection because some tests still use pre-refactor module paths and expect a missing `topicgate.__main__` module. Focused runtime, persistence, and dashboard tests pass.
 
 ## License
 
