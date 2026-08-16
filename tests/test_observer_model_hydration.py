@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.mqtt_observation import ObservationSource
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.repository.topic_message_repository import (
@@ -46,6 +47,14 @@ def test_profile_hydrates_only_its_persisted_topic_states(
         assert first_model.topic_states[first_message.topic].message_count == 7
         assert first_model.topic_states[first_message.topic].recieved_at == (
             first_message.received_at
+        )
+        assert (
+            first_model.topic_states[first_message.topic].source
+            is ObservationSource.STORED
+        )
+        assert (
+            first_model.topic_states[first_message.topic].observation_id
+            == first_message.observation_id
         )
         assert second_model.topic_states[second_message.topic].payload == b"18.0"
         assert second_model.topic_states[second_message.topic].message_count == 3

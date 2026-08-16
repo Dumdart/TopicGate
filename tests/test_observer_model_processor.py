@@ -1,4 +1,5 @@
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.mqtt_observation import ObservationSource
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.mqtt_topics import (
     MAX_MQTT_TOPIC_BYTES,
@@ -40,6 +41,7 @@ def test_process_stores_message_state_on_the_matching_topic_node() -> None:
     assert node.state.qos == 1
     assert node.state.retain is True
     assert node.state.recieved_at.tzinfo is not None
+    assert node.state.source is ObservationSource.LIVE
 
 
 def test_process_stores_messages_for_discovered_topics() -> None:

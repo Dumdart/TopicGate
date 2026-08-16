@@ -4,24 +4,33 @@ from enum import StrEnum
 from uuid import UUID
 
 
-from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.topic_message import TopicMessage
-
 class ObservationSource(StrEnum):
+    """How an observation entered the current application process."""
+
     STORED = "stored"
     LIVE = "live"
 
 
-@dataclass(frozen=True)
+@dataclass
 class MqttObservation:
-    broker_id: UUID
+    """The latest MQTT value observed for one topic."""
+
+    name: str
     topic: str
     payload: bytes
     qos: int
     retain: bool
-    received_at: datetime
-    payload_size: int
-    message_count: int
-    observation_id: UUID
-    source: ObservationSource
-    connection_id: UUID | None
+    recieved_at: datetime
+    message_count: int = 1
+    payload_size: int | None = None
+    source: ObservationSource = ObservationSource.LIVE
+    observation_id: UUID | None = None
+    connection_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        self.payload_size = max(self.payload_size or 0, len(self.payload))
+
+    @property
+    def received_at(self) -> datetime:
+        """Return the receive time with its correctly spelled public name."""
+        return self.recieved_at

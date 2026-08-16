@@ -5,7 +5,8 @@ from typing import Any
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.core.observer_limits import TOPIC_TREE_REFRESH_INTERVAL_SECONDS
@@ -168,7 +169,7 @@ class ObserverMqttRepository:
         state = self.get_state(topic)
         return state.payload if state is not None else None
 
-    def get_state(self, topic: str) -> TopicState | None:
+    def get_state(self, topic: str) -> MqttObservation | None:
         return self._state.topic_states.get(topic)
 
     def get_all_topics(self) -> tuple[str, ...]:

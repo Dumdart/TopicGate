@@ -5,7 +5,7 @@ from fastmcp import FastMCP
 from fastmcp.tools import tool
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime
-from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.mcp.api.mcp_api import MCPApi
 from topicgate.mcp.models import TopicStateResult
 
@@ -34,7 +34,7 @@ class TopicAPI(MCPApi):
         return None if state is None else self._to_result(state)
 
     @staticmethod
-    def _to_result(state: TopicState) -> TopicStateResult:
+    def _to_result(state: MqttObservation) -> TopicStateResult:
         try:
             payload_text = state.payload.decode("utf-8")
         except UnicodeDecodeError:

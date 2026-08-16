@@ -9,7 +9,8 @@ from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 
 
@@ -70,7 +71,11 @@ class TopicGateRuntime(ServiceItem):
     def mqtt_config(self) -> MqttConfig:
         return self.active_broker.config
 
-    def get_topic_state(self, broker_id: UUID, topic: str) -> TopicState | None:
+    def get_topic_state(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> MqttObservation | None:
         return self._mqtt_repositories[broker_id].get_state(topic)
 
     def get_observer_model(self, broker_id: UUID) -> ObserverModel:

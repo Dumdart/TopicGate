@@ -8,7 +8,7 @@ from uuid import UUID
 from fastmcp import FastMCP
 
 from topicgate.app.topicgate_runtime import TopicGateRuntime
-from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.mcp.api.mcp_api import MCPApi
@@ -483,7 +483,7 @@ class DashboardAPI(MCPApi):
         }
 
     @staticmethod
-    def _topic_detail_from_state(state: TopicState) -> dict[str, Any]:
+    def _topic_detail_from_state(state: MqttObservation) -> dict[str, Any]:
         payload_base64 = b64encode(state.payload).decode("ascii")
         try:
             payload_text = state.payload.decode("utf-8")

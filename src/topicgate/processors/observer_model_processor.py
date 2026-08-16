@@ -9,17 +9,19 @@ from topicgate.core.observer_limits import (
 from topicgate.core.models.observer_model import (
     ObserverModel,
     TopicNode,
-    TopicState,
 )
+from topicgate.core.models.mqtt_observation import MqttObservation
 
 
 class ObserverModelProcessor:
     @staticmethod
     def deep_copy(model: ObserverModel) -> ObserverModel:
         """Return an independent snapshot of the observer model."""
-        state_copies: dict[int, TopicState] = {}
+        state_copies: dict[int, MqttObservation] = {}
 
-        def copy_state(state: TopicState | None) -> TopicState | None:
+        def copy_state(
+            state: MqttObservation | None,
+        ) -> MqttObservation | None:
             if state is None:
                 return None
             state_id = id(state)
@@ -74,7 +76,7 @@ class ObserverModelProcessor:
         return [node for _, node in ObserverModelProcessor._scan_nodes(model)]
 
     @staticmethod
-    def get_all_states(model: ObserverModel) -> list[TopicState]:
+    def get_all_states(model: ObserverModel) -> list[MqttObservation]:
         """Return the current state for every received topic."""
         states = dict(model.topic_states)
         for _, node in ObserverModelProcessor._scan_nodes(model):
@@ -133,7 +135,10 @@ class ObserverModelProcessor:
         return model
 
     @staticmethod
-    def remove_topic(model: ObserverModel, topic: str) -> TopicState | None:
+    def remove_topic(
+        model: ObserverModel,
+        topic: str,
+    ) -> MqttObservation | None:
         """Remove retained state and prune its unconfigured empty path."""
         state = model.topic_states.pop(topic, None)
         segments = topic.split("/")

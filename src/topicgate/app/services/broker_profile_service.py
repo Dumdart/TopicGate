@@ -6,7 +6,10 @@ from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel
-from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.mqtt_observation import (
+    MqttObservation,
+    ObservationSource,
+)
 from topicgate.core.interfaces.topic_message_store import TopicMessageStore
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
@@ -215,7 +218,7 @@ class BrokerProfileService:
             return model
         for message in self._topic_messages.get_latest_messages(broker_id):
             node = ObserverModelProcessor.find_or_create_node(model, message.topic)
-            state = TopicState(
+            state = MqttObservation(
                 name=node.segment,
                 topic=message.topic,
                 payload=message.payload,
@@ -224,6 +227,8 @@ class BrokerProfileService:
                 recieved_at=message.received_at,
                 payload_size=message.payload_size,
                 message_count=message.message_count,
+                source=ObservationSource.STORED,
+                observation_id=message.observation_id,
             )
             node.state = state
             model.topic_states[message.topic] = state

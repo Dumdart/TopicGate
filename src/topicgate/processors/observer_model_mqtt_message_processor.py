@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 from topicgate.core.interfaces.mqtt_message_processor import MqttMessageProcessor
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.mqtt_topics import validate_topic_name
 from topicgate.core.observer_limits import (
     MAX_OBSERVED_TOPICS,
@@ -44,7 +45,7 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
                 if not self._evict_oldest(state, message.topic):
                     return False
 
-        topic_state = TopicState(
+        topic_state = MqttObservation(
             name=node.segment,
             topic=message.topic,
             payload=message.payload,
@@ -64,7 +65,7 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
     def _evict_oldest(
         state: ObserverModel,
         excluded_topic: str,
-    ) -> TopicState | None:
+    ) -> MqttObservation | None:
         candidates = (
             topic_state
             for topic, topic_state in state.topic_states.items()

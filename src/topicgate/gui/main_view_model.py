@@ -10,7 +10,8 @@ from PySide6.QtCore import QObject, Signal
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.app.topicgate_runtime import TopicGateRuntime
@@ -45,7 +46,7 @@ class MainViewModel(QObject):
         super().__init__()
         self._runtime = runtime
         self._topic = topic
-        self._state: TopicState | None = None
+        self._state: MqttObservation | None = None
         self._message_task: asyncio.Task[None] | None = None
         self._connection_task: asyncio.Task[None] | None = None
         self._connection_status = self._status_text(
