@@ -94,6 +94,32 @@ def test_get_all_latest_messages_returns_latest_message_per_topic(tmp_path) -> N
         database.dispose()
 
 
+def test_get_latest_messages_is_scoped_to_broker(tmp_path) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'broker-latest.db'}")
+    repository = TopicMessageRepository(database)
+    received_at = datetime.now(timezone.utc)
+    first_broker = uuid4()
+    second_broker = uuid4()
+    first = replace(
+        _message("shared/topic", received_at),
+        broker_id=first_broker,
+    )
+    second = replace(
+        _message("shared/topic", received_at),
+        broker_id=second_broker,
+    )
+
+    try:
+        repository.update_message(first)
+        repository.update_message(second)
+
+        assert repository.get_latest_messages(first_broker) == (first,)
+        assert repository.get_latest_messages(second_broker) == (second,)
+    finally:
+        repository.close()
+        database.dispose()
+
+
 def _message(topic: str, received_at: datetime) -> TopicMessage:
     payload = b"21.5"
     return TopicMessage(

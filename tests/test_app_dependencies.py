@@ -27,6 +27,9 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
             "topicgate.app.app_dependencies.BrokerProfileService",
             return_value=broker_profiles,
         ) as repository_type,
+        patch(
+            "topicgate.app.app_dependencies.TopicMessageRepository"
+        ) as message_type,
         patch("topicgate.app.app_dependencies.ObserverMqttRepository"),
     ):
         dependencies = AppDependencies(
@@ -38,5 +41,10 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
         database,
         credential_store=credential_store,
         runtime_state=dependencies.broker_runtime_state,
+        topic_messages=dependencies.topic_messages,
     )
-    assert dependencies.service_items == (dependencies.runtime,)
+    message_type.assert_called_once_with(database)
+    assert dependencies.service_items == (
+        dependencies.persistence,
+        dependencies.runtime,
+    )

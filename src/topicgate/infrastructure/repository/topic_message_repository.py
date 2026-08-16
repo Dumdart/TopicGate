@@ -8,6 +8,7 @@ from sqlalchemy.orm import aliased
 
 from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.topic_message import TopicMessage
+from topicgate.core.interfaces.topic_message_store import TopicMessageStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.topic_message_mapper import (
     TopicMessageMapper,
@@ -15,7 +16,7 @@ from topicgate.infrastructure.database.mappers.topic_message_mapper import (
 from topicgate.infrastructure.database.models.mqtt_message_row import MqttMessageRow
 
 
-class TopicMessageRepository:
+class TopicMessageRepository(TopicMessageStore):
     """Persist the latest observed MQTT message for each broker topic."""
 
     def __init__(self, db: DatabaseContext) -> None:
@@ -81,6 +82,20 @@ class TopicMessageRepository:
                 (row.topic, TopicMessageMapper.to_dto(row))
                 for row in session.scalars(statement).all()
             ]
+
+    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+        """Return the current persisted topic states for one broker."""
+        self.flush()
+        statement = (
+            select(MqttMessageRow)
+            .where(MqttMessageRow.broker_id == broker_id)
+            .order_by(MqttMessageRow.topic)
+        )
+        with self._db.session() as session:
+            return tuple(
+                TopicMessageMapper.to_dto(row)
+                for row in session.scalars(statement).all()
+            )
 
     def search_message(
         self, message_filter: MessageFilter

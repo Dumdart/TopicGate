@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import UUID
 
 from topicgate.app.services.service_item import ServiceItem
+from topicgate.app.services.persistence_lifecycle import PersistenceLifecycle
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.topicgate_runtime import TopicGateRuntime
@@ -12,6 +13,9 @@ from topicgate.infrastructure.credentials.credential_store import CredentialStor
 from topicgate.infrastructure.credentials.os_credential_store import OSCredentialStore
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
+)
+from topicgate.infrastructure.repository.topic_message_repository import (
+    TopicMessageRepository,
 )
 from topicgate.paths import prepare_database_path, sqlite_url
 
@@ -32,10 +36,16 @@ class AppDependencies:
         )
 
         self.broker_runtime_state = BrokerRuntimeState()
+        self.topic_messages = TopicMessageRepository(self._db_context)
+        self.persistence = PersistenceLifecycle(
+            self.topic_messages,
+            self._db_context,
+        )
         self.broker_profiles = BrokerProfileService(
             self._db_context,
             credential_store=self.credential_store,
             runtime_state=self.broker_runtime_state,
+            topic_messages=self.topic_messages,
         )
         profile = self.broker_profiles.get_profile()
 
@@ -54,6 +64,7 @@ class AppDependencies:
         )
 
         self.service_items: tuple[ServiceItem, ...] = (
+            self.persistence,
             self.runtime,
         )
 
