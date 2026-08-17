@@ -1,6 +1,8 @@
 import tomllib
-from importlib.metadata import metadata, version
+from importlib.metadata import PackageNotFoundError, metadata, version
 from pathlib import Path
+
+import pytest
 
 FAST_MCP_APPS_VERSION = "3.4.7"
 PREFAB_UI_VERSION = "0.20.2"
@@ -21,8 +23,13 @@ def test_dashboard_dependency_pair_matches_project_pins() -> None:
 
 
 def test_installed_dashboard_pair_is_supported_by_fastmcp_apps() -> None:
+    try:
+        prefab_version = version("prefab-ui")
+    except PackageNotFoundError:
+        pytest.skip("dashboard dependency checks require the apps extra")
+
     assert version("fastmcp") == FAST_MCP_APPS_VERSION
-    assert version("prefab-ui") == PREFAB_UI_VERSION
+    assert prefab_version == PREFAB_UI_VERSION
 
     fastmcp_requirements = metadata("fastmcp").get_all("Requires-Dist") or []
     apps_requirements = [
