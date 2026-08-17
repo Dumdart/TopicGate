@@ -1,4 +1,6 @@
+import pytest
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.exc import IntegrityError
 
 from topicgate.infrastructure.database.base import Base
 from topicgate.infrastructure.database.database_context import DatabaseContext
@@ -13,11 +15,17 @@ def test_new_database_is_migrated_to_head(tmp_path) -> None:
 
     engine = create_engine(f"sqlite:///{database_path.as_posix()}")
     assert "mqtt_message" in inspect(engine).get_table_names()
+    assert "observation_retention_policy" in inspect(engine).get_table_names()
     with engine.connect() as connection:
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
+        policy = connection.exec_driver_sql(
+            "SELECT max_entries_per_broker, max_entries_total, max_age_seconds "
+            "FROM observation_retention_policy WHERE id = 1"
+        ).one()
     assert revision != BASELINE_REVISION
+    assert policy == (1_000, 10_000, None)
     database.dispose()
     engine.dispose()
 
@@ -26,10 +34,17 @@ def test_existing_unversioned_database_is_stamped_then_upgraded(tmp_path) -> Non
     database_path = tmp_path / "legacy.db"
     url = f"sqlite:///{database_path.as_posix()}"
     engine = create_engine(url)
-    mqtt_message = Base.metadata.tables["mqtt_message"]
+    post_baseline_tables = {
+        Base.metadata.tables["mqtt_message"],
+        Base.metadata.tables["observation_retention_policy"],
+    }
     Base.metadata.create_all(
         engine,
-        tables=[table for table in Base.metadata.sorted_tables if table is not mqtt_message],
+        tables=[
+            table
+            for table in Base.metadata.sorted_tables
+            if table not in post_baseline_tables
+        ],
     )
     engine.dispose()
 
@@ -37,6 +52,7 @@ def test_existing_unversioned_database_is_stamped_then_upgraded(tmp_path) -> Non
 
     engine = create_engine(url)
     assert "mqtt_message" in inspect(engine).get_table_names()
+    assert "observation_retention_policy" in inspect(engine).get_table_names()
     with engine.connect() as connection:
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
@@ -44,3 +60,27 @@ def test_existing_unversioned_database_is_stamped_then_upgraded(tmp_path) -> Non
     assert revision != BASELINE_REVISION
     database.dispose()
     engine.dispose()
+
+
+def test_retention_policy_database_constraints_reject_invalid_values(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "constraints.db"
+    database = DatabaseContext(f"sqlite:///{database_path.as_posix()}")
+
+    try:
+        with pytest.raises(IntegrityError):
+            with database.transaction() as session:
+                session.execute(
+                    Base.metadata.tables["observation_retention_policy"]
+                    .update()
+                    .where(
+                        Base.metadata.tables[
+                            "observation_retention_policy"
+                        ].c.id
+                        == 1
+                    )
+                    .values(max_entries_per_broker=0)
+                )
+    finally:
+        database.dispose()

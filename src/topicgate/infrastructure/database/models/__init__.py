@@ -7,6 +7,9 @@ from topicgate.infrastructure.database.models.mqtt_message_row import MqttMessag
 from topicgate.infrastructure.database.models.observer_workspace_row import (
     ObserverWorkspaceRow,
 )
+from topicgate.infrastructure.database.models.observation_retention_policy_row import (
+    ObservationRetentionPolicyRow,
+)
 from topicgate.infrastructure.database.models.subscription_row import (
     SubscriptionRow,
 )
@@ -17,5 +20,6 @@ __all__ = [
     "MqttConfigRow",
     "MqttMessageRow",
     "ObserverWorkspaceRow",
+    "ObservationRetentionPolicyRow",
     "SubscriptionRow",
 ]

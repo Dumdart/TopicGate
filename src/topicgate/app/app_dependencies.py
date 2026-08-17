@@ -17,6 +17,9 @@ from topicgate.infrastructure.repository.observer_mqtt_repository import (
 from topicgate.infrastructure.repository.topic_message_repository import (
     TopicMessageRepository,
 )
+from topicgate.infrastructure.repository.observation_retention_policy_repository import (
+    ObservationRetentionPolicyRepository,
+)
 from topicgate.paths import prepare_database_path, sqlite_url
 
 
@@ -37,6 +40,9 @@ class AppDependencies:
 
         self.broker_runtime_state = BrokerRuntimeState()
         self.topic_messages = TopicMessageRepository(self._db_context)
+        self.observation_retention_policy = ObservationRetentionPolicyRepository(
+            self._db_context
+        )
         self.persistence = PersistenceLifecycle(
             self.topic_messages,
             self._db_context,
