@@ -14,8 +14,16 @@ class TopicMetadataPane(QWidget):
         self.topic = self._label("topicPathLabel", "No topic selected")
         self.topic.setWordWrap(True)
         self.received = self._label("receivedAtLabel")
+        self.age = self._label("topicAgeLabel")
+        self.source = self._label("observationSourceLabel")
+        self.status = self._label("topicStateStatusLabel")
         self.encoding = self._label("payloadEncodingLabel")
         self.size = self._label("payloadSizeLabel")
+        self.original_size = self._label("originalPayloadSizeLabel")
+        self.available_size = self._label("availablePayloadSizeLabel")
+        self.rendered_size = self._label("renderedPayloadSizeLabel")
+        self.ingestion_truncation = self._label("ingestionTruncationLabel")
+        self.rendering_truncation = self._label("renderingTruncationLabel")
         self.qos = self._label("qosLabel")
         self.retained = self._label("retainedLabel")
         self.messages = self._label("messageCountLabel", "0")
@@ -23,8 +31,16 @@ class TopicMetadataPane(QWidget):
         for title, widget in (
             ("Topic path", self.topic),
             ("Last received", self.received),
+            ("Age", self.age),
+            ("Observation source", self.source),
+            ("State", self.status),
             ("Encoding", self.encoding),
             ("Payload size", self.size),
+            ("Original payload", self.original_size),
+            ("Available payload", self.available_size),
+            ("Rendered payload", self.rendered_size),
+            ("Ingestion truncation", self.ingestion_truncation),
+            ("Rendering truncation", self.rendering_truncation),
             ("QoS", self.qos),
             ("Retained", self.retained),
             ("Message count", self.messages),
@@ -35,8 +51,20 @@ class TopicMetadataPane(QWidget):
     def render(self, detail: TopicDetail) -> None:
         self.topic.setText(detail.topic or "No topic selected")
         self.received.setText(detail.received_at)
+        self.age.setText(detail.age_label)
+        self.source.setText(detail.source_label)
+        self.status.setText(detail.status_label)
         self.encoding.setText(detail.payload_encoding)
         self.size.setText(detail.payload_size_label)
+        self.original_size.setText(detail.original_payload_size_label)
+        self.available_size.setText(detail.available_payload_size_label)
+        self.rendered_size.setText(
+            f"{detail.rendered_payload_size} bytes"
+            if detail.has_value
+            else "-"
+        )
+        self.ingestion_truncation.setText(detail.ingestion_truncation_label)
+        self.rendering_truncation.setText(detail.rendering_truncation_label)
         self.qos.setText(detail.qos_label)
         self.retained.setText(detail.retain_label)
         self.messages.setText(str(detail.message_count))

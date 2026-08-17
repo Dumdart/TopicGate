@@ -20,10 +20,11 @@ class App:
         self._dependencies = AppDependencies()
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
-            runtime=self._dependencies.runtime
+            runtime=self._dependencies.runtime,
+            snapshot_service=self._dependencies.snapshot_service,
         )
         self._window = MainWindow(self._view_model)
-        
+
 
     async def run(self) -> int:
         stopped = asyncio.get_running_loop().create_future()

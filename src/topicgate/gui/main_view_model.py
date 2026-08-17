@@ -8,13 +8,18 @@ from uuid import UUID
 
 from PySide6.QtCore import QObject, Signal
 
+from topicgate.app.models.broker_snapshot import BrokerSnapshot
+from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
-from topicgate.core.models.mqtt_observation import MqttObservation
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.app.topicgate_runtime import TopicGateRuntime
+from topicgate.presentation.snapshot_presentation import (
+    BrokerSnapshotHealth,
+    SnapshotQuery,
+    snapshot_health,
+)
 from topicgate.presentation.topic_presentation import (
     TopicDetail,
     TopicTreeNode,
@@ -23,7 +28,6 @@ from topicgate.presentation.topic_presentation import (
     matching_subscription,
     topic_detail,
 )
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class MainViewModel(QObject):
@@ -42,11 +46,15 @@ class MainViewModel(QObject):
         self,
         runtime: TopicGateRuntime,
         topic: str = "",
+        *,
+        snapshot_service: BrokerSnapshotService | None = None,
     ) -> None:
         super().__init__()
         self._runtime = runtime
+        self._snapshot_service = snapshot_service or BrokerSnapshotService(runtime)
+        self._snapshot_query = SnapshotQuery()
         self._topic = topic
-        self._state: MqttObservation | None = None
+        self._snapshot = self._build_current_snapshot(self._snapshot_query)
         self._message_task: asyncio.Task[None] | None = None
         self._connection_task: asyncio.Task[None] | None = None
         self._connection_status = self._status_text(
@@ -54,6 +62,7 @@ class MainViewModel(QObject):
         )
         self._reported_dropped_messages = 0
         self._busy_operations: set[str] = set()
+        self._preserve_snapshot_during_observation = False
 
     @property
     def title(self) -> str:
@@ -78,10 +87,18 @@ class MainViewModel(QObject):
 
     @property
     def topic_detail(self) -> TopicDetail:
+        state = next(
+            (
+                item
+                for item in self._snapshot.topics
+                if item.topic == self._topic
+            ),
+            None,
+        )
         return topic_detail(
-            self._state,
+            state,
             self._topic,
-            self._runtime.dropped_message_count,
+            self._snapshot.dropped_message_count,
         )
 
     @property
@@ -94,7 +111,8 @@ class MainViewModel(QObject):
 
     @property
     def retained(self) -> str:
-        return "-" if self._state is None else str(self._state.retain)
+        retained = self.topic_detail.retained
+        return "-" if retained is None else str(retained)
 
     @property
     def message_count(self) -> str:
@@ -102,7 +120,19 @@ class MainViewModel(QObject):
 
     @property
     def dropped_message_count(self) -> str:
-        return str(self._runtime.dropped_message_count)
+        return str(self._snapshot.dropped_message_count)
+
+    @property
+    def snapshot_query(self) -> SnapshotQuery:
+        return self._snapshot_query
+
+    @property
+    def broker_snapshot(self) -> BrokerSnapshot:
+        return self._snapshot
+
+    @property
+    def snapshot_health(self) -> BrokerSnapshotHealth:
+        return snapshot_health(self._snapshot)
 
     @property
     def connection_status(self) -> str:
@@ -134,20 +164,17 @@ class MainViewModel(QObject):
     @property
     def topic_paths(self) -> list[str]:
         subscriptions = self.subscriptions
-        model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        observed_topics = set(ObserverModelProcessor.get_all_topics(model))
-        observed_topics.update(model.topic_states)
+        observed_topics = tuple(item.topic for item in self._snapshot.topics)
         return list(collect_visible_topic_paths(subscriptions, observed_topics))
 
     @property
     def topic_tree(self) -> tuple[TopicTreeNode, ...]:
-        model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        observed_topics = set(ObserverModelProcessor.get_all_topics(model))
-        observed_topics.update(model.topic_states)
+        observed_topics = tuple(item.topic for item in self._snapshot.topics)
         return build_topic_tree(
             self.topic_paths,
             self.subscriptions,
             observed_topics,
+            self._snapshot.topics,
         )
 
     @property
@@ -156,8 +183,7 @@ class MainViewModel(QObject):
 
     async def start(self) -> None:
         """Load the current value and listen for messages and connection changes."""
-        self.refresh()
-        self.topics_changed.emit()
+        self.refresh_snapshot()
         self.connection_changed.emit()
         if self._message_task is None:
             self._message_task = asyncio.create_task(self._observe_messages())
@@ -199,19 +225,35 @@ class MainViewModel(QObject):
         if topic == self._topic:
             return
         self._topic = topic
-        self.refresh()
+        self.state_changed.emit()
         self.subscriptions_changed.emit()
 
     def refresh(self) -> None:
-        self._state = (
-            self._runtime.get_topic_state(
-                self.active_broker_profile.id,
-                self._topic,
-            )
-            if self._topic
-            else None
-        )
+        """Backward-compatible alias for refreshing the cached snapshot."""
+        self.refresh_snapshot()
+
+    def refresh_snapshot(self) -> None:
+        """Capture current state without reconnecting or mutating observations."""
+        self._snapshot = self._build_current_snapshot(self._snapshot_query)
+        if self._topic and self._topic not in self.topic_paths:
+            self._topic = ""
         self.state_changed.emit()
+        self.topics_changed.emit()
+
+    def apply_snapshot_query(self, query: SnapshotQuery) -> None:
+        if not isinstance(query, SnapshotQuery):
+            raise TypeError("Snapshot query must be a SnapshotQuery value.")
+        snapshot = self._build_current_snapshot(query)
+        self._snapshot_query = query
+        self._snapshot = snapshot
+        if self._topic and self._topic not in self.topic_paths:
+            self._topic = ""
+        self.state_changed.emit()
+        self.topics_changed.emit()
+        self.subscriptions_changed.emit()
+
+    def reset_snapshot_query(self) -> None:
+        self.apply_snapshot_query(SnapshotQuery())
 
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._operation("subscription"):
@@ -220,7 +262,7 @@ class MainViewModel(QObject):
                 subscription,
             )
             self.log_message.emit(f"Added subscription: {subscription.topic_filter}")
-            self.topics_changed.emit()
+            self.refresh_snapshot()
             self.subscriptions_changed.emit()
 
     async def remove_subscription(self, subscription: Subscription) -> None:
@@ -230,10 +272,7 @@ class MainViewModel(QObject):
                 subscription,
             )
             self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
-            if self._topic not in self.topic_paths:
-                self._topic = ""
-                self.refresh()
-            self.topics_changed.emit()
+            self.refresh_snapshot()
             self.subscriptions_changed.emit()
 
     async def update_subscription(
@@ -250,14 +289,42 @@ class MainViewModel(QObject):
             )
             if self._topic == original_filter:
                 self._topic = subscription.topic_filter
-                self.refresh()
-            self.topics_changed.emit()
+            self.refresh_snapshot()
             self.subscriptions_changed.emit()
 
     async def reconnect_to_broker(self) -> None:
         async with self._operation("connection"):
             self.log_message.emit("Reconnect requested")
             await self._runtime.reconnect()
+            self.refresh_snapshot()
+
+    async def reconnect_and_observe(
+        self,
+        query: SnapshotQuery | None = None,
+    ) -> None:
+        selected_query = query or self._snapshot_query
+        async with self._operation("connection"):
+            self.log_message.emit("Reconnect and observe requested")
+            self._preserve_snapshot_during_observation = True
+            try:
+                snapshot = await self._snapshot_service.observe(
+                    self.active_broker_profile.id,
+                    topic_filter=selected_query.topic_filter,
+                    max_age_seconds=selected_query.max_age_seconds,
+                    result_limit=selected_query.result_limit,
+                    payload_limit_bytes=selected_query.payload_limit_bytes,
+                )
+            finally:
+                self._preserve_snapshot_during_observation = False
+            self._snapshot_query = selected_query
+            self._snapshot = snapshot
+            if self._topic and self._topic not in self.topic_paths:
+                self._topic = ""
+            self._connection_status = snapshot.connection_status
+            self.state_changed.emit()
+            self.topics_changed.emit()
+            self.subscriptions_changed.emit()
+            self.connection_changed.emit()
 
     async def connect_to_broker(self) -> None:
         async with self._operation("connection"):
@@ -315,9 +382,8 @@ class MainViewModel(QObject):
             if profile_changed:
                 await self._restart_observer_tasks()
                 self._topic = ""
-                self.refresh()
-                self.topics_changed.emit()
-                self.subscriptions_changed.emit()
+            self.refresh_snapshot()
+            self.subscriptions_changed.emit()
             self.configuration_changed.emit()
             self.log_message.emit(
                 f"Updated MQTT broker: {mqtt_config.host}:{mqtt_config.port}"
@@ -335,6 +401,8 @@ class MainViewModel(QObject):
             mqtt_config,
             profile_name,
         )
+        if profile.id == self.active_broker_profile.id:
+            self.refresh_snapshot()
         self.configuration_changed.emit()
         self.log_message.emit(f"Saved broker profile: {profile.name}")
         return profile
@@ -371,8 +439,7 @@ class MainViewModel(QObject):
             await self._runtime.delete_broker(profile_id)
             if active_profile_id == profile_id:
                 self._topic = ""
-                self.refresh()
-                self.topics_changed.emit()
+                self.refresh_snapshot()
                 self.subscriptions_changed.emit()
                 self.configuration_changed.emit()
                 active = self.active_broker_profile
@@ -454,13 +521,14 @@ class MainViewModel(QObject):
                 )
                 self._reported_dropped_messages = dropped
 
-            self.topics_changed.emit()
-            if any(item.topic == self._topic for item in messages):
-                self.refresh()
+            if not self._preserve_snapshot_during_observation:
+                self.refresh_snapshot()
 
     async def _observe_connection_statuses(self) -> None:
         async for status in self._runtime.connection_statuses():
             self._connection_status = self._status_text(status)
+            if not self._preserve_snapshot_during_observation:
+                self.refresh_snapshot()
             self.connection_changed.emit()
             self.log_message.emit(f"Connection {self._connection_status}")
 
@@ -468,3 +536,12 @@ class MainViewModel(QObject):
     def _status_text(status: object) -> str:
         value = getattr(status, "value", status)
         return str(value).lower()
+
+    def _build_current_snapshot(self, query: SnapshotQuery) -> BrokerSnapshot:
+        return self._snapshot_service.build_current(
+            self.active_broker_profile.id,
+            topic_filter=query.topic_filter,
+            max_age_seconds=query.max_age_seconds,
+            result_limit=query.result_limit,
+            payload_limit_bytes=query.payload_limit_bytes,
+        )

@@ -121,9 +121,9 @@ class ConnectionControls(QObject):
             self.connect_requested.emit,
         )
         self.reconnect_action = self._create_action(
-            "Reconnect",
+            "Reconnect & observe",
             "reconnectAction",
-            "Reconnect to the MQTT broker",
+            "Interrupt and renew the MQTT connection, then capture a snapshot",
             self.reconnect_requested.emit,
         )
         self.disconnect_action = self._create_action(

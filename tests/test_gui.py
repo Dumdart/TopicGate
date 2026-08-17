@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QSplitter,
+    QSpinBox,
     QToolBar,
     QToolButton,
     QTreeView,
@@ -41,9 +42,70 @@ from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
 )
 from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.components.snapshot_panel import SnapshotPanel
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
+from topicgate.presentation.snapshot_presentation import (
+    BrokerSnapshotHealth,
+    SnapshotQuery,
+)
+
+
+def test_snapshot_panel_applies_clears_and_renders_health() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+    requested: list[SnapshotQuery] = []
+    resets: list[bool] = []
+    pane.apply_requested.connect(requested.append)
+    pane.reset_requested.connect(lambda: resets.append(True))
+    pane.findChild(QLineEdit, "snapshotTopicFilter").setText("home/#")
+    pane.findChild(QLineEdit, "snapshotMaximumAge").setText("10.5")
+    pane.findChild(QSpinBox, "snapshotResultLimit").setValue(12)
+    pane.findChild(QSpinBox, "snapshotPayloadLimit").setValue(512)
+
+    pane.findChild(QPushButton, "applySnapshotButton").click()
+    assert requested[-1] == SnapshotQuery("home/#", 10.5, 12, 512)
+
+    health = BrokerSnapshotHealth(
+        "captured",
+        "connected",
+        "observing",
+        "4.0 seconds",
+        3,
+        2,
+        1,
+        1,
+        5,
+        "Limited",
+        ("Current state only.",),
+    )
+    pane.render_health(health)
+    assert pane.findChild(QLabel, "snapshotReturnedCount").text() == "3"
+    assert pane.findChild(QLabel, "snapshotCompletenessStatus").text() == "Limited"
+
+    pane.findChild(QPushButton, "clearSnapshotFiltersButton").click()
+    assert resets == [True]
+    assert pane.query == SnapshotQuery()
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_about_dialog_describes_persisted_observations() -> None:
+    application = QApplication.instance() or QApplication([])
+    dialog = AboutDialog()
+
+    text = dialog.findChild(QLabel, "aboutStorageText").text()
+
+    assert text == (
+        "Broker profiles, subscriptions, and each broker's latest observed "
+        "MQTT values are stored in SQLite. Passwords are stored in your "
+        "operating system's credential store. Snapshot views may include "
+        "stored observations captured before the current connection or "
+        "observation window."
+    )
+    dialog.deleteLater()
+    application.processEvents()
 
 
 def test_redesigned_window_exposes_header_and_publish_workspace() -> None:

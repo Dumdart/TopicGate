@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
             lambda: self._run_async(self._view_model.connect_to_broker())
         )
         self._header.reconnect_requested.connect(
-            lambda: self._run_async(self._view_model.reconnect_to_broker())
+            self._confirm_reconnect_and_observe
         )
         self._header.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
@@ -97,6 +97,22 @@ class MainWindow(QMainWindow):
         )
         self._observer_tree.delete_broker_profile_requested.connect(
             self._confirm_delete_broker_profile
+        )
+        self._observer_tree.snapshot_apply_requested.connect(
+            self._apply_snapshot_query
+        )
+        self._observer_tree.snapshot_reset_requested.connect(
+            self._view_model.reset_snapshot_query
+        )
+        self._observer_tree.reconnect_observe_requested.connect(
+            self._confirm_reconnect_and_observe
+        )
+        self._observer_tree.snapshot_panel.validation_failed.connect(
+            lambda message: QMessageBox.warning(
+                self,
+                "Invalid snapshot controls",
+                message,
+            )
         )
         self._subscription_settings.apply_requested.connect(
             self._apply_subscription
@@ -142,7 +158,7 @@ class MainWindow(QMainWindow):
             lambda: self._run_async(self._view_model.connect_to_broker())
         )
         self._connection_controls.reconnect_requested.connect(
-            lambda: self._run_async(self._view_model.reconnect_to_broker())
+            self._confirm_reconnect_and_observe
         )
         self._connection_controls.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
@@ -241,6 +257,9 @@ class MainWindow(QMainWindow):
         self._view_model.log_message.connect(self._log_dock.append_message)
 
     def _render_all(self) -> None:
+        self._observer_tree.snapshot_panel.render_query(
+            self._view_model.snapshot_query
+        )
         self._render_tree()
         self._render_details()
         self._render_settings()
@@ -252,6 +271,9 @@ class MainWindow(QMainWindow):
             self._view_model.topic_tree,
             self._view_model.topic,
             self._view_model.subscriptions,
+        )
+        self._observer_tree.snapshot_panel.render_health(
+            self._view_model.snapshot_health
         )
 
     def _render_details(self) -> None:
@@ -300,6 +322,45 @@ class MainWindow(QMainWindow):
         self._render_publish()
         busy = self._view_model.is_busy("subscription")
         self._subscription_settings.setEnabled(not busy)
+        self._observer_tree.snapshot_panel.set_busy(
+            self._view_model.is_busy("connection")
+        )
+
+    def _apply_snapshot_query(self, query: object) -> None:
+        try:
+            self._view_model.apply_snapshot_query(query)
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Invalid snapshot controls", str(error))
+
+    def _confirm_reconnect_and_observe(self, query: object = None) -> None:
+        try:
+            selected_query = (
+                query
+                if query is not None
+                else self._observer_tree.snapshot_panel.query
+            )
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Invalid snapshot controls",
+                str(error),
+            )
+            return
+        broker = self._view_model.active_broker_profile
+        result = QMessageBox.question(
+            self,
+            "Reconnect and observe?",
+            f"Reconnect to '{broker.name}' and capture a new snapshot?\n\n"
+            "This interrupts the active MQTT connection, renews it using "
+            "the selected broker profile, waits for fresh observations, "
+            "and then captures snapshot state.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result == QMessageBox.StandardButton.Yes:
+            self._run_async(
+                self._view_model.reconnect_and_observe(selected_query)
+            )
 
     def _show_operation_error(self, title: str, message: str) -> None:
         QMessageBox.warning(self, title, message)
