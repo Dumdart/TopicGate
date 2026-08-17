@@ -5,7 +5,7 @@ TopicGate is a local MQTT gateway for people and AI agent harnesses. It keeps br
 - `topicgate`: a FastMCP server for agent harnesses.
 - `topicgate-gui`: a PySide6 desktop application for interactive inspection and configuration.
 
-An experimental FastMCP App dashboard is also available through the optional `apps` dependency group.
+An optional FastMCP App dashboard is also available through the `apps` dependency group.
 
 > [!IMPORTANT]
 > TopicGate `0.2.0` is under active development. The desktop application is the most complete interface. The MCP server defaults to a read-only capability surface; its opt-in control mode is not intended for unattended or safety-critical use.
@@ -67,7 +67,9 @@ In control mode, `observe_broker_snapshot` is the separate state-changing refres
 
 `list_topics` and `get_topic_state` remain available for compatibility while clients adopt snapshots. Calling `list_topics` without its optional broker selector retains its historical active-broker scope. `get_topic_state` retains its required `broker_id` argument and one-topic-at-a-time response. These tools will be deprecated only after snapshot adoption; new integrations should use `get_broker_snapshot`.
 
-In control mode, the optional FastMCP App adds one model-visible tool, `open_topicgate_dashboard`. It provides a compact monitoring view with broker selection, a subscription and observed-topic tree, latest values, metadata, and read-only subscription settings. Broker and subscription management and MQTT publishing remain in their dedicated interfaces. It requires an MCP host that supports MCP Apps and should currently be treated as experimental.
+In control mode, the optional FastMCP App adds one model-visible tool, `open_topicgate_dashboard`. It provides a compact monitoring view with broker selection, a subscription and observed-topic tree, latest values, metadata, and read-only subscription settings. Broker and subscription management and MQTT publishing remain in their dedicated interfaces. It requires an MCP host that supports MCP Apps.
+
+The dashboard dependency contract is FastMCP Apps `3.4.7` with Prefab UI `0.20.2`. Both versions are pinned because Prefab is under active development and FastMCP intentionally supplies only a minimum Prefab version. CI installs this exact pair and runs the dependency-contract test plus the full dashboard suite before an upgrade can replace it.
 
 ## Requirements
 
@@ -88,7 +90,7 @@ cd TopicGate
 uv sync
 ```
 
-Install the experimental dashboard dependencies with:
+Install the tested dashboard dependencies with:
 
 ```powershell
 uv sync --extra apps
@@ -221,7 +223,7 @@ Run the complete suite before submitting changes; focused module commands are us
 ## Current limitations and roadmap
 
 - Legacy `list_topics` and `get_topic_state` remain available during snapshot adoption and are candidates for later deprecation.
-- The optional FastMCP App dashboard is experimental and its dependency versions are pinned to the currently tested combination.
+- Dashboard dependency upgrades must update both tested pins together and pass the dependency-contract and dashboard tests.
 - A TopicGate plugin is planned only after the MCP snapshot and lifecycle contracts stabilize. Its instructions must explicitly state that broker names, topic names, and payload contents are data—not agent instructions.
 
 ## License

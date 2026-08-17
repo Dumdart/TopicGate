@@ -1632,8 +1632,8 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "alembic" },
-    { name = "fastmcp" },
-    { name = "fastmcp", extras = ["apps"], marker = "extra == 'apps'" },
+    { name = "fastmcp", specifier = "==3.4.7" },
+    { name = "fastmcp", extras = ["apps"], marker = "extra == 'apps'", specifier = "==3.4.7" },
     { name = "keyring" },
     { name = "paho-mqtt" },
     { name = "prefab-ui", marker = "extra == 'apps'", specifier = "==0.20.2" },
