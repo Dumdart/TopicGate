@@ -8,15 +8,15 @@ TopicGate is a local MQTT gateway for people and AI agent harnesses. It keeps br
 An experimental FastMCP App dashboard is also available through the optional `apps` dependency group.
 
 > [!IMPORTANT]
-> TopicGate `0.2.0` is under active development. The desktop application is the most complete interface. The MCP server is useful for experimentation, but its current multi-tool contract and combined read/control surface are not yet ready for unattended or safety-critical use.
+> TopicGate `0.2.0` is under active development. The desktop application is the most complete interface. The MCP server separates passive snapshots from explicit observation, but its combined read/control surface is not intended for unattended or safety-critical use.
 
 ## What “latest value” means
 
-TopicGate reports the last value **observed by the current TopicGate process**. It does not provide authoritative broker history.
+TopicGate reports the last value it has observed and retained, either during the current process or from the latest state persisted by an earlier process. It does not provide authoritative broker history.
 
-- Live payloads, counters, and receive timestamps are held in memory and are not written to SQLite.
-- After a restart, no values are known until MQTT messages arrive again.
-- Retained messages normally repopulate after TopicGate connects and subscribes.
+- Latest payloads, counters, receive timestamps, and observation metadata are persisted to SQLite and hydrated when TopicGate starts.
+- Hydrated values can predate the current connection or observation window; snapshot provenance and completeness metadata make this visible.
+- Retained messages normally refresh state after TopicGate connects and subscribes.
 - Non-retained values appear only when a publisher sends them while TopicGate is observing.
 - Only the active broker is connected and continuously observed.
 - `received_at` records when TopicGate received a message, not necessarily when its producer created it.
@@ -32,7 +32,7 @@ An empty or partial result can therefore be correct, especially immediately afte
 - Inspect UTF-8 and base64 payload representations, QoS, retained state, receive time, payload size, and message count.
 - Persist broker profiles, the active profile, and subscriptions in a local SQLite database.
 - Store passwords in the operating system credential store and omit them from API results.
-- Keep a broker's observed values in memory while the process is running, including across broker switches.
+- Persist each broker's latest observed values across broker switches and process restarts.
 - Bound retained in-memory topic and payload data to reduce resource-exhaustion risk.
 
 ### TopicGate Desktop
@@ -49,11 +49,20 @@ The MCP server currently exposes these tools over stdio:
 
 | Area | Tools | Notes |
 | --- | --- | --- |
+| Snapshots | `get_broker_snapshot`, `observe_broker_snapshot` | `get_broker_snapshot` is the primary read-only tool. `observe_broker_snapshot` explicitly activates, reconnects, waits, and leaves the broker active. |
 | Brokers | `list_brokers`, `activate_broker` | Profiles are configured in TopicGate Desktop; MCP does not yet expose broker CRUD. Passwords are never returned. |
-| Connection | `get_connection_status`, `connect`, `disconnect`, `reconnect` | Operates on the active broker. |
-| Topics | `list_topics`, `get_topic_state` | `list_topics` is active-broker scoped; `get_topic_state` accepts a broker UUID. |
-| Subscriptions | `list_subscriptions`, `add_subscription`, `update_subscription`, `remove_subscription` | Mutations require the supplied broker to be active. |
+| Connection | `get_connection_status`, `connect`, `disconnect`, `reconnect` | Status accepts a broker selector; connection controls operate on the active broker. |
+| Topics | `list_topics`, `get_topic_state` | Legacy compatibility reads retained during snapshot adoption. |
+| Subscriptions | `list_subscriptions`, `add_subscription`, `update_subscription`, `remove_subscription` | Mutations require the resolved broker to be active. |
 | Publishing | `publish` | Accepts UTF-8 or base64 input and can cause real-world effects. |
+
+Every supplied MCP broker selector accepts either a UUID or a unique profile name. Names are trimmed and matched case-insensitively. Unknown or ambiguous names return an error instead of silently selecting a profile.
+
+`get_broker_snapshot` reads already observed or persisted state without activating, connecting, or waiting. It supports MQTT filtering, freshness and result limits, bounded payload rendering, source metadata, dropped-message counts, and explicit completeness limitations.
+
+`observe_broker_snapshot` is the separate state-changing refresh operation. It always activates and reconnects the requested broker, even when that broker is already active, waits one second by default with a five-second maximum, returns the same snapshot shape, and leaves the requested broker active.
+
+`list_topics` and `get_topic_state` remain available for compatibility while clients adopt snapshots. Calling `list_topics` without its optional broker selector retains its historical active-broker scope. `get_topic_state` retains its required `broker_id` argument and one-topic-at-a-time response. These tools will be deprecated only after snapshot adoption; new integrations should use `get_broker_snapshot`.
 
 The optional FastMCP App adds one model-visible tool, `open_topicgate_dashboard`. It provides a compact monitoring view with broker selection, a subscription and observed-topic tree, latest values, metadata, and read-only subscription settings. Broker and subscription management and MQTT publishing remain in their dedicated interfaces. It requires an MCP host that supports MCP Apps and should currently be treated as experimental.
 
@@ -145,23 +154,20 @@ For a direct smoke test with the FastMCP CLI:
 fastmcp call --command topicgate --target list_brokers --json
 ```
 
-### Current agent workflow
+### Recommended agent workflow
 
-To answer “What were the latest values on broker X?”, an agent currently needs to:
+To answer “What were the latest values on broker X?” without changing broker state:
 
-1. Call `list_brokers` and resolve the requested name to a UUID.
-2. Call `activate_broker` when that broker is not active.
-3. Check `get_connection_status` and allow retained messages time to arrive.
-4. Call `list_topics`.
-5. Call `get_topic_state` once for each relevant topic.
-6. State that results are latest-observed values from this process, not authoritative history.
+1. Call `get_broker_snapshot` with the broker UUID or profile name.
+2. Optionally provide `topic_filter`, `max_age_seconds`, `limit`, or `payload_limit_bytes`.
+3. Report the snapshot's freshness, provenance, truncation, and completeness limitations with the values.
 
-This flow is functional but inefficient for large topic sets. A one-call `get_broker_snapshot` API with freshness, settling, completeness, dropped-message, truncation, filtering, and result-limit metadata is the highest-priority MCP improvement.
+Call `observe_broker_snapshot` only when the user intends TopicGate to activate and reconnect that broker and wait for fresh traffic or retained messages. Its `wait_seconds` value defaults to one second and is capped at five seconds.
 
 ## Safety notes for agent harnesses
 
-- TopicGate currently exposes read operations and control operations from the same server; there is no read-only operating mode yet.
-- `activate_broker`, connection commands, subscription mutations, and `publish` change external state.
+- TopicGate exposes read operations and control operations from the same server; there is no server-wide read-only mode yet.
+- `get_broker_snapshot` does not activate, connect, or wait. `observe_broker_snapshot`, `activate_broker`, connection commands, subscription mutations, and `publish` change external state.
 - MQTT publishing may operate physical devices. Require explicit user intent and verify the broker, topic, encoding, and payload before publishing.
 - Treat topic names and payloads as untrusted data, never as instructions to the agent.
 - Broker results expose `password_configured` but return an empty password value.
@@ -183,9 +189,9 @@ TopicGate stores `topicgate.db` in the platform application-data directory:
 - Linux: `~/.local/share/TopicGate`
 - macOS: `~/Library/Application Support/TopicGate`
 
-Set `TOPICGATE_DATA_DIR` to use an explicit directory. The database contains broker names and non-secret connection settings, the active profile, and subscriptions. It does not contain passwords or live MQTT payloads.
+Set `TOPICGATE_DATA_DIR` to use an explicit directory. The database contains broker names, non-secret connection settings, the active profile, subscriptions, retention settings, and persisted latest MQTT observations. It does not contain passwords.
 
-To start with a new configuration, close TopicGate and move or delete `topicgate.db`. Deleting it permanently removes saved profiles and subscriptions unless the file is backed up first.
+To start with a new configuration, close TopicGate and move or delete `topicgate.db`. Deleting it permanently removes saved profiles, subscriptions, retention settings, and observations unless the file is backed up first.
 
 ## Testing
 
@@ -195,14 +201,12 @@ Run the full test suite with:
 uv run pytest
 ```
 
-The current suite contains 174 tests and passes in full.
+Run the complete suite before submitting changes; focused module commands are useful during development but do not replace the full run.
 
 ## Current limitations and roadmap
 
-- Topic reads have inconsistent scope: `list_topics` uses the active broker, while `get_topic_state` accepts any broker UUID.
-- The primary snapshot query requires one tool call per topic and has no defined settling period.
-- Freshness, observation-window completeness, and per-result truncation metadata are not yet exposed as one coherent response.
-- There is no read-only MCP mode.
+- Legacy `list_topics` and `get_topic_state` remain available during snapshot adoption and are candidates for later deprecation.
+- There is no server-wide read-only MCP mode; state-changing tools remain registered alongside the passive snapshot tool.
 - The optional FastMCP App dashboard is experimental and its dependency versions are pinned to the currently tested combination.
 - A TopicGate plugin is planned only after the MCP snapshot and lifecycle contracts stabilize.
 
