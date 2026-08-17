@@ -383,6 +383,7 @@ def test_runtime_exposes_broker_specific_snapshot_inputs() -> None:
     first_repo.get_all_topics.return_value = ("first/topic",)
     first_repo.connection_status = "connected"
     first_repo.dropped_message_count = 2
+    first_repo.topic_update_interval = 0.25
     first_repo.connected_at = datetime(2026, 8, 17, tzinfo=timezone.utc)
     first_repo.observation_started_at = datetime(
         2026, 8, 16, tzinfo=timezone.utc
@@ -399,6 +400,7 @@ def test_runtime_exposes_broker_specific_snapshot_inputs() -> None:
     assert runtime.list_topics(second.id) == ("second/topic",)
     assert runtime.get_connection_status(first.id) == "connected"
     assert runtime.get_dropped_message_count(first.id) == 2
+    assert runtime.get_topic_update_interval(first.id) == 0.25
     assert runtime.get_connected_at(first.id) == first_repo.connected_at
     assert (
         runtime.get_observation_started_at(first.id)

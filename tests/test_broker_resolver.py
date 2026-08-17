@@ -43,6 +43,15 @@ def test_resolver_matches_trimmed_name_case_insensitively() -> None:
     assert resolved is expected
 
 
+def test_resolver_uses_active_broker_when_selector_is_omitted() -> None:
+    expected = broker("Primary")
+    runtime = MagicMock()
+    runtime.active_broker = expected
+
+    assert BrokerResolver(runtime).resolve_or_active(None) is expected
+    runtime.list_brokers.assert_not_called()
+
+
 def test_resolver_reports_unknown_uuid_without_treating_it_as_a_name() -> None:
     missing_id = uuid4()
 

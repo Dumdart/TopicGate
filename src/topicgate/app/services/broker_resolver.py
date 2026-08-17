@@ -40,6 +40,14 @@ class BrokerResolver:
             )
         return matches[0]
 
+    def resolve_or_active(
+        self,
+        selector: UUID | str | None,
+    ) -> BrokerSummary:
+        if selector is None:
+            return self._runtime.active_broker
+        return self.resolve(selector)
+
     @staticmethod
     def _parse_uuid(selector: UUID | str) -> UUID | None:
         if isinstance(selector, UUID):
