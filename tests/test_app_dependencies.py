@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from topicgate.app.app_dependencies import AppDependencies
+from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
 
@@ -56,6 +57,8 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
         dependencies.persistence,
         dependencies.runtime,
     )
+    assert isinstance(dependencies.snapshot_service, BrokerSnapshotService)
+    assert dependencies.snapshot_service._runtime is dependencies.runtime
 
 
 def test_live_observations_are_queued_for_persistence(
