@@ -237,7 +237,7 @@ async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
         broker_id = runtime.active_broker.id
         api = PublishAPI(runtime)
 
-        await api.publish(broker_id, "home/set", "p\u00e5")
+        await api.publish(broker_id, "home/set", "p\u00e5", "utf-8")
         await api.publish(broker_id, "camera/set", "/wA=", "base64")
 
         assert runtime.publish.await_args_list[0].args == (
@@ -254,7 +254,36 @@ async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
         with pytest.raises(ValueError, match="not valid base64"):
             await api.publish(broker_id, "camera/set", "%%%", "base64")
 
+        with pytest.raises(ValueError, match="Unsupported payload encoding"):
+            await api.publish(
+                broker_id,
+                "home/set",
+                "on",
+                "ascii",
+            )
+
     await scenario()
+
+
+async def test_publish_tool_requires_explicit_inputs_and_safety_annotations() -> None:
+    runtime = mcp_runtime()
+    mcp = FastMCP("test")
+    PublishAPI(runtime).register(mcp, control_enabled=True)
+
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    assert len(tools) == 1
+    publish = tools[0]
+    assert publish.name == "publish"
+    assert set(publish.inputSchema["required"]) == {
+        "broker_id",
+        "topic",
+        "payload",
+        "payload_encoding",
+    }
+    assert publish.annotations.destructiveHint is True
+    assert publish.annotations.openWorldHint is True
 
 
 async def test_broker_scoped_apis_accept_profile_names() -> None:
@@ -270,7 +299,12 @@ async def test_broker_scoped_apis_accept_profile_names() -> None:
     subscriptions = subscription_api.list_subscriptions("Primary")
     await subscription_api.add_subscription("Primary", "devices/#")
     await BrokerAPI(runtime).activate_broker("Primary")
-    await PublishAPI(runtime).publish("Primary", "home/set", "on")
+    await PublishAPI(runtime).publish(
+        "Primary",
+        "home/set",
+        "on",
+        "utf-8",
+    )
 
     assert status.broker_id == broker_id
     assert subscriptions == (Subscription("home/#"),)
