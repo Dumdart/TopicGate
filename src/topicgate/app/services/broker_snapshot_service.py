@@ -20,6 +20,7 @@ from topicgate.app.models.broker_snapshot import (
 )
 from topicgate.app.services.broker_resolver import BrokerResolver
 from topicgate.app.topicgate_runtime import TopicGateRuntime
+from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_observation import MqttObservation, ObservationSource
 from topicgate.core.models.subscription import Subscription
@@ -29,7 +30,8 @@ from topicgate.core.payload_limits import MAX_RENDERED_PAYLOAD_BYTES
 
 DEFAULT_SNAPSHOT_RESULT_LIMIT = 100
 MAX_SNAPSHOT_RESULT_LIMIT = MAX_OBSERVED_TOPICS
-MAX_SNAPSHOT_SETTLE_SECONDS = 5.0
+DEFAULT_SNAPSHOT_WAIT_SECONDS = 1.0
+MAX_SNAPSHOT_WAIT_SECONDS = 5.0
 
 Clock = Callable[[], datetime]
 MonotonicClock = Callable[[], float]
@@ -62,23 +64,70 @@ class BrokerSnapshotService:
         max_age_seconds: float | None = None,
         result_limit: int = DEFAULT_SNAPSHOT_RESULT_LIMIT,
         payload_limit_bytes: int = MAX_RENDERED_PAYLOAD_BYTES,
-        settle_seconds: float = 0.0,
     ) -> BrokerSnapshot:
         resolved = self._resolver.resolve(broker)
         validated_filter = self._validate_topic_filter(topic_filter)
         max_age_seconds = self._validate_max_age(max_age_seconds)
         result_limit = self._validate_result_limit(result_limit)
         payload_limit_bytes = self._validate_payload_limit(payload_limit_bytes)
-        settle_seconds = self._validate_settle_seconds(settle_seconds)
 
-        actual_settle_seconds = await self._settle(settle_seconds)
+        return self._capture(
+            resolved,
+            topic_filter=validated_filter,
+            max_age_seconds=max_age_seconds,
+            result_limit=result_limit,
+            payload_limit_bytes=payload_limit_bytes,
+            requested_wait_seconds=0.0,
+            actual_wait_seconds=0.0,
+        )
+
+    async def observe(
+        self,
+        broker: UUID | str,
+        *,
+        topic_filter: str = "#",
+        max_age_seconds: float | None = None,
+        result_limit: int = DEFAULT_SNAPSHOT_RESULT_LIMIT,
+        payload_limit_bytes: int = MAX_RENDERED_PAYLOAD_BYTES,
+        wait_seconds: float = DEFAULT_SNAPSHOT_WAIT_SECONDS,
+    ) -> BrokerSnapshot:
+        resolved = self._resolver.resolve(broker)
+        validated_filter = self._validate_topic_filter(topic_filter)
+        max_age_seconds = self._validate_max_age(max_age_seconds)
+        result_limit = self._validate_result_limit(result_limit)
+        payload_limit_bytes = self._validate_payload_limit(payload_limit_bytes)
+        wait_seconds = self._validate_wait_seconds(wait_seconds)
+
+        await self._runtime.activate_broker(resolved.id)
+        actual_wait_seconds = await self._wait(wait_seconds)
+        return self._capture(
+            resolved,
+            topic_filter=validated_filter,
+            max_age_seconds=max_age_seconds,
+            result_limit=result_limit,
+            payload_limit_bytes=payload_limit_bytes,
+            requested_wait_seconds=wait_seconds,
+            actual_wait_seconds=actual_wait_seconds,
+        )
+
+    def _capture(
+        self,
+        resolved: BrokerSummary,
+        *,
+        topic_filter: str,
+        max_age_seconds: float | None,
+        result_limit: int,
+        payload_limit_bytes: int,
+        requested_wait_seconds: float,
+        actual_wait_seconds: float,
+    ) -> BrokerSnapshot:
         captured_at = self._as_utc(self._clock())
         model = self._runtime.get_observer_model(resolved.id)
         matching = sorted(
             (
                 state
                 for state in model.topic_states.values()
-                if mqtt_filter_matches(validated_filter, state.topic)
+                if mqtt_filter_matches(topic_filter, state.topic)
             ),
             key=lambda state: state.topic,
         )
@@ -135,7 +184,7 @@ class BrokerSnapshotService:
                 else self._as_utc(observation_started_at)
             ),
             observed_for_seconds=observed_for_seconds,
-            topic_filter=validated_filter,
+            topic_filter=topic_filter,
             topics=topics,
             dropped_message_count=dropped_message_count,
             freshness=SnapshotFreshness(max_age_seconds, stale_count),
@@ -149,18 +198,18 @@ class BrokerSnapshotService:
                 truncated=omitted_by_limit > 0,
             ),
             settling=SnapshotSettling(
-                requested_seconds=settle_seconds,
-                maximum_seconds=MAX_SNAPSHOT_SETTLE_SECONDS,
-                actual_seconds=actual_settle_seconds,
+                requested_seconds=requested_wait_seconds,
+                maximum_seconds=MAX_SNAPSHOT_WAIT_SECONDS,
+                actual_seconds=actual_wait_seconds,
             ),
             completeness=SnapshotCompleteness(False, limitations),
         )
 
-    async def _settle(self, settle_seconds: float) -> float:
-        if settle_seconds == 0:
+    async def _wait(self, wait_seconds: float) -> float:
+        if wait_seconds == 0:
             return 0.0
         started_at = self._monotonic_clock()
-        await self._sleep(settle_seconds)
+        await self._sleep(wait_seconds)
         return max(0.0, self._monotonic_clock() - started_at)
 
     @classmethod
@@ -283,12 +332,12 @@ class BrokerSnapshotService:
         return payload_limit_bytes
 
     @staticmethod
-    def _validate_settle_seconds(settle_seconds: float) -> float:
-        value = float(settle_seconds)
-        if not math.isfinite(value) or not 0 <= value <= MAX_SNAPSHOT_SETTLE_SECONDS:
+    def _validate_wait_seconds(wait_seconds: float) -> float:
+        value = float(wait_seconds)
+        if not math.isfinite(value) or not 0 <= value <= MAX_SNAPSHOT_WAIT_SECONDS:
             raise ValueError(
-                "settle_seconds must be between 0 and "
-                f"{MAX_SNAPSHOT_SETTLE_SECONDS}."
+                "wait_seconds must be between 0 and "
+                f"{MAX_SNAPSHOT_WAIT_SECONDS}."
             )
         return value
 
