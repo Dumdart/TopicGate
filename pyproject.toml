@@ -25,6 +25,7 @@ apps = [
     "prefab-ui==0.20.2",
 ]
 test = [
+    "keyrings.alt",
     "pytest",
     "pytest-asyncio",
 ]
