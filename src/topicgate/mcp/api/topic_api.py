@@ -29,7 +29,14 @@ class TopicAPI(MCPApi):
         self,
         broker: UUID | str | None = None,
     ) -> tuple[str, ...]:
-        """Legacy topic list; omitted broker retains active-profile scope."""
+        """List observed topic names using the legacy read contract.
+
+        Side effects: None; this does not activate, connect, or refresh a broker.
+        Required state: Omit broker only when an active profile exists; results are
+        limited to state already observed or restored during this process lifetime.
+        Identifiers: broker accepts a UUID or unique case-insensitive name.
+        Failures: Fails for no active profile or unknown or ambiguous profiles.
+        """
         resolved = self._resolver.resolve_or_active(broker)
         return self._runtime.list_topics(resolved.id)
 
@@ -39,7 +46,14 @@ class TopicAPI(MCPApi):
         broker_id: UUID | str,
         topic: str,
     ) -> TopicStateResult | None:
-        """Legacy single-topic read for a broker UUID or profile name."""
+        """Read one observed topic using the legacy read contract.
+
+        Side effects: None; this does not activate, connect, or refresh a broker.
+        Required state: The profile must exist; an unobserved topic returns null.
+        Identifiers: broker_id accepts a UUID or unique case-insensitive name;
+        topic is an exact MQTT topic, not a wildcard filter.
+        Failures: Fails for unknown or ambiguous profiles or state read errors.
+        """
         resolved = self._resolver.resolve(broker_id)
         state = self._runtime.get_topic_state(resolved.id, topic)
         return None if state is None else self._to_result(state)

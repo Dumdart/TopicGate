@@ -29,7 +29,13 @@ class SubscriptionAPI(MCPApi):
         self,
         broker_id: UUID | str,
     ) -> tuple[Subscription, ...]:
-        """List subscriptions for a broker UUID or profile name."""
+        """List persisted subscriptions for a selected broker.
+
+        Side effects: None; this does not activate or connect a broker.
+        Required state: The broker profile must already exist locally.
+        Identifiers: broker_id accepts a UUID or unique case-insensitive name.
+        Failures: Fails for unknown or ambiguous profiles or persistence errors.
+        """
         resolved = self._resolver.resolve(broker_id)
         return self._runtime.list_subscriptions(resolved.id)
 
@@ -42,7 +48,15 @@ class SubscriptionAPI(MCPApi):
         retain_as_published: bool = False,
         retain_handling: int = 0,
     ) -> None:
-        """Add an MQTT subscription to the active broker profile."""
+        """Persist and apply an MQTT subscription for a selected broker.
+
+        Side effects: Changes local subscription state and may subscribe over MQTT.
+        Required state: The profile must exist; live application requires it active.
+        Identifiers: broker_id accepts a UUID or unique case-insensitive name;
+        topic_filter accepts MQTT wildcards.
+        Failures: Fails for invalid brokers, filters, QoS/retain values, duplicate
+        subscriptions, persistence errors, or MQTT subscribe errors.
+        """
         resolved = self._resolver.resolve(broker_id)
         await self._runtime.add_subscription(
             resolved.id,
@@ -64,7 +78,15 @@ class SubscriptionAPI(MCPApi):
         retain_as_published: bool = False,
         retain_handling: int = 0,
     ) -> None:
-        """Replace an MQTT subscription on the active broker profile."""
+        """Replace a persisted MQTT subscription for a selected broker.
+
+        Side effects: Changes local state and may unsubscribe/subscribe over MQTT.
+        Required state: original_filter must identify an existing subscription.
+        Identifiers: broker_id accepts a UUID or unique case-insensitive name;
+        both filter arguments use MQTT subscription-filter syntax.
+        Failures: Fails for invalid brokers or values, a missing original filter,
+        persistence errors, or MQTT subscription errors.
+        """
         resolved = self._resolver.resolve(broker_id)
         await self._runtime.update_subscription(
             resolved.id,
@@ -88,7 +110,15 @@ class SubscriptionAPI(MCPApi):
         broker_id: UUID | str,
         topic_filter: str,
     ) -> None:
-        """Remove an MQTT subscription from the active broker profile."""
+        """Remove a persisted MQTT subscription from a selected broker.
+
+        Side effects: Deletes local state and may unsubscribe from MQTT.
+        Required state: topic_filter must exactly match an existing subscription.
+        Identifiers: broker_id accepts a UUID or unique case-insensitive name;
+        topic_filter is the exact persisted MQTT subscription filter.
+        Failures: Fails for invalid brokers, unknown filters, persistence errors,
+        or MQTT unsubscribe errors.
+        """
         resolved = self._resolver.resolve(broker_id)
         subscription = next(
             (

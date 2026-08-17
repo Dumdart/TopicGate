@@ -29,7 +29,13 @@ class ConnectionAPI(MCPApi):
         self,
         broker: UUID | str | None = None,
     ) -> ConnectionStatusResult:
-        """Get connection health for a broker UUID or profile name."""
+        """Get connection health for a selected broker profile.
+
+        Side effects: None; this does not activate or connect a broker.
+        Required state: Omit broker only when an active profile exists.
+        Identifiers: broker accepts a UUID or unique case-insensitive name.
+        Failures: Fails for no active profile or unknown or ambiguous profiles.
+        """
         resolved = self._resolver.resolve_or_active(broker)
         return ConnectionStatusResult(
             broker_id=resolved.id,
@@ -44,15 +50,33 @@ class ConnectionAPI(MCPApi):
 
     @tool(annotations={"openWorldHint": True})
     async def connect(self) -> None:
-        """Connect the active MQTT broker profile."""
+        """Connect the active MQTT broker profile.
+
+        Side effects: Opens an MQTT connection and starts receiving messages.
+        Required state: An active broker with usable credentials must exist.
+        Identifiers: This tool always targets the active broker; it takes no ID.
+        Failures: Fails without an active profile or when connection setup fails.
+        """
         await self._runtime.connect()
 
     @tool(annotations={"openWorldHint": True})
     async def disconnect(self) -> None:
-        """Disconnect the active MQTT broker profile."""
+        """Disconnect the active MQTT broker profile.
+
+        Side effects: Closes the active MQTT connection and stops observation.
+        Required state: An active broker profile must exist.
+        Identifiers: This tool always targets the active broker; it takes no ID.
+        Failures: Fails without an active profile or when disconnection fails.
+        """
         await self._runtime.disconnect()
 
     @tool(annotations={"openWorldHint": True})
     async def reconnect(self) -> None:
-        """Reconnect the active MQTT broker profile."""
+        """Reconnect the active MQTT broker profile.
+
+        Side effects: Closes and reopens the MQTT connection and resumes messages.
+        Required state: An active broker with usable credentials must exist.
+        Identifiers: This tool always targets the active broker; it takes no ID.
+        Failures: Fails without an active profile or when reconnection fails.
+        """
         await self._runtime.reconnect()

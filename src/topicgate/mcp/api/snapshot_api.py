@@ -30,7 +30,15 @@ class SnapshotAPI(MCPApi):
         limit: int = DEFAULT_SNAPSHOT_RESULT_LIMIT,
         payload_limit_bytes: int = MAX_RENDERED_PAYLOAD_BYTES,
     ) -> BrokerSnapshot:
-        """Return already observed or persisted state without activating a broker."""
+        """Return already observed or persisted state for a broker.
+
+        Side effects: None; this never activates, connects, or waits for a broker.
+        Required state: The broker profile must already exist locally.
+        Identifiers: broker accepts a UUID or unique case-insensitive name;
+        topic_filter accepts MQTT wildcards.
+        Failures: Fails for an invalid broker, filter, age, limit, or payload limit,
+        and when persisted state cannot be read.
+        """
         return await self._snapshot_service.build(
             broker,
             topic_filter=topic_filter,
@@ -49,7 +57,16 @@ class SnapshotAPI(MCPApi):
         payload_limit_bytes: int = MAX_RENDERED_PAYLOAD_BYTES,
         wait_seconds: float = DEFAULT_SNAPSHOT_WAIT_SECONDS,
     ) -> BrokerSnapshot:
-        """Activate, reconnect, briefly observe, and snapshot a broker profile."""
+        """Activate, reconnect, briefly observe, and snapshot a broker profile.
+
+        Side effects: Changes the active broker, reconnects MQTT, waits, receives
+        messages, persists observations, and leaves the selected broker active.
+        Required state: The profile and credentials must permit a connection.
+        Identifiers: broker accepts a UUID or unique case-insensitive name;
+        topic_filter accepts MQTT wildcards.
+        Failures: Fails for invalid selectors or bounds, missing credentials,
+        connection errors, or snapshot persistence/read errors.
+        """
         return await self._snapshot_service.observe(
             broker,
             topic_filter=topic_filter,

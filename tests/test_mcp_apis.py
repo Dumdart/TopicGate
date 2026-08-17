@@ -49,6 +49,7 @@ async def test_non_broker_apis_register_described_tools() -> None:
         mcp = FastMCP("test")
         McpApiContainer(
             [
+                BrokerAPI(runtime),
                 ConnectionAPI(runtime),
                 PublishAPI(runtime),
                 SubscriptionAPI(runtime),
@@ -60,11 +61,13 @@ async def test_non_broker_apis_register_described_tools() -> None:
             tools = await client.list_tools()
 
         assert {item.name for item in tools} == {
+            "activate_broker",
             "add_subscription",
             "connect",
             "disconnect",
             "get_connection_status",
             "get_topic_state",
+            "list_brokers",
             "list_subscriptions",
             "list_topics",
             "publish",
@@ -72,7 +75,12 @@ async def test_non_broker_apis_register_described_tools() -> None:
             "remove_subscription",
             "update_subscription",
         }
-        assert all(item.description for item in tools)
+        for item in tools:
+            assert item.description is not None
+            assert "Side effects:" in item.description
+            assert "Required state:" in item.description
+            assert "Identifiers:" in item.description
+            assert "Failures:" in item.description
 
     await scenario()
 

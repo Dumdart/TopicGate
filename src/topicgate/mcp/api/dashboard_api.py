@@ -62,25 +62,43 @@ class DashboardAPI(MCPApi):
 
         @app.tool()
         async def activate_dashboard_broker(broker_id: str) -> dict[str, Any]:
-            """Activate a broker and return its current dashboard snapshot."""
+            """Activate a broker and return its current dashboard snapshot.
+
+            Side effects: Disconnects the current client, changes the active broker,
+            connects over MQTT, and starts receiving messages.
+            Required state: The profile and credentials must permit a connection.
+            Identifiers: broker_id must be a broker UUID from the dashboard snapshot.
+            Failures: Fails for invalid UUIDs, unknown profiles, or connection errors.
+            """
             await self._runtime.activate_broker(UUID(broker_id))
             return self._snapshot()
 
         @app.tool()
         def select_dashboard_path(path: str) -> dict[str, Any]:
-            """Select a subscription filter or observed MQTT topic."""
+            """Read dashboard details for a subscription filter or observed topic.
+
+            Side effects: None; this only derives a view from current local state.
+            Required state: An active broker profile must exist.
+            Identifiers: path is an MQTT topic or subscription filter from the tree.
+            Failures: Fails without an active profile or when local state cannot be read.
+            """
             return self._selection(self._runtime.active_broker.id, path)
 
         @app.ui(
             name="open_topicgate_dashboard",
             title="Open TopicGate dashboard",
             description=(
-                "Open the TopicGate broker monitoring dashboard with subscription "
-                "trees, latest observed values, and read-only settings."
+                "Open the TopicGate broker monitoring dashboard. Side effects: "
+                "opening the view is passive, but switching brokers inside it activates "
+                "and connects that profile. Required state: an active broker and local "
+                "database must be available. Identifiers: broker choices use profile "
+                "UUIDs and tree paths use MQTT topics or filters. Failures: opening or "
+                "interaction can fail for missing state, invalid identifiers, database "
+                "errors, or MQTT connection errors."
             ),
         )
         def open_topicgate_dashboard() -> PrefabApp:
-            """Open the TopicGate monitoring dashboard."""
+            """Open the TopicGate monitoring dashboard described by the tool metadata."""
             return self._build_dashboard(
                 activate_broker=activate_dashboard_broker,
                 select_path=select_dashboard_path,

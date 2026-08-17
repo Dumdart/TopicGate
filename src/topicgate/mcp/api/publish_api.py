@@ -36,7 +36,15 @@ class PublishAPI(MCPApi):
         payload: str,
         payload_encoding: Literal["utf-8", "base64"] = "utf-8",
     ) -> None:
-        """Publish a UTF-8 or base64-encoded payload to the active MQTT broker."""
+        """Publish a UTF-8 or base64 payload to a selected MQTT broker.
+
+        Side effects: Sends a message over MQTT and may affect external consumers.
+        Required state: The selected broker must be active and connected.
+        Identifiers: broker_id accepts a UUID or unique case-insensitive name;
+        topic is an exact MQTT topic, not a wildcard subscription filter.
+        Failures: Fails for an invalid broker, encoding, topic, disconnected state,
+        or MQTT publish error.
+        """
         if payload_encoding == "base64":
             try:
                 payload_bytes = b64decode(payload, validate=True)

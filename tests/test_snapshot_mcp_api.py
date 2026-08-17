@@ -96,5 +96,11 @@ async def test_snapshot_tools_register_with_side_effect_annotations() -> None:
     assert set(tools) == {"get_broker_snapshot", "observe_broker_snapshot"}
     assert tools["get_broker_snapshot"].annotations.readOnlyHint is True
     assert tools["observe_broker_snapshot"].annotations.readOnlyHint is False
+    for item in tools.values():
+        assert item.description is not None
+        assert "Side effects:" in item.description
+        assert "Required state:" in item.description
+        assert "Identifiers:" in item.description
+        assert "Failures:" in item.description
     assert result.data.broker.name == "Primary"
     assert result.data.completeness.limitations == ["current_state_only"]
