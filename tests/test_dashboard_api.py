@@ -1,14 +1,17 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from fastmcp import Client, FastMCP
 
+from topicgate.app.models.broker_snapshot import SnapshotLimitation
+from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.models.connection_status import ConnectionStatus
-from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.mqtt_observation import ObservationSource
+from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.mcp.api.dashboard_api import DashboardAPI
 
@@ -28,22 +31,33 @@ def dashboard_runtime() -> MagicMock:
         Subscription("sensors/#", qos=0, retain_handling=2),
         Subscription("sensors/+/temperature", qos=1),
     )
-    runtime.list_topics.return_value = (
+    topic_state = TopicState(
+        "temperature",
         "sensors/kitchen/temperature",
+        b"22.4",
+        1,
+        False,
+        datetime(2026, 8, 11, 10, 30, tzinfo=timezone.utc),
+    )
+    unrelated_state = TopicState(
+        "topic",
         "unrelated/topic",
+        b"ignored",
+        0,
+        False,
+        datetime(2026, 8, 11, 10, 29, tzinfo=timezone.utc),
     )
-    runtime.get_topic_state.side_effect = lambda _broker_id, topic: (
-        TopicState(
-            "temperature",
-            "sensors/kitchen/temperature",
-            b"22.4",
-            1,
-            False,
-            datetime(2026, 8, 11, 10, 30, tzinfo=timezone.utc),
-        )
-        if topic == "sensors/kitchen/temperature"
-        else None
+    runtime.get_observer_model.return_value = ObserverModel(
+        root_stats=[],
+        topic_states={
+            topic_state.topic: topic_state,
+            unrelated_state.topic: unrelated_state,
+        },
     )
+    runtime.get_connection_status.return_value = ConnectionStatus.CONNECTED
+    runtime.get_dropped_message_count.return_value = 3
+    runtime.get_connected_at.return_value = None
+    runtime.get_observation_started_at.return_value = None
     runtime.activate_broker = AsyncMock()
     return runtime
 
@@ -51,7 +65,7 @@ def dashboard_runtime() -> MagicMock:
 async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
     async def scenario() -> None:
         mcp = FastMCP("test")
-        DashboardAPI(dashboard_runtime()).register(mcp)
+        DashboardAPI(dashboard_runtime()).register(mcp, control_enabled=True)
 
         async with Client(mcp) as client:
             tools = await client.list_tools()
@@ -59,12 +73,24 @@ async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
         assert [item.name for item in tools] == ["open_topicgate_dashboard"]
         description = tools[0].description
         assert description is not None
+        assert "control-mode" in description
+        assert "unavailable in read-only mode" in description
         assert "Side effects:" in description
         assert "Required state:" in description
         assert "Identifiers:" in description
         assert "Failures:" in description
 
     await scenario()
+
+
+async def test_read_only_mode_omits_dashboard_broker_activation_surface() -> None:
+    mcp = FastMCP("test")
+    DashboardAPI(dashboard_runtime()).register(mcp, control_enabled=False)
+
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    assert tools == []
 
 
 async def test_dashboard_provider_tools_describe_operational_contracts() -> None:
@@ -93,7 +119,21 @@ def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:
     assert "Subscriptions" in rendered
     assert "Metadata" in rendered
     assert "Subscription" in rendered
+    assert "Source" in rendered
+    assert "Truncation" in rendered
+    assert "Observation started" in rendered
+    assert "Snapshot completeness" in rendered
+    assert "Completeness limitations" in rendered
+    assert "Persisted origin" in rendered
+    assert "Retained" in rendered
+    assert "Live" in rendered
+    assert "Cached" in rendered
+    assert "Stale" in rendered
     assert "Connected" in rendered
+    assert "Broker control" in rendered
+    assert "Control action" in rendered
+    assert "Switching disconnects the current broker" in rendered
+    assert "activate_broker_id" in rendered
     assert "border-[#c8ced6]" in rendered
     assert "border-[#b8c0ca]" in rendered
     assert "bg-[#dce9f7]" in rendered
@@ -134,6 +174,11 @@ def test_snapshot_merges_filters_and_matching_topics_into_tree() -> None:
         "sensors/kitchen/temperature"
     )
     assert snapshot["initial_selection"]["topic"]["payload_display"] == "22.4"
+    assert next(
+        row
+        for row in snapshot["tree_rows"]
+        if row["path"] == "sensors/kitchen/temperature"
+    )["status"] == "live"
 
 
 def test_selection_uses_the_most_specific_matching_subscription() -> None:
@@ -171,10 +216,61 @@ def test_snapshot_keeps_payload_representations_for_selected_topic() -> None:
     assert selected["payload_encoding"] == "UTF-8"
 
 
+def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:
+    runtime = dashboard_runtime()
+    state = runtime.get_observer_model.return_value.topic_states[
+        "sensors/kitchen/temperature"
+    ]
+    state.payload_size = 20
+    state.source = ObservationSource.STORED
+    captured_at = state.received_at.replace(minute=31)
+    runtime.get_observation_started_at.return_value = (
+        state.received_at + timedelta(seconds=30)
+    )
+    api = DashboardAPI(
+        runtime,
+        BrokerSnapshotService(runtime, clock=lambda: captured_at),
+    )
+
+    snapshot = api._snapshot()
+    selected = snapshot["initial_selection"]["topic"]
+
+    assert selected["age_seconds"] == 60
+    assert selected["source"] == "stored"
+    assert selected["source_label"] == "Persisted storage"
+    assert selected["status"] == "stale"
+    assert selected["status_label"] == "Stale"
+    assert selected["retain_label"] == "No"
+    assert selected["is_truncated"] is True
+    assert selected["ingestion_truncated"] is True
+    assert SnapshotLimitation.PAYLOAD_TRUNCATED in (
+        snapshot["completeness"]["limitations"]
+    )
+    assert SnapshotLimitation.STORED_STATE_PREDATES_OBSERVATION in (
+        snapshot["completeness"]["limitations"]
+    )
+    assert snapshot["freshness"] == {
+        "max_age_seconds": None,
+        "stale_count": 0,
+    }
+    assert snapshot["observation_started_at_label"] == (
+        "2026-08-11T10:30:30+00:00"
+    )
+    assert snapshot["observed_for_label"] == "30.0 seconds"
+    assert snapshot["dropped_message_count"] == 3
+    assert snapshot["completeness"]["status_label"] == "Limited"
+    assert "Persisted values may predate the current observation window." in (
+        snapshot["completeness"]["limitations_labels"]
+    )
+
+
 def test_empty_broker_has_an_empty_tree_and_selection() -> None:
     runtime = dashboard_runtime()
     runtime.list_subscriptions.return_value = ()
-    runtime.list_topics.return_value = ()
+    runtime.get_observer_model.return_value = ObserverModel(
+        root_stats=[],
+        topic_states={},
+    )
     api = DashboardAPI(runtime)
 
     snapshot = api._snapshot()

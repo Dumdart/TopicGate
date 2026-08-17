@@ -17,9 +17,10 @@ class SnapshotAPI(MCPApi):
     def __init__(self, snapshot_service: BrokerSnapshotService):
         self._snapshot_service = snapshot_service
 
-    def register(self, mcp: FastMCP) -> None:
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.get_broker_snapshot)
-        mcp.add_tool(self.observe_broker_snapshot)
+        if control_enabled:
+            mcp.add_tool(self.observe_broker_snapshot)
 
     @tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def get_broker_snapshot(

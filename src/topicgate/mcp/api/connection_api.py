@@ -18,11 +18,12 @@ class ConnectionAPI(MCPApi):
         self._runtime = runtime
         self._resolver = resolver or BrokerResolver(runtime)
 
-    def register(self, mcp: FastMCP) -> None:
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.get_connection_status)
-        mcp.add_tool(self.connect)
-        mcp.add_tool(self.disconnect)
-        mcp.add_tool(self.reconnect)
+        if control_enabled:
+            mcp.add_tool(self.connect)
+            mcp.add_tool(self.disconnect)
+            mcp.add_tool(self.reconnect)
 
     @tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     def get_connection_status(

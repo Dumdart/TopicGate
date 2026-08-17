@@ -11,6 +11,7 @@ from fastmcp.exceptions import ToolError
 from topicgate.app.app_dependencies import AppDependencies
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.topic_message import TopicMessage
+from topicgate.mcp.capabilities import McpMode
 from topicgate.mcp.server import Server
 
 
@@ -65,7 +66,7 @@ async def test_unreachable_broker_startup_keeps_mcp_reads_and_reconnect_usable(
         "topicgate.mcp.server.AppDependencies",
         return_value=dependencies,
     ):
-        server = Server()
+        server = Server(McpMode.CONTROL)
 
     async with Client(server.mcp) as client:
         brokers = await client.call_tool("list_brokers", {})

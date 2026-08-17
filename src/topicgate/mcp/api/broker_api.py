@@ -18,9 +18,10 @@ class BrokerAPI(MCPApi):
         self._runtime = runtime
         self._resolver = resolver or BrokerResolver(runtime)
 
-    def register(self, mcp: FastMCP) -> None:
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.list_brokers)
-        mcp.add_tool(self.activate_broker)
+        if control_enabled:
+            mcp.add_tool(self.activate_broker)
 
     @tool(annotations={"readOnlyHint": True})
     def list_brokers(self) -> tuple[BrokerSummary, ...]:

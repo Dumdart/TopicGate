@@ -84,7 +84,7 @@ async def test_snapshot_tools_register_with_side_effect_annotations() -> None:
     service.build = AsyncMock(return_value=broker_snapshot())
     service.observe = AsyncMock(return_value=broker_snapshot())
     mcp = FastMCP("test")
-    SnapshotAPI(service).register(mcp)
+    SnapshotAPI(service).register(mcp, control_enabled=True)
 
     async with Client(mcp) as client:
         tools = {item.name: item for item in await client.list_tools()}
@@ -104,3 +104,13 @@ async def test_snapshot_tools_register_with_side_effect_annotations() -> None:
         assert "Failures:" in item.description
     assert result.data.broker.name == "Primary"
     assert result.data.completeness.limitations == ["current_state_only"]
+
+
+async def test_read_only_snapshot_api_omits_observation_refresh() -> None:
+    mcp = FastMCP("test")
+    SnapshotAPI(MagicMock()).register(mcp, control_enabled=False)
+
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    assert [item.name for item in tools] == ["get_broker_snapshot"]

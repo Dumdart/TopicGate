@@ -11,6 +11,12 @@ class SnapshotPayloadEncoding(StrEnum):
     BASE64 = "base64"
 
 
+class SnapshotTopicStatus(StrEnum):
+    LIVE = "live"
+    CACHED = "cached"
+    STALE = "stale"
+
+
 class SnapshotLimitation(StrEnum):
     CURRENT_STATE_ONLY = "current_state_only"
     RETAINED_DELIVERY_UNCONFIRMED = "retained_delivery_unconfirmed"
@@ -51,6 +57,7 @@ class SnapshotTopicState:
     age_seconds: float
     message_count: int
     source: ObservationSource
+    status: SnapshotTopicStatus
 
 
 @dataclass(frozen=True)

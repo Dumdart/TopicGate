@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,9 +14,11 @@ from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
 from topicgate.mcp.api.mcp_api import McpApiContainer
 from topicgate.mcp.api.publish_api import PublishAPI
-from topicgate.mcp.server import Server
+from topicgate.mcp.api.snapshot_api import SnapshotAPI
 from topicgate.mcp.api.subscription_api import SubscriptionAPI
 from topicgate.mcp.api.topic_api import TopicAPI
+from topicgate.mcp.capabilities import McpMode
+from topicgate.mcp.server import Server, parse_mode
 
 
 def mcp_runtime() -> MagicMock:
@@ -54,7 +56,8 @@ async def test_non_broker_apis_register_described_tools() -> None:
                 PublishAPI(runtime),
                 SubscriptionAPI(runtime),
                 TopicAPI(runtime),
-            ]
+            ],
+            control_enabled=True,
         ).register(mcp)
 
         async with Client(mcp) as client:
@@ -83,6 +86,40 @@ async def test_non_broker_apis_register_described_tools() -> None:
             assert "Failures:" in item.description
 
     await scenario()
+
+
+async def test_read_only_server_hides_every_control_capability() -> None:
+    runtime = mcp_runtime()
+    dependencies = SimpleNamespace(
+        runtime=runtime,
+        snapshot_service=MagicMock(),
+        service_items=(),
+    )
+
+    with patch(
+        "topicgate.mcp.server.AppDependencies",
+        return_value=dependencies,
+    ):
+        server = Server(McpMode.READ_ONLY)
+
+    async with Client(server.mcp) as client:
+        tools = await client.list_tools()
+
+    assert {item.name for item in tools} == {
+        "get_broker_snapshot",
+        "get_connection_status",
+        "get_topic_state",
+        "list_brokers",
+        "list_subscriptions",
+        "list_topics",
+    }
+    assert all(item.annotations.readOnlyHint is True for item in tools)
+
+
+def test_mcp_mode_defaults_to_read_only_and_requires_explicit_control() -> None:
+    assert parse_mode([]) is McpMode.READ_ONLY
+    assert parse_mode(["--mode", "read-only"]) is McpMode.READ_ONLY
+    assert parse_mode(["--mode", "control"]) is McpMode.CONTROL
 
 
 async def test_subscription_api_maps_flat_arguments_to_domain_models() -> None:
@@ -200,7 +237,7 @@ async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
         broker_id = runtime.active_broker.id
         api = PublishAPI(runtime)
 
-        await api.publish(broker_id, "home/set", "p\u00e5")
+        await api.publish(broker_id, "home/set", "p\u00e5", "utf-8")
         await api.publish(broker_id, "camera/set", "/wA=", "base64")
 
         assert runtime.publish.await_args_list[0].args == (
@@ -217,7 +254,36 @@ async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
         with pytest.raises(ValueError, match="not valid base64"):
             await api.publish(broker_id, "camera/set", "%%%", "base64")
 
+        with pytest.raises(ValueError, match="Unsupported payload encoding"):
+            await api.publish(
+                broker_id,
+                "home/set",
+                "on",
+                "ascii",
+            )
+
     await scenario()
+
+
+async def test_publish_tool_requires_explicit_inputs_and_safety_annotations() -> None:
+    runtime = mcp_runtime()
+    mcp = FastMCP("test")
+    PublishAPI(runtime).register(mcp, control_enabled=True)
+
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    assert len(tools) == 1
+    publish = tools[0]
+    assert publish.name == "publish"
+    assert set(publish.inputSchema["required"]) == {
+        "broker_id",
+        "topic",
+        "payload",
+        "payload_encoding",
+    }
+    assert publish.annotations.destructiveHint is True
+    assert publish.annotations.openWorldHint is True
 
 
 async def test_broker_scoped_apis_accept_profile_names() -> None:
@@ -233,7 +299,12 @@ async def test_broker_scoped_apis_accept_profile_names() -> None:
     subscriptions = subscription_api.list_subscriptions("Primary")
     await subscription_api.add_subscription("Primary", "devices/#")
     await BrokerAPI(runtime).activate_broker("Primary")
-    await PublishAPI(runtime).publish("Primary", "home/set", "on")
+    await PublishAPI(runtime).publish(
+        "Primary",
+        "home/set",
+        "on",
+        "utf-8",
+    )
 
     assert status.broker_id == broker_id
     assert subscriptions == (Subscription("home/#"),)
