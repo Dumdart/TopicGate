@@ -53,8 +53,8 @@ class DashboardAPI(MCPApi):
             self._app = FastMCPApp("topicgate-dashboard")
             self._register_app_tools()
 
-    def register(self, mcp: FastMCP) -> None:
-        if self._app is not None:
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
+        if control_enabled and self._app is not None:
             mcp.add_provider(self._app)
 
     def _register_app_tools(self) -> None:

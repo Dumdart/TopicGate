@@ -20,8 +20,9 @@ class PublishAPI(MCPApi):
         self._runtime = runtime
         self._resolver = resolver or BrokerResolver(runtime)
 
-    def register(self, mcp: FastMCP) -> None:
-        mcp.add_tool(self.publish)
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
+        if control_enabled:
+            mcp.add_tool(self.publish)
 
     @tool(
         annotations={

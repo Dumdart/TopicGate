@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,9 +14,11 @@ from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
 from topicgate.mcp.api.mcp_api import McpApiContainer
 from topicgate.mcp.api.publish_api import PublishAPI
-from topicgate.mcp.server import Server
+from topicgate.mcp.api.snapshot_api import SnapshotAPI
 from topicgate.mcp.api.subscription_api import SubscriptionAPI
 from topicgate.mcp.api.topic_api import TopicAPI
+from topicgate.mcp.capabilities import McpMode
+from topicgate.mcp.server import Server, parse_mode
 
 
 def mcp_runtime() -> MagicMock:
@@ -54,7 +56,8 @@ async def test_non_broker_apis_register_described_tools() -> None:
                 PublishAPI(runtime),
                 SubscriptionAPI(runtime),
                 TopicAPI(runtime),
-            ]
+            ],
+            control_enabled=True,
         ).register(mcp)
 
         async with Client(mcp) as client:
@@ -83,6 +86,40 @@ async def test_non_broker_apis_register_described_tools() -> None:
             assert "Failures:" in item.description
 
     await scenario()
+
+
+async def test_read_only_server_hides_every_control_capability() -> None:
+    runtime = mcp_runtime()
+    dependencies = SimpleNamespace(
+        runtime=runtime,
+        snapshot_service=MagicMock(),
+        service_items=(),
+    )
+
+    with patch(
+        "topicgate.mcp.server.AppDependencies",
+        return_value=dependencies,
+    ):
+        server = Server(McpMode.READ_ONLY)
+
+    async with Client(server.mcp) as client:
+        tools = await client.list_tools()
+
+    assert {item.name for item in tools} == {
+        "get_broker_snapshot",
+        "get_connection_status",
+        "get_topic_state",
+        "list_brokers",
+        "list_subscriptions",
+        "list_topics",
+    }
+    assert all(item.annotations.readOnlyHint is True for item in tools)
+
+
+def test_mcp_mode_defaults_to_read_only_and_requires_explicit_control() -> None:
+    assert parse_mode([]) is McpMode.READ_ONLY
+    assert parse_mode(["--mode", "read-only"]) is McpMode.READ_ONLY
+    assert parse_mode(["--mode", "control"]) is McpMode.CONTROL
 
 
 async def test_subscription_api_maps_flat_arguments_to_domain_models() -> None:

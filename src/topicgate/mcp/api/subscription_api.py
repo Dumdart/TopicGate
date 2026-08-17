@@ -18,11 +18,12 @@ class SubscriptionAPI(MCPApi):
         self._runtime = runtime
         self._resolver = resolver or BrokerResolver(runtime)
 
-    def register(self, mcp: FastMCP) -> None:
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.list_subscriptions)
-        mcp.add_tool(self.add_subscription)
-        mcp.add_tool(self.update_subscription)
-        mcp.add_tool(self.remove_subscription)
+        if control_enabled:
+            mcp.add_tool(self.add_subscription)
+            mcp.add_tool(self.update_subscription)
+            mcp.add_tool(self.remove_subscription)
 
     @tool(annotations={"readOnlyHint": True})
     def list_subscriptions(

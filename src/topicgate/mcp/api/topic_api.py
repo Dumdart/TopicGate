@@ -20,7 +20,7 @@ class TopicAPI(MCPApi):
         self._runtime = runtime
         self._resolver = resolver or BrokerResolver(runtime)
 
-    def register(self, mcp: FastMCP) -> None:
+    def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.list_topics)
         mcp.add_tool(self.get_topic_state)
 

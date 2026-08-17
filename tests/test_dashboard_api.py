@@ -51,7 +51,7 @@ def dashboard_runtime() -> MagicMock:
 async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
     async def scenario() -> None:
         mcp = FastMCP("test")
-        DashboardAPI(dashboard_runtime()).register(mcp)
+        DashboardAPI(dashboard_runtime()).register(mcp, control_enabled=True)
 
         async with Client(mcp) as client:
             tools = await client.list_tools()
@@ -65,6 +65,16 @@ async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
         assert "Failures:" in description
 
     await scenario()
+
+
+async def test_read_only_mode_omits_dashboard_broker_activation_surface() -> None:
+    mcp = FastMCP("test")
+    DashboardAPI(dashboard_runtime()).register(mcp, control_enabled=False)
+
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    assert tools == []
 
 
 async def test_dashboard_provider_tools_describe_operational_contracts() -> None:
