@@ -57,8 +57,32 @@ async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
             tools = await client.list_tools()
 
         assert [item.name for item in tools] == ["open_topicgate_dashboard"]
+        description = tools[0].description
+        assert description is not None
+        assert "Side effects:" in description
+        assert "Required state:" in description
+        assert "Identifiers:" in description
+        assert "Failures:" in description
 
     await scenario()
+
+
+async def test_dashboard_provider_tools_describe_operational_contracts() -> None:
+    api = DashboardAPI(dashboard_runtime())
+
+    tools = await api._app.list_tools()
+
+    assert {item.name for item in tools} == {
+        "activate_dashboard_broker",
+        "open_topicgate_dashboard",
+        "select_dashboard_path",
+    }
+    for item in tools:
+        assert item.description is not None
+        assert "Side effects:" in item.description
+        assert "Required state:" in item.description
+        assert "Identifiers:" in item.description
+        assert "Failures:" in item.description
 
 
 def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:

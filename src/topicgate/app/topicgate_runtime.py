@@ -157,7 +157,10 @@ class TopicGateRuntime(ServiceItem):
 
     @property
     def topic_update_interval(self) -> float:
-        return self.active_repo.topic_update_interval
+        return self.get_topic_update_interval(self._active_broker_id)
+
+    def get_topic_update_interval(self, broker_id: UUID) -> float:
+        return self._repository_for(broker_id).topic_update_interval
 
     def messages(self) -> AsyncIterator[MqttMessage]:
         return self.active_repo.messages()

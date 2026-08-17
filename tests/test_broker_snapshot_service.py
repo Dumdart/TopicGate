@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -63,6 +63,7 @@ def snapshot_service(
     runtime.get_dropped_message_count.return_value = dropped
     runtime.get_connected_at.return_value = NOW - timedelta(seconds=30)
     runtime.get_observation_started_at.return_value = NOW - timedelta(seconds=60)
+    runtime.activate_broker = AsyncMock()
     return BrokerSnapshotService(runtime, clock=lambda: NOW), selected, runtime
 
 
@@ -205,14 +206,31 @@ async def test_snapshot_validates_all_caller_controlled_bounds() -> None:
         {"result_limit": 1_001},
         {"payload_limit_bytes": -1},
         {"payload_limit_bytes": 16 * 1024 + 1},
-        {"settle_seconds": 5.1},
     )
     for arguments in invalid_arguments:
         with pytest.raises(ValueError):
             await service.build(selected.id, **arguments)
 
 
-async def test_snapshot_reports_actual_settling_duration_and_remains_incomplete() -> None:
+async def test_snapshot_read_does_not_activate_or_wait() -> None:
+    async def unexpected_sleep(_duration: float) -> None:
+        raise AssertionError("Read-only snapshots must not wait")
+
+    service, selected, runtime = snapshot_service()
+    service = BrokerSnapshotService(
+        runtime,
+        clock=lambda: NOW,
+        sleep=unexpected_sleep,
+    )
+
+    snapshot = await service.build(selected.id)
+
+    runtime.activate_broker.assert_not_awaited()
+    assert snapshot.settling.requested_seconds == 0
+    assert snapshot.settling.actual_seconds == 0
+
+
+async def test_observe_activates_waits_and_reports_actual_duration() -> None:
     monotonic_values = iter((10.0, 10.75))
     waited: list[float] = []
 
@@ -227,9 +245,50 @@ async def test_snapshot_reports_actual_settling_duration_and_remains_incomplete(
         sleep=sleep,
     )
 
-    snapshot = await service.build(selected.id, settle_seconds=0.5)
+    snapshot = await service.observe(selected.id, wait_seconds=0.5)
 
+    runtime.activate_broker.assert_awaited_once_with(selected.id)
     assert waited == [0.5]
     assert snapshot.settling.requested_seconds == 0.5
     assert snapshot.settling.actual_seconds == 0.75
     assert not snapshot.completeness.is_complete
+
+
+async def test_observe_defaults_to_one_second_wait() -> None:
+    waited: list[float] = []
+
+    async def sleep(duration: float) -> None:
+        waited.append(duration)
+
+    service, selected, runtime = snapshot_service()
+    service = BrokerSnapshotService(runtime, clock=lambda: NOW, sleep=sleep)
+
+    snapshot = await service.observe(selected.id)
+
+    assert waited == [1.0]
+    assert snapshot.settling.requested_seconds == 1.0
+
+
+async def test_observe_validates_before_activation() -> None:
+    service, selected, runtime = snapshot_service()
+
+    with pytest.raises(ValueError, match="wait_seconds"):
+        await service.observe(selected.id, wait_seconds=5.1)
+
+    runtime.activate_broker.assert_not_awaited()
+
+
+async def test_observe_does_not_wait_after_activation_failure() -> None:
+    waited: list[float] = []
+
+    async def sleep(duration: float) -> None:
+        waited.append(duration)
+
+    service, selected, runtime = snapshot_service()
+    runtime.activate_broker.side_effect = ConnectionError("unavailable")
+    service = BrokerSnapshotService(runtime, clock=lambda: NOW, sleep=sleep)
+
+    with pytest.raises(ConnectionError, match="unavailable"):
+        await service.observe(selected.id)
+
+    assert waited == []
