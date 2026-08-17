@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
+from datetime import datetime
 from uuid import UUID
 
 from topicgate.app.services.service_item import ServiceItem
@@ -66,8 +67,8 @@ class TopicGateRuntime(ServiceItem):
             for profile in self._brokers.get_all_profiles()
         )
 
-    def list_topics(self) -> tuple[str, ...]:
-        return self.active_repo.get_all_topics()
+    def list_topics(self, broker_id: UUID | None = None) -> tuple[str, ...]:
+        return self._repository_for(broker_id).get_all_topics()
 
     def get_broker(self, broker_id: UUID | None = None) -> BrokerSummary:
         return self._broker_summary(self._get_broker_profile(broker_id))
@@ -132,11 +133,27 @@ class TopicGateRuntime(ServiceItem):
 
     @property
     def connection_status(self) -> object:
-        return self.active_repo.connection_status
+        return self.get_connection_status(self._active_broker_id)
+
+    def get_connection_status(self, broker_id: UUID) -> object:
+        return self._repository_for(broker_id).connection_status
 
     @property
     def dropped_message_count(self) -> int:
-        return self.active_repo.dropped_message_count
+        return self.get_dropped_message_count(self._active_broker_id)
+
+    def get_dropped_message_count(self, broker_id: UUID) -> int:
+        return self._repository_for(broker_id).dropped_message_count
+
+    def get_connected_at(self, broker_id: UUID) -> datetime | None:
+        return getattr(self._repository_for(broker_id), "connected_at", None)
+
+    def get_observation_started_at(self, broker_id: UUID) -> datetime | None:
+        return getattr(
+            self._repository_for(broker_id),
+            "observation_started_at",
+            None,
+        )
 
     @property
     def topic_update_interval(self) -> float:
@@ -282,6 +299,13 @@ class TopicGateRuntime(ServiceItem):
     def _require_active_broker(self, broker_id: UUID) -> None:
         if broker_id != self.active_broker.id:
             raise ValueError("The operation requires the active broker profile.")
+
+    def _repository_for(self, broker_id: UUID | None) -> ObserverRepository:
+        selected_id = self._active_broker_id if broker_id is None else broker_id
+        try:
+            return self._mqtt_repositories[selected_id]
+        except KeyError as error:
+            raise KeyError(f"Unknown broker runtime: {selected_id}") from error
 
     def _require_observation_cache(self) -> ObservationCacheService:
         if self._observation_cache is None:
