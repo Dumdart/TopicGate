@@ -10,7 +10,7 @@ class ObservationRetentionPolicy:
     warning_threshold: float = 0.80
     max_payload_bytes_per_topic: int = 64 * 1024
     max_payload_bytes_per_broker: int = 8 * 1024 * 1024
-    max_database_bytes: int = 256 * 1024 * 1024
+    max_persisted_payload_database_bytes_total: int = 256 * 1024 * 1024
     max_age_seconds: int | None = None
     auto_remove_expired: bool = True
     auto_remove_excess: bool = True
@@ -22,7 +22,9 @@ class ObservationRetentionPolicy:
             "max_entries_total": self.max_entries_total,
             "max_payload_bytes_per_topic": self.max_payload_bytes_per_topic,
             "max_payload_bytes_per_broker": self.max_payload_bytes_per_broker,
-            "max_database_bytes": self.max_database_bytes,
+            "max_persisted_payload_database_bytes_total": (
+                self.max_persisted_payload_database_bytes_total
+            ),
         }
         for name, value in positive_limits.items():
             if type(value) is not int or value <= 0:

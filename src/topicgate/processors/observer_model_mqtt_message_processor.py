@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from topicgate.core.interfaces.mqtt_message_processor import MqttMessageProcessor
 from topicgate.core.models.mqtt_message import MqttMessage
@@ -56,6 +57,7 @@ class ObserverModelMqttMessageProcessor(MqttMessageProcessor[ObserverModel]):
             message_count=(
                 1 if previous_state is None else previous_state.message_count + 1
             ),
+            observation_id=uuid4(),
         )
         node.state = topic_state
         state.topic_states[message.topic] = topic_state

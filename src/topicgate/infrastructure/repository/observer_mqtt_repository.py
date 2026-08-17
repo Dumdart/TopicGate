@@ -1,11 +1,14 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
@@ -20,6 +23,9 @@ from topicgate.processors.observer_model_mqtt_message_processor import (
 )
 from topicgate.processors.subscription_manager import SubscriptionManager
 from topicgate.processors.observer_model_processor import ObserverModelProcessor
+from topicgate.processors.observation_retention_processor import (
+    ObservationRetentionProcessor,
+)
 
 
 class ObserverMqttRepository:
@@ -32,9 +38,13 @@ class ObserverMqttRepository:
         config: MqttConfig,
         topic_filters: list[str] | list[Subscription],
         model: ObserverModel | None = None,
+        retention_policy: Callable[[], ObservationRetentionPolicy] | None = None,
+        observation_sink: Callable[[MqttObservation], None] | None = None,
     ) -> None:
         self._state = model if model is not None else ObserverModel(root_stats=[])
         self._message_processor = ObserverModelMqttMessageProcessor()
+        self._retention_policy = retention_policy or ObservationRetentionPolicy
+        self._observation_sink = observation_sink
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
             maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
         )
@@ -176,9 +186,15 @@ class ObserverMqttRepository:
         return tuple(ObserverModelProcessor.get_all_topics(self._state))
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
+        msg = ObservationRetentionProcessor.truncate_mqtt_message(
+            msg,
+            self._retention_policy(),
+        )
         if not self._message_processor.process(self._state, msg):
             self._dropped_message_count += 1
             return
+        if self._observation_sink is not None:
+            self._observation_sink(self._state.topic_states[msg.topic])
         if self.message_queue.full():
             self.message_queue.get_nowait()
             self._dropped_message_count += 1

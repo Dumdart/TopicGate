@@ -1,10 +1,14 @@
 import pytest
+from alembic import command
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import IntegrityError
 
 from topicgate.infrastructure.database.base import Base
 from topicgate.infrastructure.database.database_context import DatabaseContext
-from topicgate.infrastructure.database.migrations import BASELINE_REVISION
+from topicgate.infrastructure.database.migrations import (
+    BASELINE_REVISION,
+    _alembic_config,
+)
 import topicgate.infrastructure.database.models  # noqa: F401
 
 
@@ -21,11 +25,12 @@ def test_new_database_is_migrated_to_head(tmp_path) -> None:
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
         policy = connection.exec_driver_sql(
-            "SELECT max_entries_per_broker, max_entries_total, max_age_seconds "
+            "SELECT max_entries_per_broker, max_entries_total, max_age_seconds, "
+            "max_persisted_payload_database_bytes_total "
             "FROM observation_retention_policy WHERE id = 1"
         ).one()
     assert revision != BASELINE_REVISION
-    assert policy == (1_000, 10_000, None)
+    assert policy == (1_000, 10_000, None, 256 * 1024 * 1024)
     database.dispose()
     engine.dispose()
 
@@ -46,6 +51,41 @@ def test_existing_unversioned_database_is_stamped_then_upgraded(tmp_path) -> Non
             if table not in post_baseline_tables
         ],
     )
+    engine.dispose()
+
+
+def test_existing_retention_limit_is_preserved_when_column_is_renamed(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "retention-rename.db"
+    url = f"sqlite:///{database_path.as_posix()}"
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        command.upgrade(_alembic_config(connection), "7c3e9f1a2b4d")
+        connection.exec_driver_sql(
+            "UPDATE observation_retention_policy "
+            "SET max_database_bytes = 123456 WHERE id = 1"
+        )
+    engine.dispose()
+
+    database = DatabaseContext(url)
+    engine = create_engine(url)
+    with engine.connect() as connection:
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns(
+                "observation_retention_policy"
+            )
+        }
+        value = connection.exec_driver_sql(
+            "SELECT max_persisted_payload_database_bytes_total "
+            "FROM observation_retention_policy WHERE id = 1"
+        ).scalar_one()
+
+    assert "max_database_bytes" not in columns
+    assert "max_persisted_payload_database_bytes_total" in columns
+    assert value == 123456
+    database.dispose()
     engine.dispose()
 
     database = DatabaseContext(url)

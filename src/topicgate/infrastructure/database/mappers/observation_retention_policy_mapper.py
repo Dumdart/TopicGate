@@ -25,7 +25,9 @@ class ObservationRetentionPolicyMapper:
         row.warning_threshold = policy.warning_threshold
         row.max_payload_bytes_per_topic = policy.max_payload_bytes_per_topic
         row.max_payload_bytes_per_broker = policy.max_payload_bytes_per_broker
-        row.max_database_bytes = policy.max_database_bytes
+        row.max_persisted_payload_database_bytes_total = (
+            policy.max_persisted_payload_database_bytes_total
+        )
         row.max_age_seconds = policy.max_age_seconds
         row.auto_remove_expired = policy.auto_remove_expired
         row.auto_remove_excess = policy.auto_remove_excess
@@ -41,7 +43,9 @@ class ObservationRetentionPolicyMapper:
             warning_threshold=row.warning_threshold,
             max_payload_bytes_per_topic=row.max_payload_bytes_per_topic,
             max_payload_bytes_per_broker=row.max_payload_bytes_per_broker,
-            max_database_bytes=row.max_database_bytes,
+            max_persisted_payload_database_bytes_total=(
+                row.max_persisted_payload_database_bytes_total
+            ),
             max_age_seconds=row.max_age_seconds,
             auto_remove_expired=row.auto_remove_expired,
             auto_remove_excess=row.auto_remove_excess,

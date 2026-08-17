@@ -33,6 +33,7 @@ def profile(name: str, host: str = "broker") -> BrokerProfile:
 
 def runtime_with(
     profiles: tuple[BrokerProfile, ...],
+    observation_cache=None,
 ) -> tuple[TopicGateRuntime, MagicMock, MagicMock]:
     brokers = MagicMock()
     active_id = profiles[0].id
@@ -74,6 +75,7 @@ def runtime_with(
             repositories,
             active_id,
             lambda _profile: mqtt,
+            observation_cache,
         ),
         brokers,
         mqtt,
@@ -373,6 +375,27 @@ def test_runtime_exposes_mqtt_event_streams() -> None:
     assert runtime.connection_statuses() is connection_stream
 
 
+def test_runtime_exposes_preview_and_confirmed_cache_deletion() -> None:
+    active = profile("Default")
+    cache = MagicMock()
+    preview = MagicMock()
+    preview.broker_id = active.id
+    cache.preview_clear_cache.return_value = preview
+    cache.preview_unsubscribed.return_value = preview
+    cache.confirm_deletion.return_value = 3
+    runtime, _, _ = runtime_with((active,), cache)
+
+    assert runtime.preview_clear_cache(active.id) is preview
+    assert runtime.preview_unsubscribed_cache(active.id) is preview
+    assert runtime.confirm_cache_deletion(preview) == 3
+    cache.preview_clear_cache.assert_called_once_with(active.id, None)
+    cache.preview_unsubscribed.assert_called_once_with(
+        active.id,
+        runtime.list_subscriptions(active.id),
+    )
+    cache.confirm_deletion.assert_called_once_with(preview)
+
+
 async def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
     async def scenario() -> None:
         default = profile("Default")
@@ -396,3 +419,15 @@ async def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
         assert deleted.id == removable.id
 
     await scenario()
+
+
+async def test_runtime_flushes_observations_before_deleting_a_broker() -> None:
+    active = profile("Default")
+    removable = profile("Remote")
+    cache = MagicMock()
+    runtime, brokers, _ = runtime_with((active, removable), cache)
+
+    await runtime.delete_broker(removable.id)
+
+    cache.flush_pending_writes.assert_called_once_with()
+    brokers.delete_profile.assert_called_once_with(removable.id)

@@ -18,7 +18,10 @@ def test_observation_retention_policy_has_safe_defaults() -> None:
     assert policy.warning_threshold == 0.80
     assert policy.max_payload_bytes_per_topic == 64 * 1024
     assert policy.max_payload_bytes_per_broker == 8 * 1024 * 1024
-    assert policy.max_database_bytes == 256 * 1024 * 1024
+    assert (
+        policy.max_persisted_payload_database_bytes_total
+        == 256 * 1024 * 1024
+    )
     assert policy.max_age_seconds is None
     assert policy.auto_remove_expired is True
     assert policy.auto_remove_excess is True
@@ -58,7 +61,7 @@ def test_observation_retention_policy_mapper_round_trips_custom_values() -> None
         warning_threshold=0.75,
         max_payload_bytes_per_topic=128 * 1024,
         max_payload_bytes_per_broker=16 * 1024 * 1024,
-        max_database_bytes=512 * 1024 * 1024,
+        max_persisted_payload_database_bytes_total=512 * 1024 * 1024,
         max_age_seconds=86_400,
         auto_remove_expired=False,
         auto_remove_excess=True,
