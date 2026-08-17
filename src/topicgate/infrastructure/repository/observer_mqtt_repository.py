@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -40,16 +41,20 @@ class ObserverMqttRepository:
         model: ObserverModel | None = None,
         retention_policy: Callable[[], ObservationRetentionPolicy] | None = None,
         observation_sink: Callable[[MqttObservation], None] | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._state = model if model is not None else ObserverModel(root_stats=[])
         self._message_processor = ObserverModelMqttMessageProcessor()
         self._retention_policy = retention_policy or ObservationRetentionPolicy
         self._observation_sink = observation_sink
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
             maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
         )
         self.connection_status_queue: asyncio.Queue[ConnectionStatus] = asyncio.Queue()
         self.connection_status = ConnectionStatus.DISCONNECTED
+        self.connected_at: datetime | None = None
+        self.observation_started_at: datetime | None = None
         self._dropped_message_count = 0
         self._is_running = False
         self._is_stopping = False
@@ -283,6 +288,11 @@ class ObserverMqttRepository:
 
     def _set_connection_status(self, status: ConnectionStatus) -> None:
         if self.connection_status != status:
+            if status == ConnectionStatus.CONNECTED:
+                connected_at = self._clock()
+                self.connected_at = connected_at
+                if self.observation_started_at is None:
+                    self.observation_started_at = connected_at
             self.connection_status = status
             self.connection_status_queue.put_nowait(status)
 

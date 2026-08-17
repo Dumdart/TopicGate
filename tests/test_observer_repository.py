@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -18,6 +19,8 @@ from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 def build_repository(
     model: ObserverModel | None = None,
+    *,
+    clock=None,
 ) -> tuple[ObserverMqttRepository, MagicMock]:
     manager = MagicMock()
     manager.activate = AsyncMock()
@@ -37,6 +40,7 @@ def build_repository(
             MqttConfig(host="broker", port=1883, username="", password=""),
             ["SmartHome/#"],
             model,
+            clock=clock,
         )
 
     return repository, manager
@@ -193,6 +197,22 @@ async def test_start_connects_then_activates_subscription_manager() -> None:
         await status_stream.aclose()
 
     await scenario()
+
+
+async def test_repository_tracks_connection_and_observation_windows() -> None:
+    first_connection = datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc)
+    second_connection = datetime(2026, 8, 17, 10, 5, tzinfo=timezone.utc)
+    connection_times = iter((first_connection, second_connection))
+    repository, _ = build_repository(clock=lambda: next(connection_times))
+    repository._mqtt_gate.start = AsyncMock()
+    repository._mqtt_gate.stop = AsyncMock()
+
+    await repository.start()
+    await repository.stop()
+    await repository.start()
+
+    assert repository.connected_at == second_connection
+    assert repository.observation_started_at == first_connection
 
 
 async def test_stop_deactivates_manager_before_stopping_mqtt_gate() -> None:

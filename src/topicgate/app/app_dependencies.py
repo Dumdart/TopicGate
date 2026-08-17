@@ -8,6 +8,7 @@ from topicgate.app.services.observation_cache_service import ObservationCacheSer
 from topicgate.app.services.observation_retention_policy_service import (
     ObservationRetentionPolicyService,
 )
+from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.interfaces.observer_repository import ObserverRepository
@@ -85,6 +86,7 @@ class AppDependencies:
             self._create_observer_repository,
             self.observation_cache,
         )
+        self.snapshot_service = BrokerSnapshotService(self.runtime)
 
         self.service_items: tuple[ServiceItem, ...] = (
             self.persistence,

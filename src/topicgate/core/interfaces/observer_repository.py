@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Protocol
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -19,6 +20,12 @@ class ObserverRepository(Protocol):
 
     @property
     def dropped_message_count(self) -> int: ...
+
+    @property
+    def connected_at(self) -> datetime | None: ...
+
+    @property
+    def observation_started_at(self) -> datetime | None: ...
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]: ...
