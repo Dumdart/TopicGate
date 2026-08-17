@@ -9,17 +9,19 @@ from topicgate.core.observer_limits import (
 from topicgate.core.models.observer_model import (
     ObserverModel,
     TopicNode,
-    TopicState,
 )
+from topicgate.core.models.mqtt_observation import MqttObservation
 
 
-class ObserverModelService:
+class ObserverModelProcessor:
     @staticmethod
     def deep_copy(model: ObserverModel) -> ObserverModel:
         """Return an independent snapshot of the observer model."""
-        state_copies: dict[int, TopicState] = {}
+        state_copies: dict[int, MqttObservation] = {}
 
-        def copy_state(state: TopicState | None) -> TopicState | None:
+        def copy_state(
+            state: MqttObservation | None,
+        ) -> MqttObservation | None:
             if state is None:
                 return None
             state_id = id(state)
@@ -64,20 +66,20 @@ class ObserverModelService:
         """Return all leaf topic paths that the observer should subscribe to."""
         return [
             topic
-            for topic, node in ObserverModelService._scan_nodes(model)
+            for topic, node in ObserverModelProcessor._scan_nodes(model)
             if not node.children
         ]
 
     @staticmethod
     def get_all_nodes(model: ObserverModel) -> list[TopicNode]:
         """Return every node in deterministic depth-first order."""
-        return [node for _, node in ObserverModelService._scan_nodes(model)]
+        return [node for _, node in ObserverModelProcessor._scan_nodes(model)]
 
     @staticmethod
-    def get_all_states(model: ObserverModel) -> list[TopicState]:
+    def get_all_states(model: ObserverModel) -> list[MqttObservation]:
         """Return the current state for every received topic."""
         states = dict(model.topic_states)
-        for _, node in ObserverModelService._scan_nodes(model):
+        for _, node in ObserverModelProcessor._scan_nodes(model):
             if node.state is not None:
                 states.setdefault(node.state.topic, node.state)
         return list(states.values())
@@ -88,7 +90,7 @@ class ObserverModelService:
         return next(
             (
                 node
-                for node_topic, node in ObserverModelService._scan_nodes(model)
+                for node_topic, node in ObserverModelProcessor._scan_nodes(model)
                 if node_topic == topic
             ),
             None,
@@ -98,9 +100,9 @@ class ObserverModelService:
     def find_or_create_node(model: ObserverModel, topic: str) -> TopicNode:
         """Return the exact topic node, creating its path when first observed."""
         segments = validate_topic_size_and_depth(topic, "topic")
-        missing_nodes = ObserverModelService._missing_node_count(model, segments)
+        missing_nodes = ObserverModelProcessor._missing_node_count(model, segments)
         if (
-            len(ObserverModelService.get_all_nodes(model)) + missing_nodes
+            len(ObserverModelProcessor.get_all_nodes(model)) + missing_nodes
             > MAX_OBSERVER_NODES
         ):
             raise ObserverModelCapacityError(
@@ -128,12 +130,15 @@ class ObserverModelService:
     def add_topics(model: ObserverModel, topics: Iterable[str]) -> ObserverModel:
         """Add topic paths to an observer tree and return the updated model."""
         for topic in topics:
-            ObserverModelService.find_or_create_node(model, topic)
+            ObserverModelProcessor.find_or_create_node(model, topic)
             model.configured_topics.add(topic)
         return model
 
     @staticmethod
-    def remove_topic(model: ObserverModel, topic: str) -> TopicState | None:
+    def remove_topic(
+        model: ObserverModel,
+        topic: str,
+    ) -> MqttObservation | None:
         """Remove retained state and prune its unconfigured empty path."""
         state = model.topic_states.pop(topic, None)
         segments = topic.split("/")
@@ -180,9 +185,9 @@ class ObserverModelService:
             root_stats=[],
             topic_states=dict(model.topic_states),
         )
-        ObserverModelService.add_topics(rebuilt, configured_topics)
+        ObserverModelProcessor.add_topics(rebuilt, configured_topics)
         for state in rebuilt.topic_states.values():
-            node = ObserverModelService.find_or_create_node(rebuilt, state.topic)
+            node = ObserverModelProcessor.find_or_create_node(rebuilt, state.topic)
             node.state = state
         model.root_stats = rebuilt.root_stats
         model.configured_topics = rebuilt.configured_topics

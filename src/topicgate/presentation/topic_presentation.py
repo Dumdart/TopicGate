@@ -8,7 +8,7 @@ from typing import Iterable
 from uuid import UUID
 
 from topicgate.core.models.broker_summary import BrokerSummary
-from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.core.payload_limits import (
@@ -163,7 +163,7 @@ def build_topic_tree(
 
 
 def topic_detail(
-    state: TopicState | None,
+    state: MqttObservation | None,
     topic: str = "",
     dropped_message_count: int = 0,
 ) -> TopicDetail:

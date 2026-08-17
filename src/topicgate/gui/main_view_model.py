@@ -10,7 +10,8 @@ from PySide6.QtCore import QObject, Signal
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.app.topicgate_runtime import TopicGateRuntime
@@ -22,7 +23,7 @@ from topicgate.presentation.topic_presentation import (
     matching_subscription,
     topic_detail,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class MainViewModel(QObject):
@@ -45,7 +46,7 @@ class MainViewModel(QObject):
         super().__init__()
         self._runtime = runtime
         self._topic = topic
-        self._state: TopicState | None = None
+        self._state: MqttObservation | None = None
         self._message_task: asyncio.Task[None] | None = None
         self._connection_task: asyncio.Task[None] | None = None
         self._connection_status = self._status_text(
@@ -134,14 +135,14 @@ class MainViewModel(QObject):
     def topic_paths(self) -> list[str]:
         subscriptions = self.subscriptions
         model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics = set(ObserverModelProcessor.get_all_topics(model))
         observed_topics.update(model.topic_states)
         return list(collect_visible_topic_paths(subscriptions, observed_topics))
 
     @property
     def topic_tree(self) -> tuple[TopicTreeNode, ...]:
         model = self._runtime.get_observer_model(self.active_broker_profile.id)
-        observed_topics = set(ObserverModelService.get_all_topics(model))
+        observed_topics = set(ObserverModelProcessor.get_all_topics(model))
         observed_topics.update(model.topic_states)
         return build_topic_tree(
             self.topic_paths,

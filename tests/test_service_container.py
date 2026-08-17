@@ -1,6 +1,5 @@
 import asyncio
-
-from topicgate.app.service_container import ServiceContainer
+from topicgate.app.services.service_container import ServiceContainer
 
 
 class FakeService:

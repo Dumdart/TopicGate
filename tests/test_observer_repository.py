@@ -5,12 +5,15 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observer_model import ObserverModel
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 def build_repository(
@@ -64,6 +67,28 @@ def test_repository_updates_the_broker_profile_observer_model() -> None:
     repository.handle_message(None, None, message)
 
     assert profile_model.topic_states[message.topic].payload == b"open"
+
+
+def test_repository_truncates_before_updating_model_and_sink() -> None:
+    captured = []
+    repository, _ = build_repository()
+    repository._retention_policy = lambda: ObservationRetentionPolicy(
+        max_payload_bytes_per_topic=4
+    )
+    repository._observation_sink = captured.append
+
+    repository.handle_message(
+        None,
+        None,
+        MqttMessage("SmartHome/value", b"123456", 0, False),
+    )
+
+    state = repository.get_state("SmartHome/value")
+    assert state is not None
+    assert state.payload == b"1234"
+    assert state.payload_size == 6
+    assert state.observation_id is not None
+    assert captured == [state]
 
 
 async def test_repository_updates_topic_state_before_publishing_message() -> None:
@@ -145,7 +170,7 @@ async def test_removing_subscription_clears_uncovered_retained_state() -> None:
 
         assert repository.get_state("devices/untrusted") is None
         assert repository.get_value("sensors/temperature") == b"21"
-        assert ObserverModelService.find_node(
+        assert ObserverModelProcessor.find_node(
             repository.get(), remaining.topic_filter
         ) is not None
 

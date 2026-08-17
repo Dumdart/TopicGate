@@ -2,7 +2,8 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.config.mqtt_config import MqttConfig
 
@@ -16,7 +17,7 @@ class ObserverStateReader(Protocol):
 
     def get(self) -> ObserverModel: ...
 
-    def get_state(self, topic: str) -> TopicState | None: ...
+    def get_state(self, topic: str) -> MqttObservation | None: ...
 
     def messages(self) -> AsyncIterator[MqttMessage]: ...
 

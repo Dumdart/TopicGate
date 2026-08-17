@@ -6,7 +6,7 @@ import logging
 from fastmcp import FastMCP
 
 from topicgate.app.app_dependencies import AppDependencies
-from topicgate.app.service_container import ServiceContainer
+from topicgate.app.services.service_container import ServiceContainer
 from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
 from topicgate.mcp.api.dashboard_api import DashboardAPI

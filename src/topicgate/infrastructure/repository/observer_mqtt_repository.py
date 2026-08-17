@@ -1,11 +1,15 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.core.observer_limits import TOPIC_TREE_REFRESH_INTERVAL_SECONDS
@@ -18,7 +22,10 @@ from topicgate.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
 from topicgate.processors.subscription_manager import SubscriptionManager
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
+from topicgate.processors.observation_retention_processor import (
+    ObservationRetentionProcessor,
+)
 
 
 class ObserverMqttRepository:
@@ -31,9 +38,13 @@ class ObserverMqttRepository:
         config: MqttConfig,
         topic_filters: list[str] | list[Subscription],
         model: ObserverModel | None = None,
+        retention_policy: Callable[[], ObservationRetentionPolicy] | None = None,
+        observation_sink: Callable[[MqttObservation], None] | None = None,
     ) -> None:
         self._state = model if model is not None else ObserverModel(root_stats=[])
         self._message_processor = ObserverModelMqttMessageProcessor()
+        self._retention_policy = retention_policy or ObservationRetentionPolicy
+        self._observation_sink = observation_sink
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
             maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
         )
@@ -49,7 +60,7 @@ class ObserverMqttRepository:
         self._subscription_manager = SubscriptionManager(
             self._mqtt_gate, self.handle_message
         )
-        ObserverModelService.rebuild(
+        ObserverModelProcessor.rebuild(
             self._state,
             (
                 subscription.topic_filter
@@ -140,7 +151,7 @@ class ObserverMqttRepository:
                 self._state = model
 
             try:
-                ObserverModelService.rebuild(
+                ObserverModelProcessor.rebuild(
                     self._state,
                     (
                         subscription.topic_filter
@@ -162,22 +173,28 @@ class ObserverMqttRepository:
                 raise
 
     def get(self) -> ObserverModel:
-        return ObserverModelService.deep_copy(self._state)
+        return ObserverModelProcessor.deep_copy(self._state)
 
     def get_value(self, topic: str) -> bytes | None:
         state = self.get_state(topic)
         return state.payload if state is not None else None
 
-    def get_state(self, topic: str) -> TopicState | None:
+    def get_state(self, topic: str) -> MqttObservation | None:
         return self._state.topic_states.get(topic)
 
     def get_all_topics(self) -> tuple[str, ...]:
-        return tuple(ObserverModelService.get_all_topics(self._state))
+        return tuple(ObserverModelProcessor.get_all_topics(self._state))
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
+        msg = ObservationRetentionProcessor.truncate_mqtt_message(
+            msg,
+            self._retention_policy(),
+        )
         if not self._message_processor.process(self._state, msg):
             self._dropped_message_count += 1
             return
+        if self._observation_sink is not None:
+            self._observation_sink(self._state.topic_states[msg.topic])
         if self.message_queue.full():
             self.message_queue.get_nowait()
             self._dropped_message_count += 1
@@ -200,7 +217,7 @@ class ObserverMqttRepository:
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.add(subscription)
-            ObserverModelService.rebuild(
+            ObserverModelProcessor.rebuild(
                 self._state,
                 (
                     item.topic_filter
@@ -276,8 +293,8 @@ class ObserverMqttRepository:
                 mqtt_filter_matches(subscription.topic_filter, topic)
                 for subscription in subscriptions
             ):
-                ObserverModelService.remove_topic(self._state, topic)
-        ObserverModelService.rebuild(
+                ObserverModelProcessor.remove_topic(self._state, topic)
+        ObserverModelProcessor.rebuild(
             self._state,
             (subscription.topic_filter for subscription in subscriptions),
         )

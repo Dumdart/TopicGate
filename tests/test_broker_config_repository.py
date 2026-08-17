@@ -3,10 +3,7 @@ from unittest.mock import MagicMock
 from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.observer_model import ObserverModel
-from topicgate.app.broker_profile_service import (
-    BrokerProfileService,
-)
-
+from topicgate.app.services.broker_profile_service import BrokerProfileService
 
 def test_broker_repository_returns_initial_settings(credential_store) -> None:
     config = AppConfig(

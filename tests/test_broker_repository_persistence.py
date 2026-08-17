@@ -1,12 +1,17 @@
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.database_context import DatabaseContext
-from topicgate.app.broker_profile_service import BrokerProfileService
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.app.services.broker_profile_service import BrokerProfileService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
+from topicgate.infrastructure.repository.topic_message_repository import (
+    TopicMessageRepository,
+)
 
 
 def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
@@ -50,7 +55,7 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
         id=persisted.config.id,
     )
     assert persisted.workspace.subscriptions == profile.workspace.subscriptions
-    assert ObserverModelService.get_all_topics(persisted.workspace.model) == [
+    assert ObserverModelProcessor.get_all_topics(persisted.workspace.model) == [
         "home/+/status",
         "home/#",
     ]
@@ -133,3 +138,35 @@ def test_broker_repository_imports_a_supplied_password_when_store_is_empty(
     assert profile.config.password == "runtime-secret"
     assert credential_store.get_password(profile.id) == "runtime-secret"
     database.dispose()
+
+
+def test_deleting_broker_cascades_to_persisted_topic_messages(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'broker-cascade.db'}")
+    profiles = BrokerProfileService(database, credential_store=credential_store)
+    profile = profiles.get_profile()
+    messages = TopicMessageRepository(database)
+    message = TopicMessage(
+        broker_id=profile.id,
+        topic="factory/temperature",
+        payload=b"21.5",
+        qos=1,
+        retain=True,
+        received_at=datetime.now(timezone.utc),
+        payload_size=4,
+        message_count=1,
+        observation_id=uuid4(),
+    )
+
+    try:
+        messages.update_message(message)
+        messages.flush()
+
+        profiles.delete_profile(profile.id)
+
+        assert messages.get_latest_messages(profile.id) == ()
+    finally:
+        messages.close()
+        database.dispose()

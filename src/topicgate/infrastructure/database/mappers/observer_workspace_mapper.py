@@ -6,7 +6,7 @@ from topicgate.infrastructure.database.mappers.subscription_mapper import (
 from topicgate.infrastructure.database.models.observer_workspace_row import (
     ObserverWorkspaceRow,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class ObserverWorkspaceMapper:
@@ -30,7 +30,7 @@ class ObserverWorkspaceMapper:
             SubscriptionMapper.to_subscription(subscription)
             for subscription in row.subscriptions
         )
-        model = ObserverModelService.add_topics(
+        model = ObserverModelProcessor.add_topics(
             ObserverModel(root_stats=[]),
             (subscription.topic_filter for subscription in subscriptions),
         )

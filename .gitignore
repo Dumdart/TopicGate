@@ -1,5 +1,7 @@
 # Database
-topic_gate.db
+*.db
+AGENTS.md
+graphify-out/
 
 # Distribution / build artifacts
 *.egg-info/

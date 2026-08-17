@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from topicgate.app.app_dependencies import AppDependencies
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.mqtt_message import MqttMessage
 
 
 def test_app_dependencies_uses_os_credentials_for_broker_profiles(
@@ -27,11 +28,16 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
             "topicgate.app.app_dependencies.BrokerProfileService",
             return_value=broker_profiles,
         ) as repository_type,
+        patch(
+            "topicgate.app.app_dependencies.TopicMessageRepository"
+        ) as message_type,
+        patch(
+            "topicgate.app.app_dependencies.ObservationRetentionPolicyRepository"
+        ) as retention_type,
         patch("topicgate.app.app_dependencies.ObserverMqttRepository"),
     ):
         dependencies = AppDependencies(
             data_dir=tmp_path,
-            legacy_database=tmp_path / "missing.db",
             credential_store=credential_store,
         )
 
@@ -39,5 +45,43 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
         database,
         credential_store=credential_store,
         runtime_state=dependencies.broker_runtime_state,
+        topic_messages=dependencies.topic_messages,
     )
-    assert dependencies.service_items == (dependencies.runtime,)
+    message_type.assert_called_once_with(
+        database,
+        policy_provider=dependencies.retention_policy.get,
+    )
+    retention_type.assert_called_once_with(database)
+    assert dependencies.service_items == (
+        dependencies.persistence,
+        dependencies.runtime,
+    )
+
+
+def test_live_observations_are_queued_for_persistence(
+    tmp_path: Path,
+    credential_store,
+) -> None:
+    dependencies = AppDependencies(
+        data_dir=tmp_path,
+        credential_store=credential_store,
+    )
+    profile = dependencies.broker_profiles.get_profile()
+    repository = dependencies.broker_runtime_state.repositories[profile.id]
+
+    try:
+        repository.handle_message(
+            None,
+            None,
+            MqttMessage("factory/temperature", b"21.5", 1, True),
+        )
+
+        stored = dependencies.topic_messages.get_latest_messages(profile.id)
+
+        assert len(stored) == 1
+        assert stored[0].topic == "factory/temperature"
+        assert stored[0].payload == b"21.5"
+        assert stored[0].observation_id is not None
+    finally:
+        dependencies.topic_messages.close()
+        dependencies._db_context.dispose()

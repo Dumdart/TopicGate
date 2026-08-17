@@ -1,4 +1,5 @@
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.mqtt_observation import ObservationSource
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.mqtt_topics import (
     MAX_MQTT_TOPIC_BYTES,
@@ -12,11 +13,11 @@ from topicgate.core.observer_limits import (
 from topicgate.processors.observer_model_mqtt_message_processor import (
     ObserverModelMqttMessageProcessor,
 )
-from topicgate.services.observer_model_service import ObserverModelService
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 def build_model(*topics: str) -> ObserverModel:
-    return ObserverModelService.add_topics(
+    return ObserverModelProcessor.add_topics(
         ObserverModel(root_stats=[]),
         topics,
     )
@@ -30,7 +31,7 @@ def test_process_stores_message_state_on_the_matching_topic_node() -> None:
 
     ObserverModelMqttMessageProcessor().process(model, message)
 
-    node = ObserverModelService.find_node(model, message.topic)
+    node = ObserverModelProcessor.find_node(model, message.topic)
 
     assert node is not None
     assert node.state is not None
@@ -40,6 +41,7 @@ def test_process_stores_message_state_on_the_matching_topic_node() -> None:
     assert node.state.qos == 1
     assert node.state.retain is True
     assert node.state.recieved_at.tzinfo is not None
+    assert node.state.source is ObservationSource.LIVE
 
 
 def test_process_stores_messages_for_discovered_topics() -> None:
@@ -49,7 +51,7 @@ def test_process_stores_messages_for_discovered_topics() -> None:
     ObserverModelMqttMessageProcessor().process(model, message)
 
     assert model.topic_states[message.topic].payload == b"value"
-    assert ObserverModelService.find_node(model, message.topic) is not None
+    assert ObserverModelProcessor.find_node(model, message.topic) is not None
 
 
 def test_process_counts_messages_per_topic() -> None:
@@ -104,7 +106,7 @@ def test_process_accepts_received_topic_at_depth_limit() -> None:
         model, MqttMessage(topic, b"value", 0, False)
     )
 
-    assert len(ObserverModelService.get_all_nodes(model)) == MAX_MQTT_TOPIC_LEVELS
+    assert len(ObserverModelProcessor.get_all_nodes(model)) == MAX_MQTT_TOPIC_LEVELS
     assert model.topic_states[topic].payload == b"value"
 
 
@@ -127,8 +129,8 @@ def test_distinct_topic_flood_evicts_least_recently_used_state() -> None:
     assert "devices/0" in model.topic_states
     assert "devices/1" not in model.topic_states
     assert "devices/overflow" in model.topic_states
-    assert ObserverModelService.find_node(model, "devices/#") is not None
-    assert len(ObserverModelService.get_all_nodes(model)) <= MAX_OBSERVER_NODES
+    assert ObserverModelProcessor.find_node(model, "devices/#") is not None
+    assert len(ObserverModelProcessor.get_all_nodes(model)) <= MAX_OBSERVER_NODES
 
 
 def test_retained_payload_bytes_are_bounded() -> None:

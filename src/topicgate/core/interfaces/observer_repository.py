@@ -3,7 +3,8 @@ from typing import Protocol
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 
 
@@ -28,7 +29,7 @@ class ObserverRepository(Protocol):
 
     def get(self) -> ObserverModel: ...
 
-    def get_state(self, topic: str, /) -> TopicState | None: ...
+    def get_state(self, topic: str, /) -> MqttObservation | None: ...
 
     def get_all_topics(self) -> tuple[str, ...]: ...
 

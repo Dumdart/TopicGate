@@ -1,19 +1,21 @@
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 
-from collections.abc import Iterator
-from topicgate.infrastructure.database.base import Base
-import topicgate.infrastructure.database.models  # noqa: F401 
+from sqlalchemy import event
 from sqlalchemy.engine.create import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
+
+from topicgate.infrastructure.database.migrations import upgrade_database
 
 
 class DatabaseContext:
     def __init__(self, url: str):
         self._engine = create_engine(url)
-
-        Base.metadata.create_all(self._engine)
+        if self._engine.dialect.name == "sqlite":
+            event.listen(self._engine, "connect", self._enable_sqlite_foreign_keys)
+        upgrade_database(self._engine)
 
         self._sessions = sessionmaker(
             bind=self._engine,
@@ -38,3 +40,11 @@ class DatabaseContext:
 
     def dispose(self) -> None:
         self._engine.dispose()
+
+    @staticmethod
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()

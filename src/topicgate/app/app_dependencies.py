@@ -1,17 +1,30 @@
 from pathlib import Path
 from uuid import UUID
 
-from topicgate.app.service_item import ServiceItem
-from topicgate.app.broker_profile_service import BrokerProfileService
+from topicgate.app.services.service_item import ServiceItem
+from topicgate.app.services.persistence_lifecycle import PersistenceLifecycle
+from topicgate.app.services.broker_profile_service import BrokerProfileService
+from topicgate.app.services.observation_cache_service import ObservationCacheService
+from topicgate.app.services.observation_retention_policy_service import (
+    ObservationRetentionPolicyService,
+)
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.credentials.os_credential_store import OSCredentialStore
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
+)
+from topicgate.infrastructure.repository.topic_message_repository import (
+    TopicMessageRepository,
+)
+from topicgate.infrastructure.repository.observation_retention_policy_repository import (
+    ObservationRetentionPolicyRepository,
 )
 from topicgate.paths import prepare_database_path, sqlite_url
 
@@ -22,46 +35,94 @@ class AppDependencies:
     def __init__(
         self,
         data_dir: Path | None = None,
-        legacy_database: Path | None = None,
         credential_store: CredentialStore | None = None,
     ) -> None:
-        database_path = prepare_database_path(data_dir, legacy_database)
+
+        database_path = prepare_database_path(data_dir)
         self._db_context = DatabaseContext(sqlite_url(database_path))
         self.credential_store = (
             OSCredentialStore() if credential_store is None else credential_store
         )
+
         self.broker_runtime_state = BrokerRuntimeState()
+        self.observation_retention_policy = ObservationRetentionPolicyRepository(
+            self._db_context
+        )
+        self.retention_policy = ObservationRetentionPolicyService(
+            self.observation_retention_policy
+        )
+        self.topic_messages = TopicMessageRepository(
+            self._db_context,
+            policy_provider=self.retention_policy.get,
+        )
+        self.observation_cache = ObservationCacheService(
+            self.topic_messages,
+            self.retention_policy,
+        )
+        self.persistence = PersistenceLifecycle(
+            self.topic_messages,
+            self._db_context,
+        )
         self.broker_profiles = BrokerProfileService(
             self._db_context,
             credential_store=self.credential_store,
             runtime_state=self.broker_runtime_state,
+            topic_messages=self.topic_messages,
         )
-        self.broker_repository = self.broker_profiles.brokers
-        self.broker_config_repository = self.broker_profiles.configs
-        self.subscription_repository = self.broker_profiles.subscriptions
         profile = self.broker_profiles.get_profile()
-        self.observer_model_repositories = self.broker_runtime_state.repositories
-        self.observer_model_repositories.update(
+
+        self.broker_runtime_state.repositories.update(
             {
                 item.id: self._create_observer_repository(item)
                 for item in self.broker_profiles.get_all_profiles()
             }
         )
-        self.observer_model_repository = self.observer_model_repositories[profile.id]
+
         self.runtime = TopicGateRuntime(
             self.broker_profiles,
-            self.observer_model_repositories,
+             self.broker_runtime_state.repositories,
             profile.id,
             self._create_observer_repository,
+            self.observation_cache,
         )
+
         self.service_items: tuple[ServiceItem, ...] = (
+            self.persistence,
             self.runtime,
         )
 
-    @staticmethod
-    def _create_observer_repository(profile: BrokerProfile) -> ObserverRepository:
+    def _create_observer_repository(
+        self,
+        profile: BrokerProfile,
+    ) -> ObserverRepository:
         return ObserverMqttRepository(
             profile.config,
             list(profile.workspace.subscriptions),
             profile.workspace.model,
+            retention_policy=self.retention_policy.get,
+            observation_sink=lambda observation: self._persist_observation(
+                profile.id,
+                observation,
+            ),
+        )
+
+    def _persist_observation(
+        self,
+        broker_id: UUID,
+        observation: MqttObservation,
+    ) -> None:
+        if observation.observation_id is None:
+            raise ValueError("A live observation requires an observation ID.")
+        self.topic_messages.update_message(
+            TopicMessage(
+                broker_id=broker_id,
+                topic=observation.topic,
+                payload=observation.payload,
+                qos=observation.qos,
+                retain=observation.retain,
+                received_at=observation.received_at,
+                payload_size=observation.payload_size or len(observation.payload),
+                message_count=observation.message_count,
+                observation_id=observation.observation_id,
+            )
         )
