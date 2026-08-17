@@ -37,7 +37,7 @@ except ImportError:
 
 
 class DashboardAPI(MCPApi):
-    """Read-only FastMCP companion dashboard for the TopicGate runtime."""
+    """Control-mode dashboard with read-only monitoring and broker activation."""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class DashboardAPI(MCPApi):
         self.open_topicgate_dashboard: Any | None = None
 
         if FastMCPApp is not None:
-            self._app = FastMCPApp("topicgate-dashboard")
+            self._app = FastMCPApp("topicgate-control-dashboard")
             self._register_app_tools()
 
     def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
@@ -89,15 +89,17 @@ class DashboardAPI(MCPApi):
 
         @app.ui(
             name="open_topicgate_dashboard",
-            title="Open TopicGate dashboard",
+            title="Open TopicGate control dashboard",
             description=(
-                "Open the TopicGate broker monitoring dashboard. Side effects: "
-                "opening the view is passive, but switching brokers inside it activates "
-                "and connects that profile. Required state: an active broker and local "
-                "database must be available. Identifiers: broker choices use profile "
-                "UUIDs and tree paths use MQTT topics or filters. Failures: opening or "
-                "interaction can fail for missing state, invalid identifiers, database "
-                "errors, or MQTT connection errors."
+                "Open the TopicGate control-mode monitoring dashboard. Side effects: "
+                "opening the view is passive, but its explicitly labeled broker control "
+                "disconnects the current client, activates the selected profile, and "
+                "connects over MQTT. This dashboard is unavailable in read-only mode. "
+                "Required state: an active broker and local database must be available. "
+                "Identifiers: broker choices use profile UUIDs and tree paths use MQTT "
+                "topics or filters. Failures: opening or interaction can fail for "
+                "missing state, invalid identifiers, database errors, or MQTT connection "
+                "errors."
             ),
         )
         def open_topicgate_dashboard() -> PrefabApp:
@@ -137,7 +139,7 @@ class DashboardAPI(MCPApi):
                 self._build_details()
 
         return PrefabApp(
-            title="TopicGate",
+            title="TopicGate Control Dashboard",
             view=view,
             mode="light",
             on_mount=RequestDisplayMode("fullscreen"),
@@ -159,13 +161,32 @@ class DashboardAPI(MCPApi):
                 level=1,
                 css_class="text-2xl font-semibold tracking-[-0.035em]",
             )
-            with Div(css_class="w-full sm:w-[40rem] sm:max-w-[55vw]"):
-                Label(
-                    "Broker",
-                    css_class="sr-only",
+            with Div(
+                css_class=(
+                    "w-full rounded-lg border border-[#f3d18a] bg-[#fffbeb] "
+                    "px-3 py-2 sm:w-[40rem] sm:max-w-[55vw]"
                 )
+            ):
+                with Row(gap=2, align="center", css_class="mb-2 flex-wrap"):
+                    Label(
+                        "Broker control",
+                        css_class="text-sm font-semibold text-[#78350f]",
+                    )
+                    Text(
+                        "Control action",
+                        css_class=(
+                            "rounded-full bg-[#fef3c7] px-2 py-0.5 "
+                            "text-xs font-medium uppercase tracking-wide "
+                            "text-[#92400e]"
+                        ),
+                    )
+                    Text(
+                        "Switching disconnects the current broker and connects "
+                        "the selected profile.",
+                        css_class="text-xs text-[#78350f]",
+                    )
                 with Select(
-                    name="active_broker_id",
+                    name="activate_broker_id",
                     value=snapshot["active_broker_id"],
                     on_change=CallTool(
                         tools["activate_broker"],
@@ -264,23 +285,46 @@ class DashboardAPI(MCPApi):
             if selected
             else "border-l-transparent text-[#202124]/75"
         )
-        Button(
-            f"{item.label}",
-            variant="ghost",
-            size="sm",
-            icon="circle-small",
-            on_click=CallTool(
-                tools["select_path"],
-                arguments={"path": item.path},
-                on_success=SetState("selection", RESULT),
-                on_error=ShowToast("Could not load topic", variant="error"),
-            ),
-            css_class=(
-                "h-9 w-full justify-start rounded-none border-l-2 px-2 "
-                "font-mono text-[13px] font-normal hover:border-l-[#9aa8b6] "
-                f"hover:bg-[#eef2f6] hover:text-[#202124] {selected_class}"
-            ),
-        )
+        with Div(css_class="relative"):
+            Button(
+                f"{item.label}",
+                variant="ghost",
+                size="sm",
+                icon="circle-small",
+                on_click=CallTool(
+                    tools["select_path"],
+                    arguments={"path": item.path},
+                    on_success=SetState("selection", RESULT),
+                    on_error=ShowToast("Could not load topic", variant="error"),
+                ),
+                css_class=(
+                    "h-9 w-full justify-start rounded-none border-l-2 px-2 "
+                    "pr-7 font-mono text-[13px] font-normal "
+                    "hover:border-l-[#9aa8b6] hover:bg-[#eef2f6] "
+                    f"hover:text-[#202124] {selected_class}"
+                ),
+            )
+            with If(item.status == "live"):
+                Div(
+                    css_class=(
+                        "absolute right-2 top-[0.875rem] size-2 "
+                        "rounded-full bg-[#16a34a]"
+                    )
+                )
+            with If(item.status == "cached"):
+                Div(
+                    css_class=(
+                        "absolute right-2 top-[0.875rem] size-2 "
+                        "rounded-full bg-[#3b82f6]"
+                    )
+                )
+            with If(item.status == "stale"):
+                Div(
+                    css_class=(
+                        "absolute right-2 top-[0.875rem] size-2 "
+                        "rounded-full bg-[#d97706]"
+                    )
+                )
 
     def _build_details(self) -> None:
         with Column(
@@ -295,6 +339,7 @@ class DashboardAPI(MCPApi):
                     "lg:text-base"
                 ),
             )
+            self._build_topic_status()
             with Div(
                 css_class=(
                     "min-h-44 rounded-lg border border-[#c8ced6] border-l-4 "
@@ -311,6 +356,8 @@ class DashboardAPI(MCPApi):
                     ),
                 )
 
+            self._build_snapshot_health()
+
             with Grid(
                 columns=None,
                 gap=0,
@@ -322,6 +369,141 @@ class DashboardAPI(MCPApi):
             ):
                 self._build_metadata()
                 self._build_subscription_settings()
+
+    @staticmethod
+    def _build_topic_status() -> None:
+        with Row(
+            gap=2,
+            align="center",
+            css_class="mb-5 flex-wrap",
+        ):
+            with If("selection.topic.status == 'live'"):
+                with Row(
+                    gap=2,
+                    align="center",
+                    css_class=(
+                        "rounded-full bg-[#dcfce7] px-3 py-1 "
+                        "text-sm text-[#166534]"
+                    ),
+                ):
+                    Div(css_class="size-2 rounded-full bg-[#16a34a]")
+                    Text("Live")
+            with If("selection.topic.status == 'cached'"):
+                with Row(
+                    gap=2,
+                    align="center",
+                    css_class=(
+                        "rounded-full bg-[#dbeafe] px-3 py-1 "
+                        "text-sm text-[#1d4ed8]"
+                    ),
+                ):
+                    Div(css_class="size-2 rounded-full bg-[#3b82f6]")
+                    Text("Cached")
+            with If("selection.topic.status == 'stale'"):
+                with Row(
+                    gap=2,
+                    align="center",
+                    css_class=(
+                        "rounded-full bg-[#fef3c7] px-3 py-1 "
+                        "text-sm text-[#92400e]"
+                    ),
+                ):
+                    Div(css_class="size-2 rounded-full bg-[#d97706]")
+                    Text("Stale")
+            with If("selection.topic.source == 'stored'"):
+                Text(
+                    "Persisted origin",
+                    css_class=(
+                        "rounded-full border border-[#c8ced6] px-3 py-1 "
+                        "text-sm text-[#4b5563]"
+                    ),
+                )
+            with If("selection.topic.retained"):
+                Text(
+                    "Retained",
+                    css_class=(
+                        "rounded-full border border-[#c8ced6] px-3 py-1 "
+                        "text-sm text-[#4b5563]"
+                    ),
+                )
+        Text(
+            f"{STATE.selection.topic.status_detail}",
+            css_class="mb-5 text-sm text-[#5f6368]",
+        )
+
+    def _build_snapshot_health(self) -> None:
+        with Grid(
+            columns=None,
+            gap=3,
+            css_class="mt-8 grid-cols-1 md:grid-cols-3",
+        ):
+            with Div(
+                css_class="rounded-lg border border-[#c8ced6] bg-white p-5"
+            ):
+                Text(
+                    "Observation started",
+                    css_class="text-xs uppercase tracking-[0.12em] text-[#5f6368]",
+                )
+                Text(
+                    f"{STATE.snapshot.observation_started_at_label}",
+                    code=True,
+                    css_class="mt-2 break-words text-sm text-[#202124]",
+                )
+                Text(
+                    f"Observed for {STATE.snapshot.observed_for_label}",
+                    css_class="mt-1 text-xs text-[#5f6368]",
+                )
+            with Div(
+                css_class="rounded-lg border border-[#c8ced6] bg-white p-5"
+            ):
+                Text(
+                    "Dropped messages",
+                    css_class="text-xs uppercase tracking-[0.12em] text-[#5f6368]",
+                )
+                Text(
+                    f"{STATE.snapshot.dropped_message_count}",
+                    css_class="mt-2 text-2xl font-medium text-[#202124]",
+                )
+                Text(
+                    "Since this runtime started",
+                    css_class="mt-1 text-xs text-[#5f6368]",
+                )
+            with Div(
+                css_class="rounded-lg border border-[#c8ced6] bg-white p-5"
+            ):
+                Text(
+                    "Snapshot completeness",
+                    css_class="text-xs uppercase tracking-[0.12em] text-[#5f6368]",
+                )
+                Text(
+                    f"{STATE.snapshot.completeness.status_label}",
+                    css_class="mt-2 text-2xl font-medium text-[#202124]",
+                )
+                Text(
+                    f"Captured {STATE.snapshot.captured_at_label}",
+                    css_class="mt-1 text-xs text-[#5f6368]",
+                )
+
+        with If("snapshot.completeness.limitations_labels.length > 0"):
+            with Div(
+                css_class=(
+                    "mt-3 rounded-lg border border-[#f3d18a] "
+                    "bg-[#fffbeb] px-5 py-4"
+                )
+            ):
+                Heading(
+                    "Completeness limitations",
+                    level=3,
+                    css_class="mb-2 text-sm font-semibold text-[#78350f]",
+                )
+                with Column(gap=1):
+                    with ForEach(
+                        "snapshot.completeness.limitations_labels"
+                    ) as limitation:
+                        Text(
+                            f"{limitation}",
+                            css_class="text-sm leading-5 text-[#78350f]",
+                        )
 
     def _build_metadata(self) -> None:
         with Column(gap=4, css_class="pb-9 xl:pr-12"):

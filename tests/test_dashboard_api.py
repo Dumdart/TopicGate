@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -73,6 +73,8 @@ async def test_dashboard_registers_only_its_entry_point_for_the_model() -> None:
         assert [item.name for item in tools] == ["open_topicgate_dashboard"]
         description = tools[0].description
         assert description is not None
+        assert "control-mode" in description
+        assert "unavailable in read-only mode" in description
         assert "Side effects:" in description
         assert "Required state:" in description
         assert "Identifiers:" in description
@@ -119,7 +121,19 @@ def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:
     assert "Subscription" in rendered
     assert "Source" in rendered
     assert "Truncation" in rendered
+    assert "Observation started" in rendered
+    assert "Snapshot completeness" in rendered
+    assert "Completeness limitations" in rendered
+    assert "Persisted origin" in rendered
+    assert "Retained" in rendered
+    assert "Live" in rendered
+    assert "Cached" in rendered
+    assert "Stale" in rendered
     assert "Connected" in rendered
+    assert "Broker control" in rendered
+    assert "Control action" in rendered
+    assert "Switching disconnects the current broker" in rendered
+    assert "activate_broker_id" in rendered
     assert "border-[#c8ced6]" in rendered
     assert "border-[#b8c0ca]" in rendered
     assert "bg-[#dce9f7]" in rendered
@@ -160,6 +174,11 @@ def test_snapshot_merges_filters_and_matching_topics_into_tree() -> None:
         "sensors/kitchen/temperature"
     )
     assert snapshot["initial_selection"]["topic"]["payload_display"] == "22.4"
+    assert next(
+        row
+        for row in snapshot["tree_rows"]
+        if row["path"] == "sensors/kitchen/temperature"
+    )["status"] == "live"
 
 
 def test_selection_uses_the_most_specific_matching_subscription() -> None:
@@ -205,6 +224,9 @@ def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:
     state.payload_size = 20
     state.source = ObservationSource.STORED
     captured_at = state.received_at.replace(minute=31)
+    runtime.get_observation_started_at.return_value = (
+        state.received_at + timedelta(seconds=30)
+    )
     api = DashboardAPI(
         runtime,
         BrokerSnapshotService(runtime, clock=lambda: captured_at),
@@ -215,6 +237,10 @@ def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:
 
     assert selected["age_seconds"] == 60
     assert selected["source"] == "stored"
+    assert selected["source_label"] == "Persisted storage"
+    assert selected["status"] == "stale"
+    assert selected["status_label"] == "Stale"
+    assert selected["retain_label"] == "No"
     assert selected["is_truncated"] is True
     assert selected["ingestion_truncated"] is True
     assert SnapshotLimitation.PAYLOAD_TRUNCATED in (
@@ -227,6 +253,15 @@ def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:
         "max_age_seconds": None,
         "stale_count": 0,
     }
+    assert snapshot["observation_started_at_label"] == (
+        "2026-08-11T10:30:30+00:00"
+    )
+    assert snapshot["observed_for_label"] == "30.0 seconds"
+    assert snapshot["dropped_message_count"] == 3
+    assert snapshot["completeness"]["status_label"] == "Limited"
+    assert "Persisted values may predate the current observation window." in (
+        snapshot["completeness"]["limitations_labels"]
+    )
 
 
 def test_empty_broker_has_an_empty_tree_and_selection() -> None:

@@ -7,6 +7,7 @@ import pytest
 from topicgate.app.models.broker_snapshot import (
     SnapshotLimitation,
     SnapshotPayloadEncoding,
+    SnapshotTopicStatus,
 )
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -182,6 +183,7 @@ async def test_snapshot_reports_provenance_age_window_and_drop_limitations() -> 
     assert snapshot.observed_for_seconds == 60
     assert snapshot.topics[0].age_seconds == 15
     assert snapshot.topics[0].source == ObservationSource.STORED
+    assert snapshot.topics[0].status == SnapshotTopicStatus.CACHED
     assert snapshot.dropped_message_count == 4
     assert not snapshot.completeness.is_complete
     assert SnapshotLimitation.CURRENT_STATE_ONLY in snapshot.completeness.limitations
@@ -194,6 +196,33 @@ async def test_snapshot_reports_provenance_age_window_and_drop_limitations() -> 
     assert SnapshotLimitation.DROPPED_MESSAGES in (
         snapshot.completeness.limitations
     )
+
+
+async def test_snapshot_classifies_live_cached_and_stale_topic_state() -> None:
+    service, selected, runtime = snapshot_service(
+        observation("live", b"new", age_seconds=10),
+        observation(
+            "cached",
+            b"stored",
+            age_seconds=20,
+            source=ObservationSource.STORED,
+        ),
+        observation(
+            "stale",
+            b"old",
+            age_seconds=90,
+            source=ObservationSource.STORED,
+        ),
+    )
+    runtime.get_observation_started_at.return_value = NOW - timedelta(seconds=60)
+
+    snapshot = await service.build(selected.id)
+
+    assert {item.topic: item.status for item in snapshot.topics} == {
+        "cached": SnapshotTopicStatus.CACHED,
+        "live": SnapshotTopicStatus.LIVE,
+        "stale": SnapshotTopicStatus.STALE,
+    }
 
 
 async def test_snapshot_validates_all_caller_controlled_bounds() -> None:

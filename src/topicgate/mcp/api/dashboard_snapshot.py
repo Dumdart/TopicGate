@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from base64 import b64decode, b64encode
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -67,6 +68,14 @@ class DashboardSnapshotBuilder:
             if subscriptions
             else ""
         )
+        completeness = asdict(broker_snapshot.completeness)
+        completeness["status_label"] = (
+            "Complete" if broker_snapshot.completeness.is_complete else "Limited"
+        )
+        completeness["limitations_labels"] = [
+            self._limitation_label(item.value)
+            for item in broker_snapshot.completeness.limitations
+        ]
         return {
             "active_broker_id": str(broker_snapshot.broker.id),
             "active_broker_name": broker_snapshot.broker.name,
@@ -75,6 +84,22 @@ class DashboardSnapshotBuilder:
                 broker_snapshot.connection_status.replace("_", " ").title()
             ),
             "captured_at": broker_snapshot.captured_at.isoformat(),
+            "captured_at_label": self._datetime_label(
+                broker_snapshot.captured_at
+            ),
+            "observation_started_at": (
+                None
+                if broker_snapshot.observation_started_at is None
+                else broker_snapshot.observation_started_at.isoformat()
+            ),
+            "observation_started_at_label": self._datetime_label(
+                broker_snapshot.observation_started_at
+            ),
+            "observed_for_seconds": broker_snapshot.observed_for_seconds,
+            "observed_for_label": self._duration_label(
+                broker_snapshot.observed_for_seconds
+            ),
+            "dropped_message_count": broker_snapshot.dropped_message_count,
             "brokers": [self._broker_dict(item) for item in brokers],
             "subscriptions": [
                 self._subscription_row(item) for item in subscriptions
@@ -85,11 +110,11 @@ class DashboardSnapshotBuilder:
             "tree_rows": self._tree_rows(
                 paths,
                 subscriptions,
-                visible_names,
+                visible_topics,
             ),
             "freshness": asdict(broker_snapshot.freshness),
             "results": asdict(broker_snapshot.results),
-            "completeness": asdict(broker_snapshot.completeness),
+            "completeness": completeness,
             "initial_selection": self._selection(
                 broker_snapshot,
                 subscriptions,
@@ -161,6 +186,9 @@ class DashboardSnapshotBuilder:
                 "dropped_message_count": dropped_message_count,
                 "source": None,
                 "source_label": "-",
+                "status": "waiting",
+                "status_label": "Waiting",
+                "status_detail": "No value has been observed for this topic.",
                 "ingestion_truncated": False,
                 "rendering_truncated": False,
             }
@@ -212,7 +240,16 @@ class DashboardSnapshotBuilder:
             "message_count": state.message_count,
             "dropped_message_count": dropped_message_count,
             "source": state.source.value,
-            "source_label": state.source.value.title(),
+            "source_label": (
+                "Persisted storage"
+                if state.source.value == "stored"
+                else "Live MQTT observation"
+            ),
+            "status": state.status.value,
+            "status_label": state.status.value.title(),
+            "status_detail": DashboardSnapshotBuilder._status_detail(
+                state.status.value
+            ),
             "ingestion_truncated": payload.ingestion_truncated,
             "rendering_truncated": payload.rendering_truncated,
         }
@@ -232,8 +269,48 @@ class DashboardSnapshotBuilder:
             "received_at": state.received_at.isoformat(timespec="seconds"),
             "age_seconds": state.age_seconds,
             "source": state.source.value,
+            "status": state.status.value,
             "is_truncated": state.payload.truncated,
         }
+
+    @staticmethod
+    def _status_detail(status: str) -> str:
+        if status == "stale":
+            return "Value predates the current observation window."
+        if status == "cached":
+            return "Value was restored from persisted storage."
+        return "Value was received during the current runtime."
+
+    @staticmethod
+    def _datetime_label(value: datetime | None) -> str:
+        if value is None:
+            return "Not started"
+        return value.isoformat(timespec="seconds")
+
+    @staticmethod
+    def _duration_label(seconds: float | None) -> str:
+        if seconds is None:
+            return "Not observing"
+        return f"{seconds:.1f} seconds"
+
+    @staticmethod
+    def _limitation_label(value: str) -> str:
+        labels = {
+            "current_state_only": "Current state only; this is not message history.",
+            "retained_delivery_unconfirmed": (
+                "Retained delivery cannot be confirmed from snapshot state."
+            ),
+            "broker_disconnected": "Broker is disconnected.",
+            "observation_not_started": "Live observation has not started.",
+            "stored_state_predates_observation": (
+                "Persisted values may predate the current observation window."
+            ),
+            "dropped_messages": "Messages were dropped before processing.",
+            "stale_states_omitted": "Stale states were omitted by the age limit.",
+            "result_limit_reached": "Topics were omitted by the result limit.",
+            "payload_truncated": "One or more payloads are truncated.",
+        }
+        return labels[value]
 
     @staticmethod
     def _size_label(size: int) -> str:
@@ -258,9 +335,11 @@ class DashboardSnapshotBuilder:
     def _tree_rows(
         paths: tuple[str, ...],
         subscriptions: tuple[Subscription, ...],
-        observed: tuple[str, ...],
+        topics: tuple[SnapshotTopicState, ...],
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        status_by_topic = {item.topic: item.status.value for item in topics}
+        observed = tuple(status_by_topic)
 
         def append(nodes: tuple[Any, ...], depth: int) -> None:
             for node in nodes:
@@ -271,6 +350,7 @@ class DashboardSnapshotBuilder:
                         "indent": f"{depth * 1.15}rem",
                         "selectable": node.selectable,
                         "has_children": bool(node.children),
+                        "status": status_by_topic.get(node.path),
                     }
                 )
                 append(node.children, depth + 1)

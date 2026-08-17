@@ -17,6 +17,7 @@ from topicgate.app.models.broker_snapshot import (
     SnapshotResultLimit,
     SnapshotSettling,
     SnapshotTopicState,
+    SnapshotTopicStatus,
 )
 from topicgate.app.services.broker_resolver import BrokerResolver
 from topicgate.app.topicgate_runtime import TopicGateRuntime
@@ -161,11 +162,6 @@ class BrokerSnapshotService:
         stale_count = len(aged) - len(fresh)
         selected = fresh[:result_limit]
         omitted_by_limit = len(fresh) - len(selected)
-        topics = tuple(
-            self._topic_snapshot(state, age, payload_limit_bytes)
-            for state, age in selected
-        )
-
         status = self._runtime.get_connection_status(resolved.id)
         dropped_message_count = self._runtime.get_dropped_message_count(
             resolved.id
@@ -174,6 +170,16 @@ class BrokerSnapshotService:
         observation_started_at = self._runtime.get_observation_started_at(
             resolved.id
         )
+        topics = tuple(
+            self._topic_snapshot(
+                state,
+                age,
+                payload_limit_bytes,
+                observation_started_at=observation_started_at,
+            )
+            for state, age in selected
+        )
+
         observed_for_seconds = (
             None
             if observation_started_at is None
@@ -236,6 +242,8 @@ class BrokerSnapshotService:
         state: MqttObservation,
         age_seconds: float,
         payload_limit_bytes: int,
+        *,
+        observation_started_at: datetime | None,
     ) -> SnapshotTopicState:
         return SnapshotTopicState(
             topic=state.topic,
@@ -246,7 +254,24 @@ class BrokerSnapshotService:
             age_seconds=age_seconds,
             message_count=state.message_count,
             source=state.source,
+            status=cls._topic_status(state, observation_started_at),
         )
+
+    @classmethod
+    def _topic_status(
+        cls,
+        state: MqttObservation,
+        observation_started_at: datetime | None,
+    ) -> SnapshotTopicStatus:
+        if (
+            observation_started_at is not None
+            and cls._as_utc(state.received_at)
+            < cls._as_utc(observation_started_at)
+        ):
+            return SnapshotTopicStatus.STALE
+        if state.source == ObservationSource.STORED:
+            return SnapshotTopicStatus.CACHED
+        return SnapshotTopicStatus.LIVE
 
     @staticmethod
     def _render_payload(
