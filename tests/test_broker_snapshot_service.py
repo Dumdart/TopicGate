@@ -230,6 +230,15 @@ async def test_snapshot_read_does_not_activate_or_wait() -> None:
     assert snapshot.settling.actual_seconds == 0
 
 
+async def test_async_and_synchronous_snapshot_reads_share_one_result() -> None:
+    service, selected, _ = snapshot_service(observation("sensor/value", b"12"))
+
+    synchronous = service.build_current(selected.id)
+    asynchronous = await service.build(selected.id)
+
+    assert synchronous == asynchronous
+
+
 async def test_observe_activates_waits_and_reports_actual_duration() -> None:
     monotonic_values = iter((10.0, 10.75))
     waited: list[float] = []

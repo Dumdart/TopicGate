@@ -65,6 +65,24 @@ class BrokerSnapshotService:
         result_limit: int = DEFAULT_SNAPSHOT_RESULT_LIMIT,
         payload_limit_bytes: int = MAX_RENDERED_PAYLOAD_BYTES,
     ) -> BrokerSnapshot:
+        return self.build_current(
+            broker,
+            topic_filter=topic_filter,
+            max_age_seconds=max_age_seconds,
+            result_limit=result_limit,
+            payload_limit_bytes=payload_limit_bytes,
+        )
+
+    def build_current(
+        self,
+        broker: UUID | str,
+        *,
+        topic_filter: str = "#",
+        max_age_seconds: float | None = None,
+        result_limit: int = DEFAULT_SNAPSHOT_RESULT_LIMIT,
+        payload_limit_bytes: int = MAX_RENDERED_PAYLOAD_BYTES,
+    ) -> BrokerSnapshot:
+        """Build current broker state without activation, waiting, or I/O."""
         resolved = self._resolver.resolve(broker)
         validated_filter = self._validate_topic_filter(topic_filter)
         max_age_seconds = self._validate_max_age(max_age_seconds)

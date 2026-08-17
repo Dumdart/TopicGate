@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from base64 import b64encode
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from fastmcp import FastMCP
 
+from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.app.topicgate_runtime import TopicGateRuntime
-from topicgate.core.models.mqtt_observation import MqttObservation
-from topicgate.core.models.subscription import Subscription
-from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.mcp.api.mcp_api import MCPApi
 from topicgate.mcp.api.dashboard_snapshot import DashboardSnapshotBuilder
 
@@ -43,9 +39,16 @@ except ImportError:
 class DashboardAPI(MCPApi):
     """Read-only FastMCP companion dashboard for the TopicGate runtime."""
 
-    def __init__(self, runtime: TopicGateRuntime):
+    def __init__(
+        self,
+        runtime: TopicGateRuntime,
+        snapshot_service: BrokerSnapshotService | None = None,
+    ) -> None:
         self._runtime = runtime
-        self._snapshot_builder = DashboardSnapshotBuilder(runtime)
+        self._snapshot_builder = DashboardSnapshotBuilder(
+            runtime,
+            snapshot_service or BrokerSnapshotService(runtime),
+        )
         self._app: Any | None = None
         self.open_topicgate_dashboard: Any | None = None
 
@@ -334,7 +337,13 @@ class DashboardAPI(MCPApi):
             self._detail_row("QoS", STATE.selection.topic.qos)
             self._detail_row("Retained", STATE.selection.topic.retain_label)
             self._detail_row("Last seen", STATE.selection.topic.received_at)
+            self._detail_row("Age", STATE.selection.topic.age_seconds_label)
+            self._detail_row("Source", STATE.selection.topic.source_label)
             self._detail_row("Payload size", STATE.selection.topic.payload_size_label)
+            self._detail_row(
+                "Truncation",
+                STATE.selection.topic.truncation_label,
+            )
             self._detail_row("Message count", STATE.selection.topic.message_count)
             self._detail_row(
                 "Dropped messages", STATE.selection.topic.dropped_message_count
@@ -371,220 +380,3 @@ class DashboardAPI(MCPApi):
 
     def _selection(self, broker_id: UUID, path: str) -> dict[str, Any]:
         return self._snapshot_builder.selection(broker_id, path)
-
-    def _matching_subscription(
-        self,
-        broker_id: UUID,
-        path: str,
-    ) -> Subscription | None:
-        subscriptions = tuple(self._runtime.list_subscriptions(broker_id))
-        exact = next(
-            (
-                subscription
-                for subscription in subscriptions
-                if subscription.topic_filter == path
-            ),
-            None,
-        )
-        if exact is not None:
-            return exact
-        matches = [
-            subscription
-            for subscription in subscriptions
-            if mqtt_filter_matches(subscription.topic_filter, path)
-        ]
-        if not matches:
-            return None
-        return max(
-            matches,
-            key=lambda item: len(
-                item.topic_filter.replace("#", "").replace("+", "")
-            ),
-        )
-
-    @staticmethod
-    def _default_path(
-        subscriptions: tuple[Subscription, ...],
-        topics: tuple[str, ...],
-    ) -> str:
-        if topics:
-            return topics[0]
-        if subscriptions:
-            return subscriptions[0].topic_filter
-        return ""
-
-    @staticmethod
-    def _tree_rows(
-        subscriptions: tuple[Subscription, ...],
-        topics: tuple[str, ...],
-    ) -> list[dict[str, Any]]:
-        root: dict[str, dict[str, Any]] = {}
-        subscription_paths = {item.topic_filter for item in subscriptions}
-        topic_paths = set(topics)
-
-        for full_path in sorted(subscription_paths | topic_paths, key=str.casefold):
-            children = root
-            partial: list[str] = []
-            for segment in full_path.split("/"):
-                partial.append(segment)
-                path = "/".join(partial)
-                node = children.setdefault(
-                    segment,
-                    {
-                        "label": segment or "/",
-                        "path": path,
-                        "children": {},
-                    },
-                )
-                children = node["children"]
-
-        rows: list[dict[str, Any]] = []
-
-        def append_rows(nodes: dict[str, dict[str, Any]], depth: int) -> None:
-            for key in sorted(nodes, key=str.casefold):
-                node = nodes[key]
-                path = node["path"]
-                children = node["children"]
-                rows.append(
-                    {
-                        "label": node["label"],
-                        "path": path,
-                        "indent": f"{depth * 1.15}rem",
-                        "selectable": (
-                            path in subscription_paths or path in topic_paths
-                        ),
-                        "has_children": bool(children),
-                    }
-                )
-                append_rows(children, depth + 1)
-
-        append_rows(root, 0)
-        return rows
-
-    @staticmethod
-    def _broker_row(broker: Any) -> dict[str, Any]:
-        scheme = "mqtts" if broker.config.use_tls else "mqtt"
-        endpoint = f"{scheme}://{broker.config.host}:{broker.config.port}"
-        return {
-            "id": str(broker.id),
-            "name": broker.name,
-            "endpoint": endpoint,
-            "label": f"{broker.name} ({endpoint})",
-        }
-
-    @staticmethod
-    def _subscription_row(subscription: Subscription) -> dict[str, Any]:
-        return {
-            "topic_filter": subscription.topic_filter,
-            "qos": subscription.qos,
-            "retain_as_published": subscription.retain_as_published,
-            "retain_handling": subscription.retain_handling,
-        }
-
-    def _topic_row(self, broker_id: UUID, topic: str) -> dict[str, Any]:
-        state = self._runtime.get_topic_state(broker_id, topic)
-        if state is None:
-            return {
-                "topic": topic,
-                "qos": "-",
-                "retain_label": "-",
-                "payload_preview": "",
-                "received_at": "-",
-            }
-        detail = self._topic_detail_from_state(state)
-        return {
-            "topic": topic,
-            "qos": detail["qos"],
-            "retain_label": detail["retain_label"],
-            "payload_preview": self._payload_preview(state.payload),
-            "received_at": detail["received_at"],
-        }
-
-    @staticmethod
-    def _topic_detail_from_state(state: MqttObservation) -> dict[str, Any]:
-        payload_base64 = b64encode(state.payload).decode("ascii")
-        try:
-            payload_text = state.payload.decode("utf-8")
-            payload_display = payload_text
-            payload_encoding = "UTF-8"
-        except UnicodeDecodeError:
-            payload_text = "Payload is not valid UTF-8."
-            payload_display = payload_base64
-            payload_encoding = "Base64"
-        payload_size = state.payload_size or len(state.payload)
-        payload_size_label = (
-            f"{payload_size} byte" if payload_size == 1 else f"{payload_size} bytes"
-        )
-        return {
-            "topic": state.topic,
-            "has_value": True,
-            "qos": state.qos,
-            "retain_label": "Yes" if state.retain else "No",
-            "received_at": DashboardAPI._format_datetime(state.recieved_at),
-            "message_count": state.message_count,
-            "payload_size": payload_size,
-            "payload_size_label": payload_size_label,
-            "payload_text": payload_text,
-            "payload_base64": payload_base64,
-            "payload_display": payload_display,
-            "payload_encoding": payload_encoding,
-        }
-
-    @staticmethod
-    def _empty_topic_detail(topic: str = "") -> dict[str, Any]:
-        return {
-            "topic": topic,
-            "has_value": False,
-            "qos": "-",
-            "retain_label": "-",
-            "received_at": "-",
-            "message_count": 0,
-            "payload_size": 0,
-            "payload_size_label": "-",
-            "payload_text": "",
-            "payload_base64": "",
-            "payload_display": "No value observed",
-            "payload_encoding": "-",
-        }
-
-    @staticmethod
-    def _subscription_detail(
-        subscription: Subscription | None,
-    ) -> dict[str, Any]:
-        if subscription is None:
-            return {
-                "topic_filter": "No matching subscription",
-                "qos_label": "-",
-                "retain_as_published_label": "-",
-                "retain_handling_label": "-",
-            }
-        return {
-            "topic_filter": subscription.topic_filter,
-            "qos_label": {
-                0: "0 · At most once",
-                1: "1 · At least once",
-                2: "2 · Exactly once",
-            }[subscription.qos],
-            "retain_as_published_label": (
-                "Preserve retained flag"
-                if subscription.retain_as_published
-                else "Rewrite retained flag"
-            ),
-            "retain_handling_label": {
-                0: "Send retained messages",
-                1: "Only for a new subscription",
-                2: "Do not send retained messages",
-            }[subscription.retain_handling],
-        }
-
-    @staticmethod
-    def _payload_preview(payload: bytes) -> str:
-        try:
-            preview = payload.decode("utf-8")
-        except UnicodeDecodeError:
-            return f"Base64: {b64encode(payload).decode('ascii')[:48]}"
-        return preview if len(preview) <= 64 else f"{preview[:61]}..."
-
-    @staticmethod
-    def _format_datetime(value: datetime) -> str:
-        return value.astimezone().isoformat(timespec="seconds")

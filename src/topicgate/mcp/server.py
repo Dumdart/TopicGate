@@ -90,7 +90,7 @@ class Server:
                 SubscriptionAPI(runtime),
                 TopicAPI(runtime),
                 SnapshotAPI(self.dependencies.snapshot_service),
-                DashboardAPI(runtime),
+                DashboardAPI(runtime, self.dependencies.snapshot_service),
             ],
             control_enabled=mode.control_enabled,
         )
