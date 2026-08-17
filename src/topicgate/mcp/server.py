@@ -12,6 +12,7 @@ from topicgate.mcp.api.connection_api import ConnectionAPI
 from topicgate.mcp.api.dashboard_api import DashboardAPI
 from topicgate.mcp.api.mcp_api import McpApiContainer
 from topicgate.mcp.api.publish_api import PublishAPI
+from topicgate.mcp.api.snapshot_api import SnapshotAPI
 from topicgate.mcp.api.subscription_api import SubscriptionAPI
 from topicgate.mcp.api.topic_api import TopicAPI
 from topicgate.mcp.middleware import ErrorHandlingMiddleware, LoggingMiddleware
@@ -22,7 +23,11 @@ class Server:
     def __init__(self):
         self.mcp = FastMCP(
             name="topicgate",
-            instructions="Inspect and manage MQTT brokers, topics, and subscriptions.",
+            instructions=(
+                "Use get_broker_snapshot as the primary read-only MQTT state "
+                "tool. Use observe_broker_snapshot only when activation, "
+                "reconnection, and waiting are intended."
+            ),
             lifespan=self._lifespan,
             middleware=[ErrorHandlingMiddleware(), LoggingMiddleware()],
             mask_error_details=True,
@@ -40,6 +45,7 @@ class Server:
                 PublishAPI(runtime),
                 SubscriptionAPI(runtime),
                 TopicAPI(runtime),
+                SnapshotAPI(self.dependencies.snapshot_service),
                 DashboardAPI(runtime),
             ]
         )
