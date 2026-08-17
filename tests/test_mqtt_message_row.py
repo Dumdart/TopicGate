@@ -3,13 +3,18 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
+from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.models.mqtt_message_row import MqttMessageRow
 
 
-def test_mqtt_message_row_persists_latest_observed_topic_state() -> None:
+def test_mqtt_message_row_persists_latest_observed_topic_state(
+    credential_store,
+) -> None:
     database = DatabaseContext("sqlite:///:memory:")
-    broker_id = uuid4()
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
     observation_id = uuid4()
     received_at = datetime.now(timezone.utc)
     row = MqttMessageRow(

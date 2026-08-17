@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
@@ -12,12 +13,22 @@ from topicgate.infrastructure.repository.topic_message_repository import (
 )
 
 
-def test_topic_message_repository_maps_dtos_and_supports_crud(tmp_path) -> None:
+def test_topic_message_repository_maps_dtos_and_supports_crud(
+    tmp_path,
+    credential_store,
+) -> None:
     database = DatabaseContext(f"sqlite:///{tmp_path / 'messages.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
     repository = TopicMessageRepository(database)
     received_at = datetime.now(timezone.utc)
-    first = _message("home/temperature", received_at)
-    second = _message("home/humidity", received_at + timedelta(seconds=1))
+    first = _message(broker_id, "home/temperature", received_at)
+    second = _message(
+        broker_id,
+        "home/humidity",
+        received_at + timedelta(seconds=1),
+    )
 
     try:
         assert repository.create_message(first) == first
@@ -54,10 +65,17 @@ def test_get_latest_message_raises_when_repository_is_empty(tmp_path) -> None:
         database.dispose()
 
 
-def test_queued_writes_are_flushed_in_order(tmp_path) -> None:
+def test_queued_writes_are_flushed_in_order(tmp_path, credential_store) -> None:
     database = DatabaseContext(f"sqlite:///{tmp_path / 'queued.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
     repository = TopicMessageRepository(database)
-    message = _message("home/temperature", datetime.now(timezone.utc))
+    message = _message(
+        broker_id,
+        "home/temperature",
+        datetime.now(timezone.utc),
+    )
     updated = replace(message, payload=b"22.0", payload_size=4, message_count=2)
 
     try:
@@ -72,13 +90,26 @@ def test_queued_writes_are_flushed_in_order(tmp_path) -> None:
         database.dispose()
 
 
-def test_get_all_latest_messages_returns_latest_message_per_topic(tmp_path) -> None:
+def test_get_all_latest_messages_returns_latest_message_per_topic(
+    tmp_path,
+    credential_store,
+) -> None:
     database = DatabaseContext(f"sqlite:///{tmp_path / 'latest.db'}")
+    profiles = BrokerProfileService(database, credential_store=credential_store)
+    broker_id = profiles.get_profile().id
+    newer_broker_id = profiles.create_profile(
+        "Second",
+        profiles.get_profile().config,
+    ).id
     repository = TopicMessageRepository(database)
     received_at = datetime.now(timezone.utc)
-    older = _message("home/temperature", received_at)
-    newer = _message("home/temperature", received_at + timedelta(seconds=1))
-    humidity = _message("home/humidity", received_at)
+    older = _message(broker_id, "home/temperature", received_at)
+    newer = _message(
+        newer_broker_id,
+        "home/temperature",
+        received_at + timedelta(seconds=1),
+    )
+    humidity = _message(broker_id, "home/humidity", received_at)
 
     try:
         repository.create_message(older)
@@ -94,20 +125,21 @@ def test_get_all_latest_messages_returns_latest_message_per_topic(tmp_path) -> N
         database.dispose()
 
 
-def test_get_latest_messages_is_scoped_to_broker(tmp_path) -> None:
+def test_get_latest_messages_is_scoped_to_broker(
+    tmp_path,
+    credential_store,
+) -> None:
     database = DatabaseContext(f"sqlite:///{tmp_path / 'broker-latest.db'}")
+    profiles = BrokerProfileService(database, credential_store=credential_store)
+    first_broker = profiles.get_profile().id
+    second_broker = profiles.create_profile(
+        "Second",
+        profiles.get_profile().config,
+    ).id
     repository = TopicMessageRepository(database)
     received_at = datetime.now(timezone.utc)
-    first_broker = uuid4()
-    second_broker = uuid4()
-    first = replace(
-        _message("shared/topic", received_at),
-        broker_id=first_broker,
-    )
-    second = replace(
-        _message("shared/topic", received_at),
-        broker_id=second_broker,
-    )
+    first = _message(first_broker, "shared/topic", received_at)
+    second = _message(second_broker, "shared/topic", received_at)
 
     try:
         repository.update_message(first)
@@ -120,10 +152,10 @@ def test_get_latest_messages_is_scoped_to_broker(tmp_path) -> None:
         database.dispose()
 
 
-def _message(topic: str, received_at: datetime) -> TopicMessage:
+def _message(broker_id, topic: str, received_at: datetime) -> TopicMessage:
     payload = b"21.5"
     return TopicMessage(
-        broker_id=uuid4(),
+        broker_id=broker_id,
         topic=topic,
         payload=payload,
         qos=1,

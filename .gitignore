@@ -1,5 +1,6 @@
 # Database
 *.db
+AGENTS.md
 
 # Distribution / build artifacts
 *.egg-info/
