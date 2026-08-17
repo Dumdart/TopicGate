@@ -1,10 +1,18 @@
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.mqtt_observation import (
+    MqttObservation,
+    ObservationSource,
+)
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+)
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
@@ -93,6 +101,57 @@ def test_repository_truncates_before_updating_model_and_sink() -> None:
     assert state.payload_size == 6
     assert state.observation_id is not None
     assert captured == [state]
+
+
+def test_exact_eviction_removes_only_matching_stored_observations() -> None:
+    stored_id = uuid4()
+    replacement_id = uuid4()
+    received_at = datetime.now(timezone.utc)
+    stored = MqttObservation(
+        "stored",
+        "home/stored",
+        b"stored",
+        0,
+        False,
+        received_at,
+        source=ObservationSource.STORED,
+        observation_id=stored_id,
+    )
+    live = MqttObservation(
+        "live",
+        "home/live",
+        b"live",
+        0,
+        False,
+        received_at,
+        source=ObservationSource.LIVE,
+        observation_id=replacement_id,
+    )
+    model = ObserverModel(
+        root_stats=[],
+        topic_states={stored.topic: stored, live.topic: live},
+    )
+    repository, _ = build_repository(model)
+    entries = (
+        ObservationDeletionEntry(
+            uuid4(),
+            stored.topic,
+            stored_id,
+            received_at,
+            len(stored.payload),
+        ),
+        ObservationDeletionEntry(
+            uuid4(),
+            live.topic,
+            replacement_id,
+            received_at,
+            len(live.payload),
+        ),
+    )
+
+    assert repository.evict_stored_observations(entries) == 1
+    assert repository.get_state(stored.topic) is None
+    assert repository.get_state(live.topic) is live
 
 
 async def test_repository_updates_topic_state_before_publishing_message() -> None:

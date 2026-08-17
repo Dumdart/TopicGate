@@ -1,10 +1,13 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection
 from datetime import datetime
 from typing import Protocol
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+)
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 
@@ -43,6 +46,11 @@ class ObserverRepository(Protocol):
     def messages(self) -> AsyncIterator[MqttMessage]: ...
 
     def drain_pending_messages(self) -> tuple[MqttMessage, ...]: ...
+
+    def evict_stored_observations(
+        self,
+        entries: Collection[ObservationDeletionEntry],
+    ) -> int: ...
 
     def connection_statuses(self) -> AsyncIterator[object]: ...
 

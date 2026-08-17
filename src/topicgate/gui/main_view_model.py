@@ -13,6 +13,19 @@ from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.observation_cache_administration import (
+    CacheUsageSummary,
+    ObservationDeletionResult,
+    PersistedTopicSummary,
+    RetentionPolicyApplicationResult,
+    RetentionPolicyPreview,
+)
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionPreview,
+)
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.presentation.snapshot_presentation import (
@@ -28,6 +41,12 @@ from topicgate.presentation.topic_presentation import (
     matching_subscription,
     topic_detail,
 )
+from topicgate.presentation.retention_presentation import (
+    RETENTION_PRESETS,
+    RetentionPreset,
+    validate_retention_policy_values,
+)
+from topicgate.presentation.snapshot_presentation import size_label
 
 
 class MainViewModel(QObject):
@@ -41,6 +60,7 @@ class MainViewModel(QObject):
     log_message = Signal(str)
     operation_state_changed = Signal()
     operation_failed = Signal(str, str)
+    stored_observations_changed = Signal()
 
     def __init__(
         self,
@@ -63,6 +83,10 @@ class MainViewModel(QObject):
         self._reported_dropped_messages = 0
         self._busy_operations: set[str] = set()
         self._preserve_snapshot_during_observation = False
+        self._retention_policy: ObservationRetentionPolicy | None = None
+        self._cache_usage = CacheUsageSummary(())
+        self._persisted_topics: tuple[PersistedTopicSummary, ...] = ()
+        self._stored_observations_broker_id = self.active_broker_profile.id
 
     @property
     def title(self) -> str:
@@ -127,12 +151,42 @@ class MainViewModel(QObject):
         return self._snapshot_query
 
     @property
+    def applied_snapshot_query(self) -> SnapshotQuery:
+        return self._snapshot_query
+
+    @property
     def broker_snapshot(self) -> BrokerSnapshot:
+        return self._snapshot
+
+    @property
+    def cached_broker_snapshot(self) -> BrokerSnapshot:
         return self._snapshot
 
     @property
     def snapshot_health(self) -> BrokerSnapshotHealth:
         return snapshot_health(self._snapshot)
+
+    @property
+    def effective_retention_policy(self) -> ObservationRetentionPolicy | None:
+        return self._retention_policy
+
+    @property
+    def cache_usage_summary(self) -> CacheUsageSummary:
+        return self._cache_usage
+
+    @property
+    def persisted_topics(self) -> tuple[PersistedTopicSummary, ...]:
+        return self._persisted_topics
+
+    @property
+    def retention_presets(self) -> tuple[RetentionPreset, ...]:
+        return RETENTION_PRESETS
+
+    @staticmethod
+    def validate_retention_policy_draft(
+        values: dict[str, object],
+    ) -> dict[str, str]:
+        return validate_retention_policy_values(values)
 
     @property
     def connection_status(self) -> str:
@@ -156,6 +210,9 @@ class MainViewModel(QObject):
     @property
     def active_broker_profile(self) -> BrokerSummary:
         return self._runtime.active_broker
+
+    def broker_name(self, broker_id: UUID) -> str:
+        return self._runtime.get_broker(broker_id).name
 
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
@@ -183,7 +240,7 @@ class MainViewModel(QObject):
 
     async def start(self) -> None:
         """Load the current value and listen for messages and connection changes."""
-        self.refresh_snapshot()
+        self.refresh_snapshot(clear_invalid_selection=False)
         self.connection_changed.emit()
         if self._message_task is None:
             self._message_task = asyncio.create_task(self._observe_messages())
@@ -232,10 +289,24 @@ class MainViewModel(QObject):
         """Backward-compatible alias for refreshing the cached snapshot."""
         self.refresh_snapshot()
 
-    def refresh_snapshot(self) -> None:
+    def refresh_snapshot(
+        self,
+        *,
+        clear_invalid_selection: bool = True,
+        require_snapshot_selection: bool = False,
+    ) -> None:
         """Capture current state without reconnecting or mutating observations."""
         self._snapshot = self._build_current_snapshot(self._snapshot_query)
-        if self._topic and self._topic not in self.topic_paths:
+        snapshot_topics = {item.topic for item in self._snapshot.topics}
+        if (
+            clear_invalid_selection
+            and self._topic
+            and self._topic not in snapshot_topics
+            and (
+                require_snapshot_selection
+                or self._topic not in self.topic_paths
+            )
+        ):
             self._topic = ""
         self.state_changed.emit()
         self.topics_changed.emit()
@@ -255,6 +326,127 @@ class MainViewModel(QObject):
     def reset_snapshot_query(self) -> None:
         self.apply_snapshot_query(SnapshotQuery())
 
+    async def load_stored_observations(
+        self,
+        broker_id: UUID | None = None,
+    ) -> None:
+        selected = broker_id or self._stored_observations_broker_id
+        async with self._operation("stored-observations"):
+            policy, usage, topics = await asyncio.gather(
+                asyncio.to_thread(self._runtime.get_retention_policy),
+                asyncio.to_thread(self._runtime.get_cache_usage),
+                asyncio.to_thread(self._runtime.list_persisted_topics, selected),
+            )
+            self._stored_observations_broker_id = selected
+            self._retention_policy = policy
+            self._cache_usage = usage
+            self._persisted_topics = topics
+            self.stored_observations_changed.emit()
+
+    async def preview_retention_policy(
+        self,
+        policy: ObservationRetentionPolicy,
+    ) -> RetentionPolicyPreview:
+        async with self._operation("stored-observations"):
+            return await asyncio.to_thread(
+                self._runtime.preview_retention_policy,
+                policy,
+            )
+
+    async def confirm_retention_policy(
+        self,
+        preview: RetentionPolicyPreview,
+    ) -> RetentionPolicyApplicationResult:
+        async with self._operation("stored-observations"):
+            result = await asyncio.to_thread(
+                self._runtime.confirm_retention_policy,
+                preview,
+            )
+            self._retention_policy = result.policy
+            await self._reload_stored_observation_data()
+            self.refresh_snapshot(require_snapshot_selection=True)
+            removed = result.enforcement.deleted_count
+            brokers = len(
+                {item.broker_id for item in result.enforcement.deleted_entries}
+            )
+            self.log_message.emit(
+                "Retention policy updated; removed "
+                f"{removed} observations ({size_label(result.enforcement.deleted_bytes)}) "
+                f"across {brokers} brokers."
+            )
+            self.stored_observations_changed.emit()
+            return result
+
+    async def preview_cache_deletion(
+        self,
+        scope: str,
+        *,
+        broker_id: UUID | None = None,
+        topics: tuple[str, ...] = (),
+    ) -> ObservationDeletionPreview:
+        selected = broker_id or self._stored_observations_broker_id
+        async with self._operation("stored-observations"):
+            if scope == "all_brokers":
+                return await asyncio.to_thread(self._runtime.preview_all_cache)
+            if scope == "unsubscribed":
+                return await asyncio.to_thread(
+                    self._runtime.preview_unsubscribed_cache,
+                    selected,
+                )
+            if scope == "selected_topics":
+                if not topics:
+                    return ObservationDeletionPreview(
+                        selected,
+                        (),
+                        "selected_topics",
+                    )
+                return await asyncio.to_thread(
+                    self._runtime.preview_clear_cache,
+                    selected,
+                    topics,
+                )
+            if scope == "broker":
+                return await asyncio.to_thread(
+                    self._runtime.preview_clear_cache,
+                    selected,
+                )
+            raise ValueError(f"Unknown cache deletion scope: {scope}")
+
+    async def confirm_cache_deletion(
+        self,
+        preview: ObservationDeletionPreview,
+    ) -> ObservationDeletionResult:
+        async with self._operation("stored-observations"):
+            result = await asyncio.to_thread(
+                self._runtime.confirm_cache_deletion_detailed,
+                preview,
+            )
+            await self._reload_stored_observation_data()
+            self.refresh_snapshot(require_snapshot_selection=True)
+            broker_label = (
+                "all brokers"
+                if len(preview.broker_ids) != 1
+                else self._runtime.get_broker(preview.broker_ids[0]).name
+            )
+            self.log_message.emit(
+                f"Deleted {result.deleted_count} of {result.previewed_count} "
+                f"previewed observations from {broker_label}; "
+                f"{result.skipped_count} changed after preview."
+            )
+            if result.is_partial:
+                self.log_message.emit("Partial deletion detected.")
+            self.stored_observations_changed.emit()
+            return result
+
+    async def _reload_stored_observation_data(self) -> None:
+        self._cache_usage, self._persisted_topics = await asyncio.gather(
+            asyncio.to_thread(self._runtime.get_cache_usage),
+            asyncio.to_thread(
+                self._runtime.list_persisted_topics,
+                self._stored_observations_broker_id,
+            ),
+        )
+
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._operation("subscription"):
             await self._runtime.add_subscription(
@@ -267,11 +459,22 @@ class MainViewModel(QObject):
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         async with self._operation("subscription"):
-            await self._runtime.remove_subscription(
+            cleanup = await self._runtime.remove_subscription(
                 self.active_broker_profile.id,
                 subscription,
             )
             self.log_message.emit(f"Removed subscription: {subscription.topic_filter}")
+            if cleanup is not None:
+                self.log_message.emit(
+                    "Automatic unsubscribed cleanup completed; removed "
+                    f"{cleanup.deleted_count} observations "
+                    f"({size_label(cleanup.deleted_bytes)})."
+                )
+            if self._topic and not any(
+                mqtt_filter_matches(item.topic_filter, self._topic)
+                for item in self.subscriptions
+            ):
+                self._topic = ""
             self.refresh_snapshot()
             self.subscriptions_changed.emit()
 
@@ -279,7 +482,7 @@ class MainViewModel(QObject):
         self, original_filter: str, subscription: Subscription
     ) -> None:
         async with self._operation("subscription"):
-            await self._runtime.update_subscription(
+            cleanup = await self._runtime.update_subscription(
                 self.active_broker_profile.id,
                 original_filter,
                 subscription,
@@ -287,6 +490,12 @@ class MainViewModel(QObject):
             self.log_message.emit(
                 f"Updated subscription: {original_filter} -> {subscription.topic_filter}"
             )
+            if cleanup is not None:
+                self.log_message.emit(
+                    "Automatic unsubscribed cleanup completed; removed "
+                    f"{cleanup.deleted_count} observations "
+                    f"({size_label(cleanup.deleted_bytes)})."
+                )
             if self._topic == original_filter:
                 self._topic = subscription.topic_filter
             self.refresh_snapshot()
