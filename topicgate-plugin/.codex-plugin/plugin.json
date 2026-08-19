@@ -1,0 +1,9 @@
+{
+  "name": "topicgate",
+  "version": "1.0.0",
+  "description": "Secure local access to your MQTT topics via TopicGate MCP",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "repository": "https://github.com/Dumdart/TopicGate",
+  "license": "MIT"
+}
