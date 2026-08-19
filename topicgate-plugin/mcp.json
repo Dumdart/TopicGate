@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "topicgate": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "-c",
+        "import sys; from topicgate.mcp.server import run; raise SystemExit(run(sys.argv[1:]))",
+        "--mode",
+        "read-only"
+      ],
+      "env": {
+        "PYTHONPATH": "${PLUGIN_ROOT}/../src",
+        "TOPICGATE_DATA_DIR": "${PLUGIN_DATA}"
+      },
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}
