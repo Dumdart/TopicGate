@@ -5,5 +5,11 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "repository": "https://github.com/Dumdart/TopicGate",
-  "license": "MIT"
+  "license": "MIT",
+  "interface": {
+    "displayName": "TopicGate",
+    "shortDescription": "Secure local access to your MQTT topics",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
+  }
 }
