@@ -1,0 +1,20 @@
+{
+  "name": "topicgate",
+  "interface": {
+    "displayName": "TopicGate"
+  },
+  "plugins": [
+    {
+      "name": "topicgate",
+      "source": {
+        "source": "local",
+        "path": "./topicgate-plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
