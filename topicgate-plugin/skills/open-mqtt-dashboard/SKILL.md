@@ -1,3 +1,8 @@
+---
+name: open-mqtt-dashboard
+description: Open the TopicGate dashboard when an optional control-mode server with app dependencies is configured.
+---
+
 # open-mqtt-dashboard
 
 Open the TopicGate human-facing monitoring and broker-control dashboard. This is a

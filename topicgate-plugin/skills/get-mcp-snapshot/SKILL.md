@@ -1,3 +1,8 @@
+---
+name: get-mcp-snapshot
+description: Retrieve and explain the latest MQTT state observed by TopicGate for a broker.
+---
+
 # get-mcp-snapshot
 
 Use the `topicgate` MCP server to retrieve the latest observed MQTT state for a broker.

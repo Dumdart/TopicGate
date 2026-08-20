@@ -1,3 +1,8 @@
+---
+name: inspect-mqtt-state
+description: Inspect TopicGate broker profiles, connection health, subscriptions, and latest observed MQTT values.
+---
+
 # inspect-mqtt-state
 
 Build a full situational overview of a TopicGate broker: profiles, connection health,

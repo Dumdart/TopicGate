@@ -1,3 +1,8 @@
+---
+name: observe-and-refresh-mqtt
+description: Guide an explicitly requested live MQTT observation using an optional control-mode TopicGate server.
+---
+
 # observe-and-refresh-mqtt
 
 Explicitly connect to a broker, observe live MQTT traffic for a short period, persist

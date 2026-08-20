@@ -1,3 +1,8 @@
+---
+name: manage-mqtt-brokers
+description: Inspect MQTT broker profiles and explain how optional TopicGate control mode can switch the active broker.
+---
+
 # manage-mqtt-brokers
 
 Discover, inspect, and switch between saved MQTT broker profiles in TopicGate.
