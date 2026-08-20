@@ -1,7 +1,14 @@
 from uuid import UUID
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.gui.components.connection_controls import ConnectionStatusLabel
@@ -54,45 +61,74 @@ class ApplicationHeader(QFrame):
         layout.addLayout(identity)
         layout.addStretch(1)
         broker_group = QVBoxLayout()
+        broker_group.setSpacing(5)
         label = QLabel("BROKER")
         label.setObjectName("sectionTitle")
+        control_row = QHBoxLayout()
+        control_row.setSpacing(8)
         self.selector = BrokerSelector()
         self.selector.setMinimumWidth(220)
         self.selector.broker_selected.connect(self.broker_selected.emit)
-        self.endpoint = QLabel()
-        self.endpoint.setObjectName("brokerEndpoint")
-        self.endpoint.setStyleSheet("color: #6b7280;")
-        self.endpoint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        broker_group.addWidget(label)
-        broker_group.addWidget(self.selector)
-        broker_group.addWidget(self.endpoint)
-        layout.addLayout(broker_group)
-        self.status = ConnectionStatusLabel()
-        layout.addWidget(self.status)
+        control_row.addWidget(self.selector, 1)
         self.connect_button = self._button("Connect", "headerConnectButton")
         self.reconnect_button = self._button(
-            "Reconnect & observe",
+            "Reconnect && observe",
             "headerReconnectButton",
         )
+        self.reconnect_button.setAccessibleName("Reconnect & observe")
         self.reconnect_button.setToolTip(
             "Interrupt and renew the active connection, then capture a snapshot"
         )
-        self.disconnect_button = self._button("Disconnect", "headerDisconnectButton")
+        self.disconnect_button = self._button(
+            "Disconnect",
+            "headerDisconnectButton",
+        )
+        for button in (
+            self.connect_button,
+            self.reconnect_button,
+            self.disconnect_button,
+        ):
+            control_row.addWidget(button)
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        self.endpoint = QLabel()
+        self.endpoint.setObjectName("brokerEndpoint")
+        self.endpoint.setStyleSheet("color: #6b7280;")
+        self.endpoint.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        status_row.addWidget(self.endpoint, 1)
+        self.status = ConnectionStatusLabel()
+        status_row.addWidget(self.status)
+        broker_group.addWidget(label)
+        broker_group.addLayout(control_row)
+        broker_group.addLayout(status_row)
+        layout.addLayout(broker_group)
         self.connect_button.clicked.connect(self.connect_requested.emit)
         self.reconnect_button.clicked.connect(self.reconnect_requested.emit)
         self.disconnect_button.clicked.connect(self.disconnect_requested.emit)
-        for button in (self.connect_button, self.reconnect_button, self.disconnect_button):
-            layout.addWidget(button)
 
-    def render(self, brokers: tuple[BrokerSummary, ...], active: BrokerSummary, status: str, busy: bool) -> None:
+    def render(
+        self,
+        brokers: tuple[BrokerSummary, ...],
+        active: BrokerSummary,
+        status: str,
+        busy: bool,
+    ) -> None:
         self.selector.render(brokers, active.id)
         scheme = "mqtts" if active.config.use_tls else "mqtt"
         self.endpoint.setText(f"{scheme}://{active.config.host}:{active.config.port}")
         self.status.render(status)
         self.selector.setEnabled(not busy)
         self.connect_button.setEnabled(status == "disconnected" and not busy)
-        self.reconnect_button.setEnabled(status in {"connected", "reconnecting"} and not busy)
-        self.disconnect_button.setEnabled(status in {"connecting", "connected", "reconnecting"} and not busy)
+        self.reconnect_button.setEnabled(
+            status in {"connected", "reconnecting"} and not busy
+        )
+        self.disconnect_button.setEnabled(
+            status in {"connecting", "connected", "reconnecting"}
+            and not busy
+        )
 
     @staticmethod
     def _button(text: str, name: str) -> QPushButton:

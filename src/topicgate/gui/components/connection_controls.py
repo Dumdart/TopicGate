@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QLabel
 
 
 class ConnectionStatusLabel(QLabel):
-    """Prominent connection state displayed in the menu bar corner."""
+    """Compact textual connection state for the application header."""
 
     _STATUS_COLORS = {
         "connected": "#168a55",
@@ -20,7 +20,7 @@ class ConnectionStatusLabel(QLabel):
         self._status = "disconnected"
         self.setObjectName("connectionStatus")
         self.setAccessibleName("MQTT connection status")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.setMinimumSize(self.sizeHint())
         self.setContentsMargins(0, 0, 0, 0)
 
@@ -29,12 +29,12 @@ class ConnectionStatusLabel(QLabel):
         return self._status
 
     def sizeHint(self) -> QSize:
-        return QSize(188, 34)
+        return QSize(108, 24)
 
     def render(self, status: str) -> None:
         self._status = status.lower()
         status_label = self._status.title()
-        self.setText(f"MQTT {status_label}")
+        self.setText(status_label)
         self.setAccessibleDescription(f"MQTT connection is {self._status}.")
         self.setToolTip(f"MQTT broker is {self._status}")
         self.update()
@@ -44,63 +44,23 @@ class ConnectionStatusLabel(QLabel):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         accent = QColor(self._STATUS_COLORS.get(self._status, "#6b7280"))
-        surface = self.palette().color(QPalette.ColorRole.Window)
-        foreground = QColor(
-            "#f8fafc" if surface.lightnessF() < 0.5 else "#1f2937"
-        )
-        muted = QColor(foreground)
-        muted.setAlpha(164)
-
-        fill = QColor(accent)
-        fill.setAlpha(18)
-        border = QColor(accent)
-        border.setAlpha(62)
-        pill = QRectF(self.rect()).adjusted(1.5, 2.5, -1.5, -2.5)
-        painter.setPen(border)
-        painter.setBrush(self._blend(surface, fill))
-        painter.drawRoundedRect(pill, 8, 8)
-
         halo = QColor(accent)
-        halo.setAlpha(38)
+        halo.setAlpha(42)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(halo)
-        painter.drawEllipse(QRectF(11, 11, 12, 12))
+        painter.drawEllipse(QRectF(1, 6, 12, 12))
         painter.setBrush(accent)
-        painter.drawEllipse(QRectF(14, 14, 6, 6))
+        painter.drawEllipse(QRectF(4, 9, 6, 6))
 
         label_font = QFont(self.font())
-        label_font.setPointSizeF(9.5)
+        label_font.setPointSizeF(9.0)
         label_font.setWeight(QFont.Weight.Medium)
         painter.setFont(label_font)
-        painter.setPen(muted)
+        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
         painter.drawText(
-            QRectF(29, 2, 43, self.height() - 4),
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-            "MQTT",
-        )
-
-        divider = QColor(foreground)
-        divider.setAlpha(45)
-        painter.setPen(divider)
-        painter.drawLine(72, 11, 72, self.height() - 11)
-
-        status_font = QFont(label_font)
-        status_font.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(status_font)
-        painter.setPen(foreground)
-        painter.drawText(
-            QRectF(82, 2, self.width() - 91, self.height() - 4),
+            QRectF(19, 0, self.width() - 19, self.height()),
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
             self._status.title(),
-        )
-
-    @staticmethod
-    def _blend(base: QColor, overlay: QColor) -> QColor:
-        alpha = overlay.alphaF()
-        return QColor(
-            round(base.red() * (1 - alpha) + overlay.red() * alpha),
-            round(base.green() * (1 - alpha) + overlay.green() * alpha),
-            round(base.blue() * (1 - alpha) + overlay.blue() * alpha),
         )
 
 
@@ -113,7 +73,6 @@ class ConnectionControls(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.status_label = ConnectionStatusLabel()
         self.connect_action = self._create_action(
             "Connect",
             "connectAction",
@@ -142,7 +101,6 @@ class ConnectionControls(QObject):
         )
 
     def render(self, status: str) -> None:
-        self.status_label.render(status)
         self.connect_action.setEnabled(status == "disconnected")
         self.reconnect_action.setEnabled(status in {"connected", "reconnecting"})
         self.disconnect_action.setEnabled(

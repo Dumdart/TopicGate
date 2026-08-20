@@ -2,12 +2,14 @@ from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -23,12 +25,13 @@ from topicgate.presentation.snapshot_presentation import (
 
 
 class SnapshotPanel(QWidget):
-    """Snapshot controls and broker-wide health rendered below the topic tree."""
+    """Collapsible snapshot controls and broker-wide health summary."""
 
     apply_requested = Signal(object)
     reset_requested = Signal()
     reconnect_observe_requested = Signal(object)
     validation_failed = Signal(str)
+    expansion_changed = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,7 +41,53 @@ class SnapshotPanel(QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(6)
 
-        controls = QGroupBox("Snapshot")
+        header = QFrame()
+        header.setObjectName("snapshotHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(8, 3, 8, 3)
+        header_layout.setSpacing(2)
+        primary_summary = QHBoxLayout()
+        primary_summary.setSpacing(7)
+        self._toggle = QToolButton()
+        self._toggle.setObjectName("snapshotToggleButton")
+        self._toggle.setText("Snapshot")
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(False)
+        self._toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self._toggle.setAccessibleName("Snapshot details")
+        self._toggle.toggled.connect(self._set_expanded)
+        primary_summary.addWidget(self._toggle)
+        primary_summary.addStretch(1)
+        self._summary_labels = {
+            name: self._summary_label(object_name)
+            for name, object_name in (
+                ("connection", "snapshotSummaryConnection"),
+                ("returned", "snapshotSummaryReturned"),
+                ("dropped", "snapshotSummaryDropped"),
+                ("completeness", "snapshotSummaryCompleteness"),
+            )
+        }
+        primary_summary.addWidget(self._summary_labels["connection"])
+        primary_summary.addWidget(self._summary_labels["completeness"])
+        secondary_summary = QHBoxLayout()
+        secondary_summary.setSpacing(12)
+        secondary_summary.addStretch(1)
+        secondary_summary.addWidget(self._summary_labels["returned"])
+        secondary_summary.addWidget(self._summary_labels["dropped"])
+        header_layout.addLayout(primary_summary)
+        header_layout.addLayout(secondary_summary)
+        layout.addWidget(header)
+
+        self._content = QWidget()
+        self._content.setObjectName("snapshotContent")
+        content_layout = QVBoxLayout(self._content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(6)
+
+        controls = QGroupBox("Snapshot filters")
         controls.setObjectName("snapshotControls")
         form = QFormLayout(controls)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -81,11 +130,12 @@ class SnapshotPanel(QWidget):
         self._warning.setWordWrap(True)
         self._warning.setStyleSheet("color: #92400e;")
         form.addRow(self._warning)
-        observe_button = QPushButton("Reconnect & observe")
+        observe_button = QPushButton("Reconnect && observe")
         observe_button.setObjectName("reconnectObserveButton")
+        observe_button.setAccessibleName("Reconnect & observe")
         observe_button.clicked.connect(self._emit_observe)
         form.addRow(observe_button)
-        layout.addWidget(controls)
+        content_layout.addWidget(controls)
 
         health_group = QGroupBox("Snapshot health")
         health_group.setObjectName("snapshotHealthPanel")
@@ -122,8 +172,8 @@ class SnapshotPanel(QWidget):
         self._limitations = self._label("snapshotLimitations")
         self._limitations.setWordWrap(True)
         health_form.addRow("Limitations", self._limitations)
-
-        layout.addWidget(health_group)
+        content_layout.addWidget(health_group)
+        layout.addWidget(self._content)
 
         self._action_widgets = (
             apply_button,
@@ -131,6 +181,15 @@ class SnapshotPanel(QWidget):
             observe_button,
         )
         self.render_query(SnapshotQuery())
+        self.render_connection_status("disconnected")
+        self._summary_labels["returned"].setText("Returned 0")
+        self._summary_labels["dropped"].setText("Dropped 0")
+        self._summary_labels["completeness"].setText("Limited")
+        self._set_expanded(False)
+
+    @property
+    def is_expanded(self) -> bool:
+        return self._toggle.isChecked()
 
     @property
     def query(self) -> SnapshotQuery:
@@ -148,6 +207,9 @@ class SnapshotPanel(QWidget):
             payload_limit_bytes=self._payload_limit.value(),
         )
 
+    def set_expanded(self, expanded: bool) -> None:
+        self._toggle.setChecked(expanded)
+
     def render_query(self, query: SnapshotQuery) -> None:
         self._topic_filter.setText(query.topic_filter)
         self._maximum_age.setText(
@@ -155,6 +217,19 @@ class SnapshotPanel(QWidget):
         )
         self._result_limit.setValue(query.result_limit)
         self._payload_limit.setValue(query.payload_limit_bytes)
+
+    def render_connection_status(self, status: str) -> None:
+        value = status.replace("_", " ").title()
+        label = self._summary_labels["connection"]
+        label.setText(value)
+        color = {
+            "connected": "#168a55",
+            "connecting": "#92400e",
+            "reconnecting": "#92400e",
+            "disconnected": "#9f2f2f",
+        }.get(status.lower(), "#4b5563")
+        label.setStyleSheet(f"color: {color};")
+        self._update_summary_accessibility()
 
     def render_health(self, health: BrokerSnapshotHealth) -> None:
         values = {
@@ -174,10 +249,47 @@ class SnapshotPanel(QWidget):
         self._limitations.setText(
             "\n".join(f"- {item}" for item in health.limitation_labels) or "None"
         )
+        self._summary_labels["returned"].setText(
+            f"Returned {health.returned_count}"
+        )
+        self._summary_labels["dropped"].setText(
+            f"Dropped {health.dropped_message_count}"
+        )
+        completeness = self._summary_labels["completeness"]
+        completeness.setText(health.completeness_status)
+        completeness.setStyleSheet(
+            "color: #168a55;"
+            if health.completeness_status == "Complete"
+            else "color: #92400e;"
+        )
+        self._update_summary_accessibility()
 
     def set_busy(self, busy: bool) -> None:
         for widget in self._action_widgets:
             widget.setEnabled(not busy)
+
+    def _set_expanded(self, expanded: bool) -> None:
+        self._content.setVisible(expanded)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        state = "expanded" if expanded else "collapsed"
+        self._toggle.setAccessibleDescription(
+            f"Snapshot details are {state}."
+        )
+        action = "Collapse" if expanded else "Expand"
+        self._toggle.setAccessibleName(f"{action} snapshot details")
+        self._toggle.setToolTip(f"{action} snapshot details")
+        self.expansion_changed.emit(expanded)
+
+    def _update_summary_accessibility(self) -> None:
+        summary = ", ".join(
+            label.text() for label in self._summary_labels.values()
+        )
+        self._toggle.setAccessibleDescription(
+            f"Snapshot details are {'expanded' if self.is_expanded else 'collapsed'}. "
+            f"{summary}."
+        )
 
     def _emit_apply(self) -> None:
         self._emit_query(self.apply_requested)
@@ -204,4 +316,12 @@ class SnapshotPanel(QWidget):
         label.setObjectName(name)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        return label
+
+    @staticmethod
+    def _summary_label(name: str) -> QLabel:
+        label = QLabel("-")
+        label.setObjectName(name)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setStyleSheet("color: #4b5563;")
         return label

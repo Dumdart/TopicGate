@@ -242,12 +242,6 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction(self._about_action)
 
-        self.menuBar().setCornerWidget(
-            self._header.status,
-            Qt.Corner.TopRightCorner,
-        )
-
-
     def _create_log_dock(self) -> None:
         self._log_dock = LogConsoleDock(self)
         self.addDockWidget(
@@ -305,6 +299,9 @@ class MainWindow(QMainWindow):
 
     def _render_connection(self) -> None:
         self._connection_controls.render(self._view_model.connection_status)
+        self._observer_tree.snapshot_panel.render_connection_status(
+            self._view_model.connection_status
+        )
         self._render_header()
         self._render_publish()
 

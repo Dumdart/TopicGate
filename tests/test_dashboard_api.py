@@ -23,10 +23,18 @@ def dashboard_runtime() -> MagicMock:
         name="Local",
         config=SimpleNamespace(host="127.0.0.1", port=1883, use_tls=False),
     )
+    inactive_broker = SimpleNamespace(
+        id=uuid4(),
+        name="Remote",
+        config=SimpleNamespace(host="remote.local", port=8883, use_tls=True),
+    )
     runtime.active_broker = broker
     runtime.connection_status = ConnectionStatus.CONNECTED
     runtime.dropped_message_count = 3
-    runtime.list_brokers.return_value = (broker,)
+    runtime.list_brokers.return_value = (broker, inactive_broker)
+    runtime.get_broker.side_effect = lambda broker_id: next(
+        item for item in (broker, inactive_broker) if item.id == broker_id
+    )
     runtime.list_subscriptions.return_value = (
         Subscription("sensors/#", qos=0, retain_handling=2),
         Subscription("sensors/+/temperature", qos=1),
@@ -54,11 +62,17 @@ def dashboard_runtime() -> MagicMock:
             unrelated_state.topic: unrelated_state,
         },
     )
-    runtime.get_connection_status.return_value = ConnectionStatus.CONNECTED
+    runtime.get_connection_status.side_effect = lambda broker_id: (
+        ConnectionStatus.CONNECTED
+        if broker_id == broker.id
+        else ConnectionStatus.DISCONNECTED
+    )
     runtime.get_dropped_message_count.return_value = 3
     runtime.get_connected_at.return_value = None
     runtime.get_observation_started_at.return_value = None
     runtime.activate_broker = AsyncMock()
+    runtime.connect = AsyncMock()
+    runtime.disconnect = AsyncMock()
     return runtime
 
 
@@ -99,8 +113,11 @@ async def test_dashboard_provider_tools_describe_operational_contracts() -> None
     tools = await api._app.list_tools()
 
     assert {item.name for item in tools} == {
-        "activate_dashboard_broker",
+        "connect_dashboard_broker",
+        "disconnect_dashboard_broker",
         "open_topicgate_dashboard",
+        "reconnect_observe_dashboard_broker",
+        "select_dashboard_broker",
         "select_dashboard_path",
     }
     for item in tools:
@@ -111,18 +128,19 @@ async def test_dashboard_provider_tools_describe_operational_contracts() -> None
         assert "Failures:" in item.description
 
 
-def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:
+def test_dashboard_renders_light_broker_controls_and_vertical_details() -> None:
     api = DashboardAPI(dashboard_runtime())
 
     rendered = json.dumps(api.open_topicgate_dashboard().to_json())
 
     assert "Subscriptions" in rendered
-    assert "Metadata" in rendered
+    assert "Details / Stats" in rendered
     assert "Subscription" in rendered
-    assert "Source" in rendered
-    assert "Truncation" in rendered
+    assert "Observation source" in rendered
+    assert "Ingestion truncation" in rendered
+    assert "Rendering truncation" in rendered
     assert "Observation started" in rendered
-    assert "Snapshot completeness" in rendered
+    assert "Snapshot" in rendered
     assert "Completeness limitations" in rendered
     assert "Persisted origin" in rendered
     assert "Retained" in rendered
@@ -130,29 +148,135 @@ def test_dashboard_renders_monitoring_only_two_column_workspace() -> None:
     assert "Cached" in rendered
     assert "Stale" in rendered
     assert "Connected" in rendered
-    assert "Broker control" in rendered
-    assert "Control action" in rendered
-    assert "Switching disconnects the current broker" in rendered
-    assert "activate_broker_id" in rendered
+    assert "Connect" in rendered
+    assert "Reconnect & observe" in rendered
+    assert "Disconnect" in rendered
+    assert "Decoded payload" in rendered
+    assert "Raw payload (hex)" in rendered
+    assert "dashboard_broker_id" in rendered
     assert "border-[#c8ced6]" in rendered
     assert "border-[#b8c0ca]" in rendered
     assert "bg-[#dce9f7]" in rendered
     assert "border-l-[#405d7a]" in rendered
     assert "bg-[#fbfcfd]" in rendered
+    assert "Control action" not in rendered
+    assert "Switching disconnects the current broker" not in rendered
+    assert "border-[#f3d18a]" not in rendered
+    assert "text-3xl" not in rendered
+    assert "lg:text-5xl" not in rendered
     for removed_label in (
         "Observer Tree",
-        "Details / Stats",
         "Add subscription",
         "Remove subscription",
-        "Connect",
-        "Reconnect",
-        "Disconnect",
         "Refresh",
         "Publish message",
         "Apply",
         "Revert",
     ):
         assert f'"label": "{removed_label}"' not in rendered
+
+
+def test_broker_selector_is_passive_and_presents_selected_profile() -> None:
+    runtime = dashboard_runtime()
+    inactive = runtime.list_brokers.return_value[1]
+    api = DashboardAPI(runtime)
+
+    control = api._select_dashboard_broker(str(inactive.id))
+
+    runtime.activate_broker.assert_not_awaited()
+    runtime.connect.assert_not_awaited()
+    runtime.disconnect.assert_not_awaited()
+    assert control["selected_broker_id"] == str(inactive.id)
+    assert control["endpoint"] == "mqtts://remote.local:8883"
+    assert control["can_connect"] is True
+    assert control["can_disconnect"] is False
+
+
+async def test_connect_targets_the_selected_profile_and_refreshes_state() -> None:
+    runtime = dashboard_runtime()
+    inactive = runtime.list_brokers.return_value[1]
+    api = DashboardAPI(runtime)
+
+    state = await api._connect_dashboard_broker(
+        str(inactive.id),
+        "sensors/kitchen/temperature",
+    )
+
+    runtime.activate_broker.assert_awaited_once_with(inactive.id)
+    runtime.connect.assert_not_awaited()
+    assert set(state) == {"snapshot", "selection", "broker_control"}
+
+
+async def test_connect_uses_runtime_connect_for_active_disconnected_profile() -> None:
+    runtime = dashboard_runtime()
+    active = runtime.active_broker
+    runtime.get_connection_status.side_effect = lambda _broker_id: (
+        ConnectionStatus.DISCONNECTED
+    )
+    api = DashboardAPI(runtime)
+
+    await api._connect_dashboard_broker(str(active.id))
+
+    runtime.activate_broker.assert_not_awaited()
+    runtime.connect.assert_awaited_once_with()
+
+
+async def test_disconnect_only_targets_the_active_selected_profile() -> None:
+    runtime = dashboard_runtime()
+    active, inactive = runtime.list_brokers.return_value
+    api = DashboardAPI(runtime)
+
+    await api._disconnect_dashboard_broker(str(active.id))
+    runtime.disconnect.assert_awaited_once_with()
+
+    try:
+        await api._disconnect_dashboard_broker(str(inactive.id))
+    except ValueError as error:
+        assert "active connected broker" in str(error)
+    else:
+        raise AssertionError("Inactive broker disconnect should fail")
+    assert runtime.disconnect.await_count == 1
+
+
+async def test_reconnect_observe_uses_default_wait_and_preserves_selection() -> None:
+    runtime = dashboard_runtime()
+    active = runtime.active_broker
+    api = DashboardAPI(runtime)
+    observed_snapshot = api._snapshot_service.build_current(active.id)
+    runtime.get_observer_model.reset_mock()
+    api._snapshot_service.observe = AsyncMock(return_value=observed_snapshot)
+
+    state = await api._reconnect_observe_dashboard_broker(
+        str(active.id),
+        "sensors/kitchen/temperature",
+    )
+
+    api._snapshot_service.observe.assert_awaited_once_with(active.id)
+    assert runtime.get_observer_model.call_count == 0
+    assert state["selection"]["path"] == "sensors/kitchen/temperature"
+
+
+def test_snapshot_falls_back_when_preferred_path_is_not_selectable() -> None:
+    api = DashboardAPI(dashboard_runtime())
+
+    snapshot = api._snapshot("unrelated/topic")
+
+    assert snapshot["initial_selection"]["path"] == (
+        "sensors/kitchen/temperature"
+    )
+
+
+def test_dashboard_serializes_reactive_action_states_and_failure_toasts() -> None:
+    rendered = json.dumps(
+        DashboardAPI(dashboard_runtime()).open_topicgate_dashboard().to_json()
+    )
+
+    assert "broker_control.connect_disabled" in rendered
+    assert "broker_control.reconnect_observe_disabled" in rendered
+    assert "broker_control.disconnect_disabled" in rendered
+    assert "Could not connect broker" in rendered
+    assert "Could not disconnect broker" in rendered
+    assert "Could not reconnect and observe broker" in rendered
 
 
 def test_snapshot_merges_filters_and_matching_topics_into_tree() -> None:
@@ -214,6 +338,26 @@ def test_snapshot_keeps_payload_representations_for_selected_topic() -> None:
     assert selected["payload_text"] == "22.4"
     assert selected["payload_base64"] == "MjIuNA=="
     assert selected["payload_encoding"] == "UTF-8"
+    assert {
+        "topic",
+        "received_at",
+        "age_label",
+        "source_label",
+        "status_label",
+        "payload_encoding",
+        "payload_size_label",
+        "original_payload_size_label",
+        "available_payload_size_label",
+        "rendered_payload_size",
+        "ingestion_truncation_label",
+        "rendering_truncation_label",
+        "qos_label",
+        "retain_label",
+        "message_count",
+        "dropped_message_count",
+        "decoded_payload",
+        "raw_payload",
+    } <= selected.keys()
 
 
 def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:

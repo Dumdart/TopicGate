@@ -115,8 +115,15 @@ class ObserverTreePane(WorkspacePane):
         snapshot_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        snapshot_scroll.setMaximumHeight(360)
+        snapshot_scroll.setMinimumHeight(68)
+        snapshot_scroll.setMaximumHeight(68)
         snapshot_scroll.setWidget(self.snapshot_panel)
+
+        def resize_snapshot(expanded: bool) -> None:
+            snapshot_scroll.setMinimumHeight(300 if expanded else 68)
+            snapshot_scroll.setMaximumHeight(360 if expanded else 68)
+
+        self.snapshot_panel.expansion_changed.connect(resize_snapshot)
         self.content_layout.addWidget(snapshot_scroll)
 
     def render(

@@ -57,7 +57,7 @@ are registered only when the server is explicitly started with `--mode control`.
 | Topics | `list_topics`, `get_topic_state` | - | Legacy compatibility reads retained during snapshot adoption. |
 | Subscriptions | `list_subscriptions` | `add_subscription`, `update_subscription`, `remove_subscription` | Mutations require the resolved broker to be active. |
 | Publishing | - | `publish` | Requires explicit broker, topic, payload, and UTF-8/base64 encoding; can cause real-world effects. |
-| Dashboard | - | `open_topicgate_dashboard` | Broker switching inside the dashboard activates and connects the selected profile. |
+| Dashboard | - | `open_topicgate_dashboard` | Broker selection is passive; Connect, Reconnect & observe, and Disconnect are explicit actions. |
 
 Every supplied MCP broker selector accepts either a UUID or a unique profile name. Names are trimmed and matched case-insensitively. Unknown or ambiguous names return an error instead of silently selecting a profile.
 
@@ -67,7 +67,7 @@ In control mode, `observe_broker_snapshot` is the separate state-changing refres
 
 `list_topics` and `get_topic_state` remain available for compatibility while clients adopt snapshots. Calling `list_topics` without its optional broker selector retains its historical active-broker scope. `get_topic_state` retains its required `broker_id` argument and one-topic-at-a-time response. These tools will be deprecated only after snapshot adoption; new integrations should use `get_broker_snapshot`.
 
-In control mode, the optional FastMCP App adds one model-visible tool, `open_topicgate_dashboard`. It provides a compact monitoring view with broker selection, a subscription and observed-topic tree, latest values, metadata, and read-only subscription settings. Broker and subscription management and MQTT publishing remain in their dedicated interfaces. It requires an MCP host that supports MCP Apps.
+In control mode, the optional FastMCP App adds one model-visible tool, `open_topicgate_dashboard`. It provides a compact monitoring view with passive broker selection, explicit broker lifecycle actions, a subscription and observed-topic tree, latest values, metadata, and read-only subscription settings. Broker and subscription management and MQTT publishing remain in their dedicated interfaces. It requires an MCP host that supports MCP Apps.
 
 The dashboard dependency contract is FastMCP Apps `3.4.7` with Prefab UI `0.20.2`. Both versions are pinned because Prefab is under active development and FastMCP intentionally supplies only a minimum Prefab version. CI installs this exact pair and runs the dependency-contract test plus the full dashboard suite before an upgrade can replace it.
 

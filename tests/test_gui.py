@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QToolBar,
     QToolButton,
     QTreeView,
+    QWidget,
 )
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -62,9 +63,30 @@ def test_snapshot_panel_applies_clears_and_renders_health() -> None:
     application = QApplication.instance() or QApplication([])
     pane = SnapshotPanel()
     requested: list[SnapshotQuery] = []
+    observations: list[SnapshotQuery] = []
     resets: list[bool] = []
     pane.apply_requested.connect(requested.append)
+    pane.reconnect_observe_requested.connect(observations.append)
     pane.reset_requested.connect(lambda: resets.append(True))
+    toggle = pane.findChild(QToolButton, "snapshotToggleButton")
+    content = pane.findChild(QWidget, "snapshotContent")
+    assert not pane.is_expanded
+    assert not toggle.isChecked()
+    assert content.isHidden()
+    assert "collapsed" in toggle.accessibleDescription()
+    assert pane.findChild(QLabel, "snapshotSummaryConnection").text() == (
+        "Disconnected"
+    )
+    assert pane.findChild(
+        QPushButton,
+        "reconnectObserveButton",
+    ).accessibleName() == "Reconnect & observe"
+
+    toggle.setFocus()
+    QTest.keyClick(toggle, Qt.Key.Key_Space)
+    assert pane.is_expanded
+    assert not content.isHidden()
+    assert "expanded" in toggle.accessibleDescription()
     pane.findChild(QLineEdit, "snapshotTopicFilter").setText("home/#")
     pane.findChild(QLineEdit, "snapshotMaximumAge").setText("10.5")
     pane.findChild(QSpinBox, "snapshotResultLimit").setValue(12)
@@ -72,6 +94,8 @@ def test_snapshot_panel_applies_clears_and_renders_health() -> None:
 
     pane.findChild(QPushButton, "applySnapshotButton").click()
     assert requested[-1] == SnapshotQuery("home/#", 10.5, 12, 512)
+    pane.findChild(QPushButton, "reconnectObserveButton").click()
+    assert observations[-1] == SnapshotQuery("home/#", 10.5, 12, 512)
 
     health = BrokerSnapshotHealth(
         "captured",
@@ -89,6 +113,19 @@ def test_snapshot_panel_applies_clears_and_renders_health() -> None:
     pane.render_health(health)
     assert pane.findChild(QLabel, "snapshotReturnedCount").text() == "3"
     assert pane.findChild(QLabel, "snapshotCompletenessStatus").text() == "Limited"
+    assert pane.findChild(QLabel, "snapshotSummaryReturned").text() == (
+        "Returned 3"
+    )
+    assert pane.findChild(QLabel, "snapshotSummaryDropped").text() == (
+        "Dropped 5"
+    )
+    assert pane.findChild(QLabel, "snapshotSummaryCompleteness").text() == (
+        "Limited"
+    )
+
+    pane.set_expanded(False)
+    assert pane.query == SnapshotQuery("home/#", 10.5, 12, 512)
+    assert content.isHidden()
 
     pane.findChild(QPushButton, "clearSnapshotFiltersButton").click()
     assert resets == [True]
@@ -404,19 +441,24 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     connection_controls = window.findChild(ConnectionControls)
     assert connection_controls is not None
     assert connection_status is not None
-    assert connection_status.text() == "MQTT Connected"
+    assert connection_status.text() == "Connected"
     assert connection_status.status == "connected"
-    assert connection_status.minimumWidth() >= 188
-    assert connection_status.minimumHeight() >= 34
+    assert connection_status.minimumWidth() >= 108
+    assert connection_status.minimumHeight() >= 24
+    assert connection_status.accessibleName() == "MQTT connection status"
     assert connection_status.accessibleDescription() == (
         "MQTT connection is connected."
     )
     assert connection_status.toolTip() == "MQTT broker is connected"
     assert window.findChild(QToolButton, "brokerSettingsButton") is None
-    assert (
-        window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
-        is connection_status
-    )
+    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is None
+    assert window.findChild(QLabel, "brokerEndpoint").parentWidget().isAncestorOf(
+        connection_status
+    ) or connection_status.parentWidget().objectName() == "applicationHeader"
+    assert window.findChild(
+        QPushButton,
+        "headerReconnectButton",
+    ).accessibleName() == "Reconnect & observe"
     assert window.findChild(QToolBar, "observerToolbar") is None
     assert not window.findChild(QAction, "connectAction").isEnabled()
     assert window.findChild(QAction, "reconnectAction").isEnabled()
@@ -461,7 +503,7 @@ def test_connection_controls_bundle_actions_and_request_signals() -> None:
         action.trigger()
 
     assert requests == ["connect", "reconnect", "disconnect"]
-    controls.status_label.deleteLater()
+    assert not hasattr(controls, "status_label")
     controls.deleteLater()
     application.processEvents()
 

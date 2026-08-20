@@ -42,9 +42,14 @@ class DashboardSnapshotBuilder:
         self._runtime = runtime
         self._snapshot_service = snapshot_service
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(
+        self,
+        preferred_path: str = "",
+        *,
+        broker_snapshot: BrokerSnapshot | None = None,
+    ) -> dict[str, Any]:
         active = self._runtime.active_broker
-        broker_snapshot = self._build_snapshot(active.id)
+        broker_snapshot = broker_snapshot or self._build_snapshot(active.id)
         subscriptions = tuple(self._runtime.list_subscriptions(active.id))
         observed = tuple(item.topic for item in broker_snapshot.topics)
         visible_topics = tuple(
@@ -61,16 +66,29 @@ class DashboardSnapshotBuilder:
             broker_display_summary(
                 item,
                 active.id,
-                broker_snapshot.connection_status,
+                self._runtime.get_connection_status(item.id),
             )
             for item in self._runtime.list_brokers()
         ]
-        initial_path = (
+        default_path = (
             visible_names[0]
             if visible_names
             else subscriptions[0].topic_filter
             if subscriptions
             else ""
+        )
+        tree_rows = self._tree_rows(
+            paths,
+            subscriptions,
+            visible_topics,
+        )
+        selectable_paths = {
+            row["path"] for row in tree_rows if row["selectable"]
+        }
+        initial_path = (
+            preferred_path
+            if preferred_path in selectable_paths
+            else default_path
         )
         completeness = asdict(broker_snapshot.completeness)
         completeness["status_label"] = (
@@ -111,11 +129,7 @@ class DashboardSnapshotBuilder:
             "topics": [
                 self._topic_row(item) for item in visible_topics
             ],
-            "tree_rows": self._tree_rows(
-                paths,
-                subscriptions,
-                visible_topics,
-            ),
+            "tree_rows": tree_rows,
             "freshness": asdict(broker_snapshot.freshness),
             "results": asdict(broker_snapshot.results),
             "completeness": completeness,
@@ -125,6 +139,40 @@ class DashboardSnapshotBuilder:
                 initial_path,
             ),
         }
+
+    def broker_control(self, broker_id: UUID) -> dict[str, Any]:
+        broker = self._runtime.get_broker(broker_id)
+        active_id = self._runtime.active_broker.id
+        summary = broker_display_summary(
+            broker,
+            active_id,
+            self._runtime.get_connection_status(broker_id),
+        )
+        status = summary.connection_status
+        is_active = broker_id == active_id
+        can_disconnect = is_active and status in {
+            "connecting",
+            "connected",
+            "reconnecting",
+        }
+        can_reconnect_observe = not is_active or status in {
+            "disconnected",
+            "connected",
+            "reconnecting",
+        }
+        result = self._broker_dict(summary)
+        result.update(
+            {
+                "selected_broker_id": str(broker_id),
+                "can_connect": not is_active or status == "disconnected",
+                "can_reconnect_observe": can_reconnect_observe,
+                "can_disconnect": can_disconnect,
+                "connect_disabled": is_active and status != "disconnected",
+                "reconnect_observe_disabled": not can_reconnect_observe,
+                "disconnect_disabled": not can_disconnect,
+            }
+        )
+        return result
 
     def selection(self, broker_id: UUID, path: str) -> dict[str, Any]:
         broker_snapshot = self._build_snapshot(broker_id)
