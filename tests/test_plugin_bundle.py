@@ -66,7 +66,7 @@ def test_plugin_bundle_matches_claude_code_ingestion_contract() -> None:
     assert (PLUGIN_ROOT / manifest["mcpServers"].removeprefix("./")).is_file()
 
 
-def test_plugin_bundle_matches_agent_plugins_ingestion_contract() -> None:
+def test_plugin_bundle_matches_copilot_and_cursor_agent_plugins_contract() -> None:
     manifest = json.loads(
         (PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8")
     )
