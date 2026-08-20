@@ -1,3 +1,8 @@
+---
+name: publish-mqtt-message
+description: Safely publish an MQTT message only through an explicitly configured control-mode TopicGate server.
+---
+
 # publish-mqtt-message
 
 Publish a payload to an exact MQTT topic through a TopicGate broker. This is a

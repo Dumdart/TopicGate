@@ -1,3 +1,8 @@
+---
+name: manage-mqtt-subscriptions
+description: List MQTT subscriptions and explain how optional TopicGate control mode can mutate them.
+---
+
 # manage-mqtt-subscriptions
 
 List, add, update, or remove MQTT subscriptions for a TopicGate broker profile.
