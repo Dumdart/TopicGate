@@ -40,6 +40,10 @@ from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+)
 from topicgate.gui.components.about_dialog import AboutDialog
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.broker_settings_dialog import (
@@ -153,6 +157,24 @@ def test_snapshot_panel_reports_field_specific_age_errors() -> None:
     application.processEvents()
 
 
+def test_snapshot_panel_exposes_freshness_legend_and_accessible_filters() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+
+    legend = pane.findChild(QLabel, "snapshotFreshnessLegend")
+    topic_filter = pane.findChild(QLineEdit, "snapshotTopicFilter")
+    apply = pane.findChild(QPushButton, "applySnapshotButton")
+
+    assert legend is not None
+    assert "Live" in legend.text()
+    assert "Cached" in legend.text()
+    assert legend.accessibleName() == "Freshness and source legend"
+    assert topic_filter.accessibleName() == "Snapshot topic filter"
+    assert apply.accessibleName() == "Apply snapshot filters"
+    pane.deleteLater()
+    application.processEvents()
+
+
 def test_about_dialog_describes_persisted_observations() -> None:
     application = QApplication.instance() or QApplication([])
     dialog = AboutDialog()
@@ -226,6 +248,98 @@ def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
     assert "color: #737b85" in window.styleSheet()
 
     window.close()
+    application.processEvents()
+
+
+def test_desktop_onboarding_and_mcp_setup_guide_the_first_run() -> None:
+    application = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(Path(".pytest_cache/first-run.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    window = MainWindow(MainViewModel(runtime_for(FakeGuiRepository())), settings)
+
+    checklist = window.findChild(QWidget, "firstRunChecklist")
+    broker = window.findChild(QLabel, "firstRunBrokerStatus")
+    mcp_action = window.findChild(QAction, "mcpSetupAction")
+    assert checklist is not None
+    assert broker.text() == "Next: Configure a broker profile"
+    assert mcp_action.shortcut().toString() == "Ctrl+Shift+M"
+
+    mcp_action.trigger()
+    dialog = window.findChild(QDialog, "mcpSetupDialog")
+    assert dialog is not None
+    assert '"--mode", "read-only"' in dialog.findChild(
+        QPlainTextEdit, "mcpSetupConfiguration"
+    ).toPlainText()
+    dialog.accept()
+    assert settings.value("onboarding/mcpConfigured", False, type=bool)
+    window.close()
+    application.processEvents()
+
+
+def test_desktop_persists_snapshot_preferences_and_focuses_search() -> None:
+    application = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(Path(".pytest_cache/snapshot-preferences.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    first = MainWindow(MainViewModel(runtime_for(FakeGuiRepository())), settings)
+    first._apply_snapshot_query(SnapshotQuery("devices/#", 12.0, 9, 256))
+    first._observer_tree.snapshot_panel.set_expanded(True)
+    first.close()
+
+    second = MainWindow(MainViewModel(runtime_for(FakeGuiRepository())), settings)
+    assert second._view_model.snapshot_query == SnapshotQuery("devices/#", 12.0, 9, 256)
+    assert second._observer_tree.snapshot_panel.is_expanded
+    second.show()
+    application.processEvents()
+    second._focus_topic_search_action.trigger()
+    assert second._observer_tree._search_edit.hasFocus()
+    second.close()
+    application.processEvents()
+
+
+def test_observer_empty_states_explain_recovery_actions() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = ObserverTreePane()
+    pane.render_empty_state("disconnected", (), False, False, False)
+    assert "No subscriptions" in pane.findChild(QLabel, "observerEmptyStateText").text()
+
+    pane.render_empty_state("connected", (Subscription("devices/#"),), True, False, False)
+    action = pane.findChild(QToolButton, "observerEmptyStateAction")
+    assert "current snapshot filters" in pane.findChild(
+        QLabel, "observerEmptyStateText"
+    ).text()
+    assert action.text() == "Clear filters"
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_cache_administration_warns_when_limits_are_approached() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    profile = view_model.active_broker_profile
+    view_model._retention_policy = ObservationRetentionPolicy(
+        max_entries_per_broker=10,
+        max_entries_total=20,
+        max_payload_bytes_per_topic=10,
+        max_payload_bytes_per_broker=100,
+        max_persisted_payload_database_bytes_total=200,
+        warning_threshold=0.8,
+    )
+    view_model._cache_usage = CacheUsageSummary(
+        (BrokerCacheUsage(profile.id, 8, 80, None, None),)
+    )
+    dialog = StoredObservationsDialog(view_model)
+    dialog.render()
+
+    warning = dialog.findChild(QLabel, "cacheRetentionWarningBanner")
+    assert not warning.isHidden()
+    assert "80%" in warning.text()
+    dialog.deleteLater()
     application.processEvents()
 
 

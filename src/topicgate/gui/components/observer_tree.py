@@ -4,6 +4,7 @@ from PySide6.QtCore import QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QFrame,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -37,6 +38,7 @@ class ObserverTreePane(WorkspacePane):
     snapshot_apply_requested = Signal(object)
     snapshot_reset_requested = Signal()
     reconnect_observe_requested = Signal(object)
+    empty_state_action_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__("Observer Tree")
@@ -45,12 +47,14 @@ class ObserverTreePane(WorkspacePane):
         controls = QHBoxLayout()
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Search topics...")
+        self._search_edit.setAccessibleName("Search observed topics")
         self._search_edit.setClearButtonEnabled(True)
         controls.addWidget(self._search_edit, 1)
 
         add_button = QToolButton()
         add_button.setText("+ Filter")
         add_button.setToolTip("Add an MQTT subscription filter")
+        add_button.setAccessibleName("Add MQTT subscription filter")
         add_button.clicked.connect(self.add_filter_requested)
         controls.addWidget(add_button)
 
@@ -98,6 +102,23 @@ class ObserverTreePane(WorkspacePane):
         )
         self._search_edit.textChanged.connect(self._proxy.setFilterFixedString)
         self.content_layout.addWidget(self._tree, 1)
+        self._empty_state = QFrame()
+        self._empty_state.setObjectName("observerEmptyState")
+        self._empty_state.setFrameShape(QFrame.Shape.StyledPanel)
+        empty_layout = QHBoxLayout(self._empty_state)
+        self._empty_state_text = QLabel()
+        self._empty_state_text.setObjectName("observerEmptyStateText")
+        self._empty_state_text.setWordWrap(True)
+        empty_layout.addWidget(self._empty_state_text, 1)
+        self._empty_state_action = QToolButton()
+        self._empty_state_action.setObjectName("observerEmptyStateAction")
+        self._empty_state_action.clicked.connect(
+            lambda: self.empty_state_action_requested.emit(
+                str(self._empty_state_action.property("action") or "")
+            )
+        )
+        empty_layout.addWidget(self._empty_state_action)
+        self.content_layout.addWidget(self._empty_state)
         self.snapshot_panel = SnapshotPanel()
         self.snapshot_panel.apply_requested.connect(
             self.snapshot_apply_requested.emit
@@ -152,6 +173,55 @@ class ObserverTreePane(WorkspacePane):
             self._tree.expandToDepth(1)
         self.select_topic(selected_topic)
 
+    def render_empty_state(
+        self,
+        connection_status: str,
+        subscriptions: tuple[Subscription, ...],
+        query_is_filtered: bool,
+        has_cached_values: bool,
+        has_topics: bool,
+    ) -> None:
+        """Explain why the workspace has no immediately useful live values."""
+        if has_topics and not has_cached_values:
+            self._empty_state.setVisible(False)
+            return
+        if not subscriptions:
+            message, action, label = (
+                "No subscriptions are configured. Add a filter before TopicGate can observe values.",
+                "add-filter",
+                "Add filter",
+            )
+        elif connection_status == "disconnected":
+            message, action, label = (
+                "The active broker is disconnected. Cached values may be old until you reconnect.",
+                "connect",
+                "Connect",
+            )
+        elif query_is_filtered and not has_topics:
+            message, action, label = (
+                "No values match the current snapshot filters. Clear filters or capture a fresh snapshot.",
+                "clear-filters",
+                "Clear filters",
+            )
+        elif has_cached_values:
+            message, action, label = (
+                "Only persisted values are available. Their source and age are shown in Details; reconnect to collect fresh values.",
+                "observe",
+                "Reconnect & observe",
+            )
+        else:
+            message, action, label = (
+                "No values have been observed yet. Capture a fresh snapshot after publishers send messages.",
+                "observe",
+                "Reconnect & observe",
+            )
+        self._empty_state_text.setText(message)
+        self._empty_state_text.setAccessibleName(message)
+        self._empty_state_action.setText(label)
+        self._empty_state_action.setAccessibleName(label)
+        self._empty_state_action.setProperty("action", action)
+        self._empty_state.setVisible(True)
+
     def render_tree(
         self,
         nodes: tuple[TopicTreeNode, ...],
@@ -190,6 +260,9 @@ class ObserverTreePane(WorkspacePane):
 
     def collapse_all(self) -> None:
         self._tree.collapseAll()
+
+    def focus_search(self) -> None:
+        self._search_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def render_broker_profiles(
         self,
@@ -239,6 +312,9 @@ class ObserverTreePane(WorkspacePane):
     def set_profile_switching(self, switching: bool) -> None:
         """Prevent duplicate profile switches while the broker reconnects."""
         self._broker_profile_button.setEnabled(not switching)
+        action = str(self._empty_state_action.property("action") or "")
+        if action in {"connect", "observe"}:
+            self._empty_state_action.setEnabled(not switching)
 
     def _add_topic(self, topic: str) -> None:
         parent = self._model.invisibleRootItem()

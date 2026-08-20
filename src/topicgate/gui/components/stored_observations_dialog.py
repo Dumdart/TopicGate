@@ -171,6 +171,17 @@ class StoredObservationsDialog(QDialog):
     def _cache_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        self.cache_warning_banner = QLabel()
+        self.cache_warning_banner.setObjectName("cacheRetentionWarningBanner")
+        self.cache_warning_banner.setWordWrap(True)
+        self.cache_warning_banner.setTextFormat(Qt.TextFormat.PlainText)
+        self.cache_warning_banner.setAccessibleName("Retention capacity warning")
+        self.cache_warning_banner.setStyleSheet(
+            "background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; "
+            "border-radius: 4px; padding: 6px;"
+        )
+        self.cache_warning_banner.setVisible(False)
+        layout.addWidget(self.cache_warning_banner)
         self.usage_table = QTableWidget(0, 8)
         self.usage_table.setObjectName("cacheUsageTable")
         self.usage_table.setHorizontalHeaderLabels(
@@ -325,6 +336,37 @@ class StoredObservationsDialog(QDialog):
             / policy.max_persisted_payload_database_bytes_total
             >= policy.warning_threshold,
         )
+        warnings: list[str] = []
+        for usage in rows:
+            display = cache_usage_display(usage, policy)
+            broker = brokers[usage.broker_id]
+            if display.entry_warning:
+                warnings.append(
+                    f"{broker.name} has reached {display.entry_utilization:.0%} of its entry limit"
+                )
+            if display.payload_warning:
+                warnings.append(
+                    f"{broker.name} has reached {display.payload_utilization:.0%} of its payload limit"
+                )
+        total_entries = total.entry_count / policy.max_entries_total
+        total_payload = (
+            total.stored_payload_bytes
+            / policy.max_persisted_payload_database_bytes_total
+        )
+        if total_entries >= policy.warning_threshold:
+            warnings.append(
+                f"all brokers have reached {total_entries:.0%} of the global entry limit"
+            )
+        if total_payload >= policy.warning_threshold:
+            warnings.append(
+                f"all brokers have reached {total_payload:.0%} of the global payload limit"
+            )
+        self.cache_warning_banner.setText(
+            "Retention warning: "
+            + "; ".join(warnings)
+            + ". Review the retention policy before automatic cleanup is needed."
+        )
+        self.cache_warning_banner.setVisible(bool(warnings))
 
     def _render_brokers(self) -> None:
         selected = self.broker.currentData()

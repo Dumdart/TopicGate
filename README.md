@@ -38,10 +38,12 @@ An empty or partial result can therefore be correct, especially immediately afte
 ### TopicGate Desktop
 
 - Create, edit, activate, and delete broker profiles.
+- Follow an in-app first-run checklist for broker, connection, subscription, observation, and MCP setup.
 - Save profile changes without connecting, or save and connect in one action.
 - Search and inspect live topics in an observer tree.
 - Add, edit, and remove subscription filters.
 - Connect, disconnect, and reconnect from the interface.
+- Distinguish live, cached, stale, and stored values; empty-state guidance and cache-retention warnings explain what to do next.
 
 ### TopicGate MCP
 
@@ -128,6 +130,8 @@ topicgate-gui
 ```
 
 If the initial MQTT connection fails, the desktop application stays open in a disconnected state so the profile can be corrected.
+
+For the complete first-run, accessibility, snapshot-provenance, and cache-safety workflow, see [Desktop workflow](docs/desktop-workflow.md).
 
 ## Run TopicGate MCP
 

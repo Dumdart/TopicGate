@@ -25,7 +25,9 @@ from topicgate.gui.components.broker_settings_dialog import (
 )
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.log_console import LogConsoleDock
+from topicgate.gui.components.mcp_setup_dialog import McpSetupDialog
 from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.components.onboarding_panel import OnboardingPanel
 from topicgate.gui.components.publish_pane import PublishPane
 from topicgate.gui.components.subscription_settings import (
     SubscriptionSettingsPane,
@@ -37,6 +39,7 @@ from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.settings_migration import migrate_legacy_settings
 from topicgate.gui.theme import LIGHT_THEME
+from topicgate.presentation.snapshot_presentation import SnapshotQuery
 
 
 class MainWindow(QMainWindow):
@@ -73,6 +76,7 @@ class MainWindow(QMainWindow):
         self._topic_details = TopicDetailsPane()
         self._subscription_settings = SubscriptionSettingsPane()
         self._publish_pane = PublishPane()
+        self._onboarding = OnboardingPanel()
         self._header.broker_selected.connect(self._confirm_broker_profile_switch)
         self._header.connect_requested.connect(
             lambda: self._run_async(self._view_model.connect_to_broker())
@@ -106,7 +110,7 @@ class MainWindow(QMainWindow):
             self._apply_snapshot_query
         )
         self._observer_tree.snapshot_reset_requested.connect(
-            self._view_model.reset_snapshot_query
+            self._reset_snapshot_query
         )
         self._observer_tree.reconnect_observe_requested.connect(
             self._confirm_reconnect_and_observe
@@ -118,6 +122,23 @@ class MainWindow(QMainWindow):
                 message,
             )
         )
+        self._observer_tree.empty_state_action_requested.connect(
+            self._handle_empty_state_action
+        )
+        self._onboarding.configure_broker_requested.connect(
+            self._show_broker_settings_dialog
+        )
+        self._onboarding.test_connection_requested.connect(
+            lambda: self._run_async(self._view_model.connect_to_broker())
+        )
+        self._onboarding.add_subscription_requested.connect(
+            self._show_add_filter_dialog
+        )
+        self._onboarding.observe_requested.connect(
+            self._confirm_reconnect_and_observe
+        )
+        self._onboarding.configure_mcp_requested.connect(self._show_mcp_setup)
+        self._onboarding.dismissed.connect(self._dismiss_onboarding)
         self._subscription_settings.apply_requested.connect(
             self._apply_subscription
         )
@@ -150,6 +171,7 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(12, 12, 12, 12)
         root_layout.setSpacing(10)
         root_layout.addWidget(self._header)
+        root_layout.addWidget(self._onboarding)
         root_layout.addWidget(self._splitter, 1)
         self.setCentralWidget(root)
         self.setMinimumSize(1024, 640)
@@ -190,6 +212,7 @@ class MainWindow(QMainWindow):
         )
 
         self._add_filter_action = QAction("Add filter", self)
+        self._add_filter_action.setShortcut("Ctrl+N")
         self._add_filter_action.setToolTip("Add an MQTT subscription filter")
         self._add_filter_action.triggered.connect(self._show_add_filter_dialog)
 
@@ -208,6 +231,7 @@ class MainWindow(QMainWindow):
         self._stored_observations_action.setObjectName(
             "storedObservationsAction"
         )
+        self._stored_observations_action.setShortcut("Ctrl+Shift+S")
         self._stored_observations_action.triggered.connect(
             self._show_stored_observations
         )
@@ -219,6 +243,18 @@ class MainWindow(QMainWindow):
         self._about_action = QAction("About TopicGate", self)
         self._about_action.setObjectName("aboutAction")
         self._about_action.triggered.connect(self._show_about_dialog)
+
+        self._mcp_setup_action = QAction("MCP setup...", self)
+        self._mcp_setup_action.setObjectName("mcpSetupAction")
+        self._mcp_setup_action.setToolTip("Show TopicGate MCP client configuration")
+        self._mcp_setup_action.setShortcut("Ctrl+Shift+M")
+        self._mcp_setup_action.triggered.connect(self._show_mcp_setup)
+        self._focus_topic_search_action = QAction("Focus topic search", self)
+        self._focus_topic_search_action.setShortcut("Ctrl+F")
+        self._focus_topic_search_action.triggered.connect(
+            self._observer_tree.focus_search
+        )
+        self.addAction(self._focus_topic_search_action)
 
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -240,6 +276,8 @@ class MainWindow(QMainWindow):
         self._view_menu.addAction(self._collapse_action)
 
         help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction(self._mcp_setup_action)
+        help_menu.addSeparator()
         help_menu.addAction(self._about_action)
 
     def _create_log_dock(self) -> None:
@@ -256,6 +294,29 @@ class MainWindow(QMainWindow):
 
     def _show_about_dialog(self) -> None:
         AboutDialog(self).open()
+
+    def _show_mcp_setup(self) -> None:
+        dialog = McpSetupDialog(self)
+        dialog.finished.connect(self._mark_mcp_configured)
+        dialog.open()
+
+    def _mark_mcp_configured(self, _result: int) -> None:
+        self._settings.setValue("onboarding/mcpConfigured", True)
+        self._render_onboarding()
+
+    def _dismiss_onboarding(self) -> None:
+        self._settings.setValue("onboarding/dismissed", True)
+        self._onboarding.setVisible(False)
+
+    def _handle_empty_state_action(self, action: str) -> None:
+        if action == "add-filter":
+            self._show_add_filter_dialog()
+        elif action == "connect":
+            self._run_async(self._view_model.connect_to_broker())
+        elif action == "clear-filters":
+            self._reset_snapshot_query()
+        elif action == "observe":
+            self._confirm_reconnect_and_observe()
 
     def _connect_view_model(self) -> None:
         self._view_model.state_changed.connect(self._render_details)
@@ -276,6 +337,7 @@ class MainWindow(QMainWindow):
         self._render_settings()
         self._render_connection()
         self._render_broker_profiles()
+        self._render_onboarding()
 
     def _render_tree(self) -> None:
         self._observer_tree.render_tree(
@@ -285,6 +347,19 @@ class MainWindow(QMainWindow):
         )
         self._observer_tree.snapshot_panel.render_health(
             self._view_model.snapshot_health
+        )
+        snapshot = self._view_model.broker_snapshot
+        self._observer_tree.render_empty_state(
+            self._view_model.connection_status,
+            self._view_model.subscriptions,
+            self._snapshot_query_is_filtered(),
+            bool(snapshot.topics)
+            and all(item.source.value == "stored" for item in snapshot.topics),
+            bool(snapshot.topics),
+        )
+        self._observer_tree.set_profile_switching(
+            self._view_model.is_busy("broker")
+            or self._view_model.is_busy("connection")
         )
 
     def _render_details(self) -> None:
@@ -298,12 +373,19 @@ class MainWindow(QMainWindow):
         )
 
     def _render_connection(self) -> None:
-        self._connection_controls.render(self._view_model.connection_status)
+        if self._view_model.connection_status == "connected":
+            self._settings.setValue("onboarding/connectionTested", True)
+        self._connection_controls.render(
+            self._view_model.connection_status,
+            self._view_model.is_busy("broker")
+            or self._view_model.is_busy("connection"),
+        )
         self._observer_tree.snapshot_panel.render_connection_status(
             self._view_model.connection_status
         )
         self._render_header()
         self._render_publish()
+        self._render_onboarding()
 
     def _render_broker_profiles(self) -> None:
         self._observer_tree.render_broker_profiles(
@@ -314,6 +396,7 @@ class MainWindow(QMainWindow):
             len(self._view_model.broker_profiles) > 1
         )
         self._render_header()
+        self._render_onboarding()
 
     def _render_header(self) -> None:
         self._header.render(
@@ -341,6 +424,53 @@ class MainWindow(QMainWindow):
         )
         self._stored_observations_action.setEnabled(
             not self._view_model.is_busy("stored-observations")
+        )
+        lifecycle_busy = (
+            self._view_model.is_busy("broker")
+            or self._view_model.is_busy("connection")
+        )
+        self._connection_controls.render(
+            self._view_model.connection_status,
+            lifecycle_busy,
+        )
+        self._observer_tree.set_profile_switching(lifecycle_busy)
+        self._delete_broker_profile_action.setEnabled(
+            len(self._view_model.broker_profiles) > 1 and not lifecycle_busy
+        )
+        self._render_onboarding()
+
+    def _render_onboarding(self) -> None:
+        if self._settings.value("onboarding/dismissed", False, type=bool):
+            self._onboarding.setVisible(False)
+            return
+        snapshot = self._view_model.broker_snapshot
+        self._onboarding.render(
+            {
+                "broker": self._settings.value(
+                    "onboarding/brokerConfigured", False, type=bool
+                ),
+                "connection": self._settings.value(
+                    "onboarding/connectionTested", False, type=bool
+                ) or self._view_model.connection_status == "connected",
+                "subscription": bool(self._view_model.subscriptions),
+                "observe": bool(snapshot.topics),
+                "mcp": self._settings.value(
+                    "onboarding/mcpConfigured", False, type=bool
+                ),
+            },
+            busy=(
+                self._view_model.is_busy("broker")
+                or self._view_model.is_busy("connection")
+            ),
+        )
+
+    def _snapshot_query_is_filtered(self) -> bool:
+        query = self._view_model.snapshot_query
+        return (
+            query.topic_filter != "#"
+            or query.max_age_seconds is not None
+            or query.result_limit != SnapshotQuery().result_limit
+            or query.payload_limit_bytes != SnapshotQuery().payload_limit_bytes
         )
 
     def _show_stored_observations(self) -> None:
@@ -479,8 +609,13 @@ class MainWindow(QMainWindow):
     def _apply_snapshot_query(self, query: object) -> None:
         try:
             self._view_model.apply_snapshot_query(query)
+            self._save_snapshot_preferences()
         except (TypeError, ValueError) as error:
             QMessageBox.warning(self, "Invalid snapshot controls", str(error))
+
+    def _reset_snapshot_query(self) -> None:
+        self._view_model.reset_snapshot_query()
+        self._save_snapshot_preferences()
 
     def _confirm_reconnect_and_observe(self, query: object = None) -> None:
         try:
@@ -513,7 +648,35 @@ class MainWindow(QMainWindow):
             )
 
     def _show_operation_error(self, title: str, message: str) -> None:
-        QMessageBox.warning(self, title, message)
+        dialog = QMessageBox(self)
+        is_lifecycle_error = any(
+            term in message.lower()
+            for term in ("broker", "connection", "mqtt")
+        )
+        dialog.setWindowTitle(
+            "Broker action needs attention" if is_lifecycle_error else title
+        )
+        dialog.setText(message)
+        if not is_lifecycle_error:
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.exec()
+            return
+        dialog.setInformativeText(
+            "Check the broker profile or retry when no other broker action is running."
+        )
+        retry = dialog.addButton(
+            "Retry connection", QMessageBox.ButtonRole.ActionRole
+        )
+        edit = dialog.addButton(
+            "Edit broker profile...", QMessageBox.ButtonRole.ActionRole
+        )
+        close = dialog.addButton(QMessageBox.StandardButton.Close)
+        dialog.setDefaultButton(close)
+        dialog.exec()
+        if dialog.clickedButton() is retry:
+            self._run_async(self._view_model.connect_to_broker())
+        elif dialog.clickedButton() is edit:
+            self._show_broker_settings_dialog()
 
     def _apply_subscription(
         self,
@@ -566,6 +729,7 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             QMessageBox.warning(self, "Profile creation failed", str(error))
             return
+        self._settings.setValue("onboarding/brokerConfigured", True)
         dialog.accept()
 
     def _confirm_broker_profile_switch(self, profile_id: UUID) -> None:
@@ -656,6 +820,7 @@ class MainWindow(QMainWindow):
                 mqtt_config,
                 profile_name,
             )
+            self._settings.setValue("onboarding/brokerConfigured", True)
         except ValueError as error:
             QMessageBox.warning(self, "Broker update failed", str(error))
             return
@@ -678,6 +843,8 @@ class MainWindow(QMainWindow):
             dialog.set_applying(False)
             QMessageBox.warning(self, "Broker update failed", str(error))
             return
+        self._settings.setValue("onboarding/brokerConfigured", True)
+        self._settings.setValue("onboarding/connectionTested", True)
         dialog.accept()
 
     def _remove_subscription(self, subscription: Subscription) -> None:
@@ -727,12 +894,57 @@ class MainWindow(QMainWindow):
         )
         if selected_topic:
             self._view_model.select_topic(selected_topic)
+        self._restore_snapshot_preferences()
         log_visible = self._settings.value(
             "workspace/logVisible",
             False,
             type=bool,
         )
         self._log_dock.setVisible(log_visible)
+
+    def _restore_snapshot_preferences(self) -> None:
+        topic_filter = str(
+            self._settings.value("workspace/snapshotTopicFilter", "#") or "#"
+        )
+        age_value = self._settings.value("workspace/snapshotMaximumAge", "")
+        try:
+            age = None if age_value in (None, "") else float(age_value)
+            query = SnapshotQuery(
+                topic_filter=topic_filter,
+                max_age_seconds=age,
+                result_limit=self._settings.value(
+                    "workspace/snapshotResultLimit",
+                    SnapshotQuery().result_limit,
+                    type=int,
+                ),
+                payload_limit_bytes=self._settings.value(
+                    "workspace/snapshotPayloadLimit",
+                    SnapshotQuery().payload_limit_bytes,
+                    type=int,
+                ),
+            )
+            self._view_model.apply_snapshot_query(query)
+        except (TypeError, ValueError):
+            self._view_model.reset_snapshot_query()
+        self._observer_tree.snapshot_panel.set_expanded(
+            self._settings.value("workspace/snapshotExpanded", False, type=bool)
+        )
+
+    def _save_snapshot_preferences(self) -> None:
+        query = self._view_model.snapshot_query
+        self._settings.setValue(
+            "workspace/snapshotTopicFilter", query.topic_filter
+        )
+        self._settings.setValue(
+            "workspace/snapshotMaximumAge",
+            "" if query.max_age_seconds is None else query.max_age_seconds,
+        )
+        self._settings.setValue(
+            "workspace/snapshotResultLimit", query.result_limit
+        )
+        self._settings.setValue(
+            "workspace/snapshotPayloadLimit", query.payload_limit_bytes
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._accepting_operations = False
@@ -748,6 +960,11 @@ class MainWindow(QMainWindow):
             "workspace/logVisible",
             self._log_dock.isVisible(),
         )
+        self._settings.setValue(
+            "workspace/snapshotExpanded",
+            self._observer_tree.snapshot_panel.is_expanded,
+        )
+        self._save_snapshot_preferences()
         self._settings.sync()
         super().closeEvent(event)
 

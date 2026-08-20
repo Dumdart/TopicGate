@@ -100,11 +100,13 @@ class ConnectionControls(QObject):
             self.disconnect_action,
         )
 
-    def render(self, status: str) -> None:
-        self.connect_action.setEnabled(status == "disconnected")
-        self.reconnect_action.setEnabled(status in {"connected", "reconnecting"})
+    def render(self, status: str, busy: bool = False) -> None:
+        self.connect_action.setEnabled(status == "disconnected" and not busy)
+        self.reconnect_action.setEnabled(
+            status in {"connected", "reconnecting"} and not busy
+        )
         self.disconnect_action.setEnabled(
-            status in {"connecting", "connected", "reconnecting"}
+            status in {"connecting", "connected", "reconnecting"} and not busy
         )
 
     def _create_action(

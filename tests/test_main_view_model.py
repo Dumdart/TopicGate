@@ -48,6 +48,20 @@ async def test_publish_message_supports_utf8_and_strict_base64() -> None:
         raise AssertionError("Expected invalid base64 to be rejected")
 
 
+async def test_broker_lifecycle_operations_do_not_overlap() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    view_model = MainViewModel(runtime)
+    profile = view_model.active_broker_profile
+
+    async with view_model._operation("connection"):
+        try:
+            await view_model.activate_broker_profile(profile.id, profile.config)
+        except RuntimeError as error:
+            assert "already in progress" in str(error)
+        else:
+            raise AssertionError("Expected overlapping lifecycle operation to fail")
+
+
 class FakeObserverRepository:
     topic_update_interval = 0.0
     connection_status = "disconnected"

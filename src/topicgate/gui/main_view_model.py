@@ -691,8 +691,17 @@ class MainViewModel(QObject):
 
     @asynccontextmanager
     async def _operation(self, name: str) -> AsyncIterator[None]:
+        lifecycle_operations = {"connection", "broker"}
         if name in self._busy_operations:
             raise RuntimeError(f"The {name} operation is already in progress.")
+        if (
+            name in lifecycle_operations
+            and self._busy_operations.intersection(lifecycle_operations)
+        ):
+            raise RuntimeError(
+                "A broker connection or profile change is already in progress. "
+                "Wait for it to finish before starting another lifecycle action."
+            )
         self._busy_operations.add(name)
         self.operation_state_changed.emit()
         try:
