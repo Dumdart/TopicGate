@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>TopicGate centered TG icon</title>
+
+  <!-- Background -->
+  <rect width="512" height="512" fill="#ffffff"/>
+
+  <!-- Rounded app frame -->
+  <rect
+    x="32" y="32" width="448" height="448" rx="96"
+    fill="none"
+    stroke="#111111"
+    stroke-width="18"
+  />
+
+  <!-- Centered TG monogram -->
+  <g
+    fill="none"
+    stroke="#111111"
+    stroke-width="34"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <!-- T: x=110..220 -->
+    <path d="M110 166 H220 M165 166 V346"/>
+
+    <!-- G: x=240..400 -->
+    <path d="
+      M385 202
+      C370 179 347 166 320 166
+      C272 166 240 204 240 256
+      C240 308 272 346 320 346
+      C353 346 380 334 400 313
+      L400 264
+      H343
+    "/>
+  </g>
+</svg>
