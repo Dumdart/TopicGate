@@ -38,15 +38,19 @@ without relying on a separate scripts directory being on `PATH`. `python topicga
 is not a valid substitute; the `-m` option is required.
 
 After verification, tell the user to reinstall or refresh the TopicGate plugin if
-needed, restart Codex, and open a new thread. Codex starts the configured stdio MCP
-server automatically with:
+needed, restart Codex, and open a new thread. The portable plugin configuration
+expects the `topicgate` console executable to be on `PATH` and starts:
 
 ```console
-python -m topicgate --mode read-only
+topicgate --mode read-only
 ```
 
 Do not tell the user to launch that blocking stdio command manually during ordinary
 Codex use.
+
+If `topicgate` is not on `PATH`, use TopicGate Desktop's MCP setup page to copy a
+configuration containing the resolved absolute executable path. Control mode must
+be copied separately and intentionally; it is never the plugin default.
 
 ## First use
 

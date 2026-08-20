@@ -1,6 +1,14 @@
+import os
+from pathlib import Path
 from uuid import UUID
 
 import pytest
+
+
+os.environ.setdefault(
+    "TOPICGATE_DATA_DIR",
+    str(Path(".pytest_cache/topicgate-data").resolve()),
+)
 
 
 class MemoryCredentialStore:

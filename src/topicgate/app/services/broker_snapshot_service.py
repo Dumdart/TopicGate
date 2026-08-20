@@ -117,17 +117,18 @@ class BrokerSnapshotService:
         payload_limit_bytes = self._validate_payload_limit(payload_limit_bytes)
         wait_seconds = self._validate_wait_seconds(wait_seconds)
 
-        await self._runtime.activate_broker(resolved.id)
-        actual_wait_seconds = await self._wait(wait_seconds)
-        return self._capture(
-            resolved,
-            topic_filter=validated_filter,
-            max_age_seconds=max_age_seconds,
-            result_limit=result_limit,
-            payload_limit_bytes=payload_limit_bytes,
-            requested_wait_seconds=wait_seconds,
-            actual_wait_seconds=actual_wait_seconds,
-        )
+        with self._runtime.control_operation("reconnect and observe"):
+            await self._runtime.activate_broker(resolved.id)
+            actual_wait_seconds = await self._wait(wait_seconds)
+            return self._capture(
+                resolved,
+                topic_filter=validated_filter,
+                max_age_seconds=max_age_seconds,
+                result_limit=result_limit,
+                payload_limit_bytes=payload_limit_bytes,
+                requested_wait_seconds=wait_seconds,
+                actual_wait_seconds=actual_wait_seconds,
+            )
 
     def _capture(
         self,

@@ -47,13 +47,15 @@ class _QuantityEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.value = QLineEdit()
         self.value.setObjectName(f"{object_name}Value")
+        self.value.setAccessibleName(f"{object_name} value")
         self.unit = QComboBox()
         self.unit.setObjectName(f"{object_name}Unit")
+        self.unit.setAccessibleName(f"{object_name} unit")
         self.unit.addItems(units)
         layout.addWidget(self.value, 1)
         layout.addWidget(self.unit)
-        self.value.textChanged.connect(self.changed.emit)
-        self.unit.currentIndexChanged.connect(self.changed.emit)
+        self.value.textChanged.connect(lambda _text: self.changed.emit())
+        self.unit.currentIndexChanged.connect(lambda _index: self.changed.emit())
 
 
 class StoredObservationsDialog(QDialog):
@@ -74,6 +76,7 @@ class StoredObservationsDialog(QDialog):
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.tabs.setObjectName("storedObservationsPages")
+        self.tabs.setAccessibleName("Stored observations settings pages")
         self.tabs.addTab(self._retention_page(), "Retention policy")
         self.tabs.addTab(self._cache_page(), "Cache administration")
         layout.addWidget(self.tabs)
@@ -89,6 +92,7 @@ class StoredObservationsDialog(QDialog):
         form = QFormLayout()
         self.preset = QComboBox()
         self.preset.setObjectName("retentionPreset")
+        self.preset.setAccessibleName("Retention policy preset")
         self.preset.addItems(
             tuple(item.name for item in self._view_model.retention_presets)
             + ("Custom",)
@@ -115,6 +119,7 @@ class StoredObservationsDialog(QDialog):
         age_layout.setContentsMargins(0, 0, 0, 0)
         self.unlimited_age = QCheckBox("Unlimited")
         self.unlimited_age.setObjectName("unlimitedRetentionAge")
+        self.unlimited_age.setAccessibleName("Keep observations indefinitely")
         self.maximum_age = _QuantityEditor(
             tuple(item.value for item in AgeUnit),
             "maximumRetentionAge",
@@ -124,6 +129,7 @@ class StoredObservationsDialog(QDialog):
         self._add_error_row(form, "Maximum age", age_widget, "max_age_seconds")
         self.warning_threshold = QSpinBox()
         self.warning_threshold.setObjectName("retentionWarningThreshold")
+        self.warning_threshold.setAccessibleName("Retention warning threshold")
         self.warning_threshold.setRange(1, 100)
         self.warning_threshold.setSuffix("%")
         self._add_error_row(
@@ -134,14 +140,19 @@ class StoredObservationsDialog(QDialog):
         )
         self.remove_expired = QCheckBox("Automatically remove expired observations")
         self.remove_expired.setObjectName("autoRemoveExpired")
+        self.remove_expired.setAccessibleName("Automatically remove expired observations")
         self.remove_excess = QCheckBox(
             "Automatically remove observations exceeding count or storage limits"
         )
         self.remove_excess.setObjectName("autoRemoveExcess")
+        self.remove_excess.setAccessibleName("Automatically remove excess observations")
         self.remove_unsubscribed = QCheckBox(
             "Automatically remove observations no longer matched by subscriptions"
         )
         self.remove_unsubscribed.setObjectName("autoRemoveUnsubscribed")
+        self.remove_unsubscribed.setAccessibleName(
+            "Automatically remove unsubscribed observations"
+        )
         form.addRow(self.remove_expired)
         form.addRow(self.remove_excess)
         form.addRow(self.remove_unsubscribed)
@@ -151,6 +162,7 @@ class StoredObservationsDialog(QDialog):
         form.addRow(self.age_explanation)
         self.save_policy = QPushButton("Preview & save")
         self.save_policy.setObjectName("saveRetentionPolicyButton")
+        self.save_policy.setAccessibleName("Preview and save retention policy")
         self.save_policy.clicked.connect(self._request_policy_save)
         form.addRow(self.save_policy)
         layout.addLayout(form)
@@ -184,6 +196,7 @@ class StoredObservationsDialog(QDialog):
         layout.addWidget(self.cache_warning_banner)
         self.usage_table = QTableWidget(0, 8)
         self.usage_table.setObjectName("cacheUsageTable")
+        self.usage_table.setAccessibleName("Cache usage by broker")
         self.usage_table.setHorizontalHeaderLabels(
             (
                 "Broker",
@@ -201,11 +214,13 @@ class StoredObservationsDialog(QDialog):
         broker_row.addWidget(QLabel("Persisted topics for"))
         self.broker = QComboBox()
         self.broker.setObjectName("cacheBrokerSelection")
+        self.broker.setAccessibleName("Broker cache selection")
         self.broker.currentIndexChanged.connect(self._broker_changed)
         broker_row.addWidget(self.broker, 1)
         layout.addLayout(broker_row)
         self.topics = QTableWidget(0, 4)
         self.topics.setObjectName("persistedTopicsTable")
+        self.topics.setAccessibleName("Persisted topic observations")
         self.topics.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.topics.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.topics.setHorizontalHeaderLabels(
@@ -221,6 +236,7 @@ class StoredObservationsDialog(QDialog):
         ):
             button = QPushButton(text)
             button.setObjectName(name)
+            button.setAccessibleName(text.rstrip("…"))
             button.clicked.connect(
                 lambda _checked=False, selected_scope=scope: (
                     self._request_deletion(selected_scope)
@@ -500,11 +516,15 @@ class StoredObservationsDialog(QDialog):
     def _integer_field(self, form, title: str, name: str) -> QLineEdit:
         widget = QLineEdit()
         widget.setObjectName(name)
+        widget.setAccessibleName(title)
         self._add_error_row(form, title, widget, self._field_name(name))
         return widget
 
     def _byte_field(self, form, title: str, name: str) -> _QuantityEditor:
         widget = _QuantityEditor(tuple(item.value for item in ByteUnit), name)
+        widget.setAccessibleName(title)
+        widget.value.setAccessibleName(f"{title} value")
+        widget.unit.setAccessibleName(f"{title} unit")
         self._add_error_row(form, title, widget, self._field_name(name))
         return widget
 

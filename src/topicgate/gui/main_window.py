@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._accepting_operations = True
         self._settings = settings or QSettings()
         self._stored_observations_dialog: StoredObservationsDialog | None = None
+        self._mcp_setup_dialog: McpSetupDialog | None = None
         if settings is None:
             migrate_legacy_settings(self._settings)
         self.setWindowTitle(view_model.title)
@@ -300,8 +301,15 @@ class MainWindow(QMainWindow):
         AboutDialog(self).open()
 
     def _show_mcp_setup(self) -> None:
-        dialog = McpSetupDialog(self)
+        dialog = McpSetupDialog(self._view_model, self)
+        self._mcp_setup_dialog = dialog
+        dialog.reconnect_observe_requested.connect(
+            self._confirm_reconnect_and_observe
+        )
         dialog.finished.connect(self._mark_mcp_configured)
+        dialog.destroyed.connect(
+            lambda: setattr(self, "_mcp_setup_dialog", None)
+        )
         dialog.open()
 
     def _mark_mcp_configured(self, _result: int) -> None:
@@ -423,23 +431,24 @@ class MainWindow(QMainWindow):
         self._render_publish()
         busy = self._view_model.is_busy("subscription")
         self._subscription_settings.setEnabled(not busy)
-        self._observer_tree.snapshot_panel.set_busy(
-            self._view_model.is_busy("connection")
-        )
-        self._stored_observations_action.setEnabled(
-            not self._view_model.is_busy("stored-observations")
-        )
-        lifecycle_busy = (
+        exclusive_busy = (
             self._view_model.is_busy("broker")
             or self._view_model.is_busy("connection")
+            or self._view_model.is_busy("stored-observations")
+        )
+        self._observer_tree.snapshot_panel.set_busy(
+            exclusive_busy
+        )
+        self._stored_observations_action.setEnabled(
+            not exclusive_busy
         )
         self._connection_controls.render(
             self._view_model.connection_status,
-            lifecycle_busy,
+            exclusive_busy,
         )
-        self._observer_tree.set_profile_switching(lifecycle_busy)
+        self._observer_tree.set_profile_switching(exclusive_busy)
         self._delete_broker_profile_action.setEnabled(
-            len(self._view_model.broker_profiles) > 1 and not lifecycle_busy
+            len(self._view_model.broker_profiles) > 1 and not exclusive_busy
         )
         self._render_onboarding()
 

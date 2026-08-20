@@ -20,11 +20,12 @@ from topicgate.paths import asset_path
 class App:
     def __init__(self, qt_application: QApplication):
         self._qt_application = qt_application
-        self._dependencies = AppDependencies()
+        self._dependencies = AppDependencies(control_owner="desktop")
         self._services = ServiceContainer(self._dependencies)
         self._view_model = MainViewModel(
             runtime=self._dependencies.runtime,
             snapshot_service=self._dependencies.snapshot_service,
+            mcp_setup_service=self._dependencies.mcp_setup,
         )
         self._window = MainWindow(self._view_model)
 

@@ -41,7 +41,9 @@ Tool: `get_broker_snapshot`
 | `limit` | no | Max number of topic results returned |
 | `payload_limit_bytes` | no | Truncate individual payloads above this size |
 
-If the broker name is ambiguous or unknown, call `list_brokers` first and retry with
+Call `get_broker_snapshot` directly with the user-supplied UUID or broker name. This
+is the normal one-call path. Only call `list_brokers` when the tool reports an
+unknown or ambiguous name, then ask the user to disambiguate before retrying with
 the UUID.
 
 ## Standard answer format

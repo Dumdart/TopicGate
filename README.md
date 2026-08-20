@@ -44,17 +44,28 @@ The Windows development installation is:
 ```powershell
 git clone https://github.com/Dumdart/TopicGate.git
 cd TopicGate
-uv sync
-```
-
-Or use `pip`:
-
-```powershell
-git clone https://github.com/Dumdart/TopicGate.git
-cd TopicGate
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .
+```
+
+Then install mcp in readonly mode (codex):
+
+```powershell
+codex mcp add topicgate -- python -m topicgate   
+```
+
+or with full access:
+
+```powershell
+codex mcp add topicgate -- python -m topicgate --mode control
+```
+
+Install Plugin (codex):
+
+```powershell
+codex plugin marketplace add .
+codex plugin add topicgate@topicgate
 ```
 
 For an unvalidated macOS or Linux source checkout, activate the environment with `source .venv/bin/activate`. Install the optional MCP Apps dashboard with `uv sync --extra apps` or `python -m pip install -e ".[apps]"`.

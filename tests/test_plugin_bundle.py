@@ -28,6 +28,9 @@ def test_plugin_bundle_matches_codex_ingestion_contract() -> None:
     assert marketplace_plugin["source"]["path"] == "./topicgate-plugin"
     assert manifest["author"]["name"]
     assert manifest["mcpServers"] == "./.mcp.json"
+    contract = (PLUGIN_ROOT / "CONTRACT.md").read_text(encoding="utf-8")
+    assert "MCP contract `1.0`" in contract
+    assert (PLUGIN_ROOT / ".mcp-control.json").is_file()
     assert interface["longDescription"]
     assert interface["developerName"]
     assert interface["category"]
@@ -62,9 +65,13 @@ async def test_cached_plugin_bundle_exposes_read_only_tools(
     server_config["env"]["TOPICGATE_DATA_DIR"] = str(tmp_path / "data")
 
     assert "$schema" not in config
-    assert server_config["command"] == "python"
-    assert server_config["args"][:2] == ["-m", "topicgate"]
+    assert server_config["command"] == "topicgate"
+    assert server_config["args"] == ["--mode", "read-only"]
     assert "PYTHONPATH" not in server_config["env"]
+
+    # Check the bundle contract separately from PATH discovery in this test process.
+    server_config["command"] = sys.executable
+    server_config["args"] = ["-m", "topicgate", "--mode", "read-only"]
 
     async with Client(config) as client:
         tools = await client.list_tools()

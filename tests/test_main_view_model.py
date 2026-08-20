@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import pytest
+
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import (
@@ -60,6 +62,10 @@ async def test_broker_lifecycle_operations_do_not_overlap() -> None:
             assert "already in progress" in str(error)
         else:
             raise AssertionError("Expected overlapping lifecycle operation to fail")
+
+    async with view_model._operation("stored-observations"):
+        with pytest.raises(RuntimeError, match="already in progress"):
+            await view_model.reconnect_to_broker()
 
 
 class FakeObserverRepository:

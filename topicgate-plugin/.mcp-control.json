@@ -5,7 +5,7 @@
       "command": "topicgate",
       "args": [
         "--mode",
-        "read-only"
+        "control"
       ],
       "env": {
         "TOPICGATE_DATA_DIR": "${PLUGIN_DATA}"

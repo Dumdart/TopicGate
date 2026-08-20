@@ -11,8 +11,8 @@ expected skill path and the key assertions to check.
 
 **Expected skill:** `get-mcp-snapshot`
 **Assertions:**
-- Calls `list_brokers` to resolve the name when the broker UUID is not known.
-- Calls `get_broker_snapshot` with the resolved UUID.
+- Calls `get_broker_snapshot` directly with the supplied unique broker name.
+- Uses `list_brokers` only if the direct call reports ambiguity or no match.
 - Reports freshness, completeness, and a topic table (topic, value, age, notes).
 - Does not call `observe_broker_snapshot` or any mutating tool.
 

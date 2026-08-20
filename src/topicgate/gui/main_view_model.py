@@ -10,6 +10,8 @@ from PySide6.QtCore import QObject, Signal
 
 from topicgate.app.models.broker_snapshot import BrokerSnapshot
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
+from topicgate.app.services.mcp_setup_service import McpSetupService
+from topicgate.app.models.mcp_setup import McpPreflightCheck, McpSetupInformation
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
@@ -68,10 +70,12 @@ class MainViewModel(QObject):
         topic: str = "",
         *,
         snapshot_service: BrokerSnapshotService | None = None,
+        mcp_setup_service: McpSetupService | None = None,
     ) -> None:
         super().__init__()
         self._runtime = runtime
         self._snapshot_service = snapshot_service or BrokerSnapshotService(runtime)
+        self._mcp_setup_service = mcp_setup_service
         self._snapshot_query = SnapshotQuery()
         self._topic = topic
         self._snapshot = self._build_current_snapshot(self._snapshot_query)
@@ -181,6 +185,50 @@ class MainViewModel(QObject):
     @property
     def retention_presets(self) -> tuple[RetentionPreset, ...]:
         return RETENTION_PRESETS
+
+    @property
+    def mcp_setup_information(self) -> McpSetupInformation | None:
+        if self._mcp_setup_service is None:
+            return None
+        return self._mcp_setup_service.information
+
+    def mcp_configuration(self, mode: str = "read-only") -> str:
+        if self._mcp_setup_service is None:
+            import json
+            import sys
+
+            rendered = json.dumps(
+                {
+                    "mcpServers": {
+                        "topicgate": {
+                            "type": "stdio",
+                            "command": sys.executable,
+                            "args": ["-m", "topicgate", "--mode", mode],
+                        }
+                    }
+                },
+                indent=2,
+            )
+            return rendered.replace(
+                f'        "--mode",\n        "{mode}"',
+                f'        "--mode", "{mode}"',
+            )
+        return self._mcp_setup_service.configuration(mode)
+
+    def run_mcp_preflight(self) -> tuple[McpPreflightCheck, ...]:
+        if self._mcp_setup_service is None:
+            return (
+                McpPreflightCheck(
+                    "Desktop integration",
+                    "warning",
+                    "Full path and database diagnostics are available in the installed desktop application.",
+                ),
+            )
+        return self._mcp_setup_service.preflight()
+
+    def test_broker_snapshot(self) -> BrokerSnapshotHealth:
+        self.refresh_snapshot(clear_invalid_selection=False)
+        return self.snapshot_health
 
     @staticmethod
     def validate_retention_policy_draft(
@@ -691,16 +739,17 @@ class MainViewModel(QObject):
 
     @asynccontextmanager
     async def _operation(self, name: str) -> AsyncIterator[None]:
-        lifecycle_operations = {"connection", "broker"}
+        exclusive_operations = {"connection", "broker", "stored-observations"}
         if name in self._busy_operations:
             raise RuntimeError(f"The {name} operation is already in progress.")
         if (
-            name in lifecycle_operations
-            and self._busy_operations.intersection(lifecycle_operations)
+            name in exclusive_operations
+            and self._busy_operations.intersection(exclusive_operations)
         ):
             raise RuntimeError(
-                "A broker connection or profile change is already in progress. "
-                "Wait for it to finish before starting another lifecycle action."
+                "A reconnect, broker change, or stored-observation operation is "
+                "already in progress. Wait for it to finish before starting "
+                "another exclusive action."
             )
         self._busy_operations.add(name)
         self.operation_state_changed.emit()

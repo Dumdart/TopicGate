@@ -77,7 +77,7 @@ class Server:
             mask_error_details=True,
         )
 
-        self.dependencies = AppDependencies()
+        self.dependencies = AppDependencies(control_owner="mcp")
         self.services = ServiceContainer(self.dependencies)
 
         runtime = self.dependencies.runtime
