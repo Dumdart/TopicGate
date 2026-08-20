@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 DATABASE_FILENAME = "topicgate.db"
-
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 def data_directory() -> Path:
     configured = os.environ.get("TOPICGATE_DATA_DIR")
@@ -30,3 +30,7 @@ def prepare_database_path(target_directory: Path | None = None) -> Path:
 
 def sqlite_url(database_path: Path) -> str:
     return f"sqlite:///{database_path.resolve().as_posix()}"
+
+
+def asset_path(name: str) -> str:
+    return str(ASSETS_DIR / name)

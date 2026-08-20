@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from PySide6.QtCore import QByteArray, QSettings, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QShowEvent
+from PySide6.QtGui import QAction, QCloseEvent, QIcon, QShowEvent
 from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
@@ -40,6 +40,7 @@ from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.settings_migration import migrate_legacy_settings
 from topicgate.gui.theme import LIGHT_THEME
 from topicgate.presentation.snapshot_presentation import SnapshotQuery
+from topicgate.paths import asset_path
 
 
 class MainWindow(QMainWindow):
@@ -51,6 +52,9 @@ class MainWindow(QMainWindow):
         settings: QSettings | None = None,
     ) -> None:
         super().__init__()
+
+        self.setWindowIcon(QIcon(asset_path("icon.png")))
+
         self._view_model = view_model
         self._operation_tasks: set[asyncio.Task[None]] = set()
         self._accepting_operations = True
