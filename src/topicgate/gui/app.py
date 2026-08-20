@@ -1,10 +1,11 @@
 
 
 import asyncio
+import ctypes
 import sys
 
 from PySide6.QtCore import QCoreApplication
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
@@ -13,6 +14,8 @@ from topicgate.app.services.service_container import ServiceContainer
 from topicgate.gui.main_window import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.theme import apply_light_theme
+from topicgate.paths import asset_path
+
 
 class App:
     def __init__(self, qt_application: QApplication):
@@ -23,8 +26,6 @@ class App:
             runtime=self._dependencies.runtime
         )
         self._window = MainWindow(self._view_model)
-        
-
     async def run(self) -> int:
         stopped = asyncio.get_running_loop().create_future()
 
@@ -60,6 +61,13 @@ class App:
                 await self._services.stop_services()
 
 
+def configure_windows_identity() -> None:
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Dumdart.TopicGate"
+        )
+
+
 def configure_application_identity() -> None:
     QCoreApplication.setOrganizationName("Dumdart")
     QCoreApplication.setApplicationName("TopicGate")
@@ -67,10 +75,15 @@ def configure_application_identity() -> None:
 
 
 def run() -> int:
+    configure_windows_identity()
     configure_application_identity()
+
     qt_application = QApplication(sys.argv)
-    qt_application.setQuitOnLastWindowClosed(False)
+    icon = QIcon(asset_path("icon.png"))
+    qt_application.setWindowIcon(icon)
+
     apply_light_theme(qt_application)
+
     event_loop = QEventLoop(qt_application)
     asyncio.set_event_loop(event_loop)
 
