@@ -2,8 +2,10 @@
   "mcpServers": {
     "topicgate": {
       "type": "stdio",
-      "command": "topicgate",
+      "command": "python",
       "args": [
+        "-m",
+        "topicgate",
         "--mode",
         "read-only"
       ],
