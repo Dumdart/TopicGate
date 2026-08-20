@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from datetime import datetime
@@ -14,6 +15,14 @@ from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionPreview,
+)
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+    ObservationDeletionResult,
+    PersistedTopicSummary,
+    RetentionPolicyApplicationResult,
+    RetentionPolicyPreview,
 )
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
@@ -103,6 +112,49 @@ class TopicGateRuntime(ServiceItem):
     ) -> ObservationRetentionPolicy:
         return self._require_observation_cache().update_retention_policy(policy)
 
+    def get_cache_usage(self) -> CacheUsageSummary:
+        usage = self._require_observation_cache().get_cache_usage()
+        by_broker = {item.broker_id: item for item in usage.brokers}
+        return CacheUsageSummary(
+            tuple(
+                by_broker.get(
+                    broker.id,
+                    BrokerCacheUsage(broker.id, 0, 0, None, None),
+                )
+                for broker in self.list_brokers()
+            )
+        )
+
+    def list_persisted_topics(
+        self,
+        broker_id: UUID,
+    ) -> tuple[PersistedTopicSummary, ...]:
+        self._get_broker_profile(broker_id)
+        return self._require_observation_cache().get_persisted_topics(
+            broker_id,
+            self.list_subscriptions(broker_id),
+        )
+
+    def preview_retention_policy(
+        self,
+        policy: ObservationRetentionPolicy,
+    ) -> RetentionPolicyPreview:
+        return self._require_observation_cache().preview_retention_policy(
+            policy,
+            self._subscriptions_by_broker(),
+        )
+
+    def confirm_retention_policy(
+        self,
+        preview: RetentionPolicyPreview,
+    ) -> RetentionPolicyApplicationResult:
+        result = self._require_observation_cache().confirm_retention_policy(
+            preview,
+            self._subscriptions_by_broker(),
+        )
+        self._reconcile_deleted_entries(result.enforcement.deleted_entries)
+        return result
+
     def preview_clear_cache(
         self,
         broker_id: UUID,
@@ -124,11 +176,27 @@ class TopicGateRuntime(ServiceItem):
             self.list_subscriptions(broker_id),
         )
 
+    def preview_all_cache(self) -> ObservationDeletionPreview:
+        return self._require_observation_cache().preview_all()
+
+    def confirm_cache_deletion_detailed(
+        self,
+        preview: ObservationDeletionPreview,
+    ) -> ObservationDeletionResult:
+        for broker_id in preview.broker_ids:
+            self._get_broker_profile(broker_id)
+        result = self._require_observation_cache().confirm_deletion_detailed(
+            preview
+        )
+        self._reconcile_deleted_entries(result.deleted_entries)
+        return result
+
     def confirm_cache_deletion(
         self,
         preview: ObservationDeletionPreview,
     ) -> int:
-        self._get_broker_profile(preview.broker_id)
+        if preview.broker_id is not None:
+            self._get_broker_profile(preview.broker_id)
         return self._require_observation_cache().confirm_deletion(preview)
 
     @property
@@ -274,19 +342,21 @@ class TopicGateRuntime(ServiceItem):
         broker_id: UUID,
         original_filter: str,
         subscription: Subscription,
-    ) -> None:
+    ) -> ObservationDeletionResult | None:
         self._require_active_broker(broker_id)
         await self.active_repo.update_subscription(original_filter, subscription)
         self._persist_active_subscriptions()
+        return self._cleanup_unsubscribed_if_enabled(broker_id)
 
     async def remove_subscription(
         self,
         broker_id: UUID,
         subscription: Subscription,
-    ) -> None:
+    ) -> ObservationDeletionResult | None:
         self._require_active_broker(broker_id)
         await self.active_repo.remove_subscription(subscription)
         self._persist_active_subscriptions()
+        return self._cleanup_unsubscribed_if_enabled(broker_id)
 
     async def publish(self, broker_id: UUID, topic: str, payload: bytes) -> None:
         self._require_active_broker(broker_id)
@@ -298,6 +368,43 @@ class TopicGateRuntime(ServiceItem):
             workspace_id,
             tuple(self.active_repo.subscriptions),
         )
+
+    def _cleanup_unsubscribed_if_enabled(
+        self,
+        broker_id: UUID,
+    ) -> ObservationDeletionResult | None:
+        cache = self._observation_cache
+        if cache is None or not cache.get_retention_policy().auto_remove_unsubscribed:
+            return None
+        preview = cache.preview_unsubscribed(
+            broker_id,
+            self.list_subscriptions(broker_id),
+        )
+        if preview.entries:
+            result = cache.confirm_deletion_detailed(preview)
+            self._reconcile_deleted_entries(result.deleted_entries)
+            return result
+        return None
+
+    def _subscriptions_by_broker(
+        self,
+    ) -> dict[UUID, tuple[Subscription, ...]]:
+        return {
+            broker.id: self.list_subscriptions(broker.id)
+            for broker in self.list_brokers()
+        }
+
+    def _reconcile_deleted_entries(self, entries) -> int:
+        grouped = defaultdict(list)
+        for entry in entries:
+            grouped[entry.broker_id].append(entry)
+        removed = 0
+        for broker_id, broker_entries in grouped.items():
+            repository = self._repository_for(broker_id)
+            evict = getattr(repository, "evict_stored_observations", None)
+            if evict is not None:
+                removed += evict(tuple(broker_entries))
+        return removed
 
     def _require_active_broker(self, broker_id: UUID) -> None:
         if broker_id != self.active_broker.id:

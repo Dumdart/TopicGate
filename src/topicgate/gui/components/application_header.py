@@ -70,7 +70,13 @@ class ApplicationHeader(QFrame):
         self.status = ConnectionStatusLabel()
         layout.addWidget(self.status)
         self.connect_button = self._button("Connect", "headerConnectButton")
-        self.reconnect_button = self._button("Reconnect", "headerReconnectButton")
+        self.reconnect_button = self._button(
+            "Reconnect & observe",
+            "headerReconnectButton",
+        )
+        self.reconnect_button.setToolTip(
+            "Interrupt and renew the active connection, then capture a snapshot"
+        )
         self.disconnect_button = self._button("Disconnect", "headerDisconnectButton")
         self.connect_button.clicked.connect(self.connect_requested.emit)
         self.reconnect_button.clicked.connect(self.reconnect_requested.emit)

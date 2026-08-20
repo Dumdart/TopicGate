@@ -13,6 +13,11 @@ from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionEntry,
     ObservationDeletionPreview,
 )
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+    ObservationDeletionResult,
+)
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
@@ -193,12 +198,66 @@ class TopicMessageRepository(TopicMessageStore):
             )
         return ObservationDeletionPreview(broker_id, entries)
 
+    def preview_all_deletion(self) -> ObservationDeletionPreview:
+        """Describe every persisted observation across all brokers."""
+        self.flush()
+        statement = select(MqttMessageRow).order_by(
+            MqttMessageRow.received_at,
+            MqttMessageRow.broker_id,
+            MqttMessageRow.topic,
+        )
+        with self._db.session() as session:
+            entries = tuple(
+                self._deletion_entry(row)
+                for row in session.scalars(statement).all()
+            )
+        return ObservationDeletionPreview(None, entries, "all_brokers")
+
+    def cache_usage(self) -> CacheUsageSummary:
+        """Return a consistent aggregate after draining pending writes."""
+        self.flush()
+        statement = (
+            select(
+                MqttMessageRow.broker_id,
+                func.count(MqttMessageRow.topic),
+                func.coalesce(func.sum(func.length(MqttMessageRow.payload)), 0),
+                func.min(MqttMessageRow.received_at),
+                func.max(MqttMessageRow.received_at),
+            )
+            .group_by(MqttMessageRow.broker_id)
+            .order_by(MqttMessageRow.broker_id)
+        )
+        with self._db.session() as session:
+            rows = session.execute(statement).all()
+        return CacheUsageSummary(
+            tuple(
+                BrokerCacheUsage(
+                    broker_id=row[0],
+                    entry_count=int(row[1]),
+                    stored_payload_bytes=int(row[2]),
+                    oldest_received_at=row[3],
+                    newest_received_at=row[4],
+                )
+                for row in rows
+            )
+        )
+
     def delete_previewed(self, preview: ObservationDeletionPreview) -> int:
         """Delete only observations that still match an explicit preview."""
+        return self.delete_previewed_detailed(preview).deleted_count
+
+    def delete_previewed_detailed(
+        self,
+        preview: ObservationDeletionPreview,
+    ) -> ObservationDeletionResult:
+        """Delete exact unchanged IDs and report concurrently replaced rows."""
         self.flush()
-        if any(entry.broker_id != preview.broker_id for entry in preview.entries):
+        if preview.broker_id is not None and any(
+            entry.broker_id != preview.broker_id for entry in preview.entries
+        ):
             raise ValueError("Deletion preview entries must belong to its broker.")
-        deleted = 0
+        deleted: list[ObservationDeletionEntry] = []
+        skipped: list[ObservationDeletionEntry] = []
         with self._db.transaction() as session:
             for entry in preview.entries:
                 result = session.execute(
@@ -208,8 +267,25 @@ class TopicMessageRepository(TopicMessageStore):
                         MqttMessageRow.observation_id == entry.observation_id,
                     )
                 )
-                deleted += result.rowcount or 0
-        return deleted
+                if result.rowcount:
+                    deleted.append(entry)
+                else:
+                    skipped.append(entry)
+        return ObservationDeletionResult(
+            preview.entries,
+            tuple(deleted),
+            tuple(skipped),
+        )
+
+    @staticmethod
+    def _deletion_entry(row: MqttMessageRow) -> ObservationDeletionEntry:
+        return ObservationDeletionEntry(
+            broker_id=row.broker_id,
+            topic=row.topic,
+            observation_id=row.observation_id,
+            received_at=row.received_at,
+            stored_payload_bytes=len(row.payload),
+        )
 
     def enforce_retention(self) -> None:
         """Apply the current automatic retention policy immediately."""

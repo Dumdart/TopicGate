@@ -5,8 +5,10 @@ from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QMenu,
+    QScrollArea,
     QStyle,
     QToolButton,
     QTreeView,
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
+from topicgate.gui.components.snapshot_panel import SnapshotPanel
 from topicgate.presentation.topic_presentation import TopicTreeNode
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -31,6 +34,9 @@ class ObserverTreePane(WorkspacePane):
     add_broker_profile_requested = Signal()
     edit_broker_profile_requested = Signal(object)
     delete_broker_profile_requested = Signal()
+    snapshot_apply_requested = Signal(object)
+    snapshot_reset_requested = Signal()
+    reconnect_observe_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__("Observer Tree")
@@ -60,7 +66,7 @@ class ObserverTreePane(WorkspacePane):
         self.content_layout.addLayout(controls)
 
         self._model = QStandardItemModel(self)
-        self._model.setHorizontalHeaderLabels(["Topic", ""])
+        self._model.setHorizontalHeaderLabels(["Topic", "", "State"])
         self._proxy = QSortFilterProxyModel(self)
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -82,11 +88,36 @@ class ObserverTreePane(WorkspacePane):
             QHeaderView.ResizeMode.Fixed,
         )
         self._tree.header().resizeSection(1, 34)
+        self._tree.header().setSectionResizeMode(
+            2,
+            QHeaderView.ResizeMode.Fixed,
+        )
+        self._tree.header().resizeSection(2, 136)
         self._tree.selectionModel().currentChanged.connect(
             self._selection_changed
         )
         self._search_edit.textChanged.connect(self._proxy.setFilterFixedString)
         self.content_layout.addWidget(self._tree, 1)
+        self.snapshot_panel = SnapshotPanel()
+        self.snapshot_panel.apply_requested.connect(
+            self.snapshot_apply_requested.emit
+        )
+        self.snapshot_panel.reset_requested.connect(
+            self.snapshot_reset_requested.emit
+        )
+        self.snapshot_panel.reconnect_observe_requested.connect(
+            self.reconnect_observe_requested.emit
+        )
+        snapshot_scroll = QScrollArea()
+        snapshot_scroll.setObjectName("snapshotPanelScrollArea")
+        snapshot_scroll.setWidgetResizable(True)
+        snapshot_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        snapshot_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        snapshot_scroll.setMaximumHeight(360)
+        snapshot_scroll.setWidget(self.snapshot_panel)
+        self.content_layout.addWidget(snapshot_scroll)
 
     def render(
         self,
@@ -129,6 +160,14 @@ class ObserverTreePane(WorkspacePane):
 
         append(nodes)
         self.render(paths, selected_topic, subscriptions)
+
+        def add_badges(items: tuple[TopicTreeNode, ...]) -> None:
+            for node in items:
+                if node.badges:
+                    self._set_badges(node)
+                add_badges(node.children)
+
+        add_badges(nodes)
 
     def select_topic(self, topic: str) -> None:
         item = self._items.get(topic)
@@ -205,9 +244,11 @@ class ObserverTreePane(WorkspacePane):
                 item = QStandardItem(segment or "/")
                 item.setEditable(False)
                 item.setData(path, TOPIC_ROLE)
+                state_item = QStandardItem()
+                state_item.setEditable(False)
                 action_item = QStandardItem()
                 action_item.setEditable(False)
-                parent.appendRow([item, action_item])
+                parent.appendRow([item, state_item, action_item])
                 self._items[path] = item
             parent = item
 
@@ -259,6 +300,34 @@ class ObserverTreePane(WorkspacePane):
             self._proxy.mapFromSource(action_index),
             action_widget,
         )
+
+    def _set_badges(self, node: TopicTreeNode) -> None:
+        item = self._items.get(node.path)
+        if item is None:
+            return
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(3)
+        colors = {
+            "success": ("#dcfce7", "#166534"),
+            "info": ("#dbeafe", "#1e40af"),
+            "warning": ("#fef3c7", "#92400e"),
+            "neutral": ("#e5e7eb", "#374151"),
+        }
+        for badge in node.badges:
+            label = QLabel(badge.label)
+            label.setObjectName("topicStateBadge")
+            label.setProperty("badgeKey", badge.key)
+            background, foreground = colors[badge.tone]
+            label.setStyleSheet(
+                f"background: {background}; color: {foreground}; "
+                "border-radius: 5px; padding: 1px 4px; font-size: 10px;"
+            )
+            layout.addWidget(label)
+        layout.addStretch(1)
+        state_index = item.index().siblingAtColumn(2)
+        self._tree.setIndexWidget(self._proxy.mapFromSource(state_index), widget)
 
     def _restore_expanded_paths(self, expanded_paths: set[str]) -> None:
         for path in expanded_paths:

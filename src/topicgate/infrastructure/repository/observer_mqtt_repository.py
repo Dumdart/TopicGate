@@ -1,12 +1,18 @@
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Collection
 from datetime import datetime, timezone
 from typing import Any
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
-from topicgate.core.models.mqtt_observation import MqttObservation
+from topicgate.core.models.mqtt_observation import (
+    MqttObservation,
+    ObservationSource,
+)
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+)
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
@@ -215,6 +221,25 @@ class ObserverMqttRepository:
             messages.append(self.message_queue.get_nowait())
         return tuple(messages)
 
+    def evict_stored_observations(
+        self,
+        entries: Collection[ObservationDeletionEntry],
+    ) -> int:
+        identifiers = {entry.observation_id for entry in entries}
+        removed = 0
+        for topic, state in tuple(self._state.topic_states.items()):
+            if (
+                state.source == ObservationSource.STORED
+                and state.observation_id in identifiers
+            ):
+                ObserverModelProcessor.remove_topic(self._state, topic)
+                removed += 1
+        ObserverModelProcessor.rebuild(
+            self._state,
+            (item.topic_filter for item in self.subscriptions),
+        )
+        return removed
+
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
         return self._subscription_manager.subscriptions
@@ -298,11 +323,11 @@ class ObserverMqttRepository:
 
     def _prune_unsubscribed_topics(self) -> None:
         subscriptions = self.subscriptions
-        for topic in tuple(self._state.topic_states):
+        for topic, state in tuple(self._state.topic_states.items()):
             if not any(
                 mqtt_filter_matches(subscription.topic_filter, topic)
                 for subscription in subscriptions
-            ):
+            ) and state.source != ObservationSource.STORED:
                 ObserverModelProcessor.remove_topic(self._state, topic)
         ObserverModelProcessor.rebuild(
             self._state,

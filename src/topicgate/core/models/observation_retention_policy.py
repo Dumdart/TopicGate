@@ -55,3 +55,11 @@ class ObservationRetentionPolicy:
                 "max_payload_bytes_per_topic cannot exceed "
                 "max_payload_bytes_per_broker."
             )
+        if (
+            self.max_payload_bytes_per_broker
+            > self.max_persisted_payload_database_bytes_total
+        ):
+            raise ValueError(
+                "max_payload_bytes_per_broker cannot exceed "
+                "max_persisted_payload_database_bytes_total."
+            )

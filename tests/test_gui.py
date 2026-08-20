@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QSplitter,
+    QSpinBox,
     QToolBar,
     QToolButton,
     QTreeView,
@@ -35,15 +36,128 @@ from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
 from topicgate.gui.components.about_dialog import AboutDialog
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
 )
 from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.components.snapshot_panel import SnapshotPanel
+from topicgate.gui.components.stored_observations_dialog import (
+    StoredObservationsDialog,
+)
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
+from topicgate.presentation.snapshot_presentation import (
+    BrokerSnapshotHealth,
+    SnapshotQuery,
+)
+
+
+def test_snapshot_panel_applies_clears_and_renders_health() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+    requested: list[SnapshotQuery] = []
+    resets: list[bool] = []
+    pane.apply_requested.connect(requested.append)
+    pane.reset_requested.connect(lambda: resets.append(True))
+    pane.findChild(QLineEdit, "snapshotTopicFilter").setText("home/#")
+    pane.findChild(QLineEdit, "snapshotMaximumAge").setText("10.5")
+    pane.findChild(QSpinBox, "snapshotResultLimit").setValue(12)
+    pane.findChild(QSpinBox, "snapshotPayloadLimit").setValue(512)
+
+    pane.findChild(QPushButton, "applySnapshotButton").click()
+    assert requested[-1] == SnapshotQuery("home/#", 10.5, 12, 512)
+
+    health = BrokerSnapshotHealth(
+        "captured",
+        "connected",
+        "observing",
+        "4.0 seconds",
+        3,
+        2,
+        1,
+        1,
+        5,
+        "Limited",
+        ("Current state only.",),
+    )
+    pane.render_health(health)
+    assert pane.findChild(QLabel, "snapshotReturnedCount").text() == "3"
+    assert pane.findChild(QLabel, "snapshotCompletenessStatus").text() == "Limited"
+
+    pane.findChild(QPushButton, "clearSnapshotFiltersButton").click()
+    assert resets == [True]
+    assert pane.query == SnapshotQuery()
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_snapshot_panel_reports_field_specific_age_errors() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+    requested: list[SnapshotQuery] = []
+    errors: list[str] = []
+    pane.apply_requested.connect(requested.append)
+    pane.validation_failed.connect(errors.append)
+    pane.findChild(QLineEdit, "snapshotMaximumAge").setText("invalid")
+
+    pane.findChild(QPushButton, "applySnapshotButton").click()
+
+    assert requested == []
+    assert errors == [
+        "Maximum age must be a non-negative number or blank."
+    ]
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_about_dialog_describes_persisted_observations() -> None:
+    application = QApplication.instance() or QApplication([])
+    dialog = AboutDialog()
+
+    text = dialog.findChild(QLabel, "aboutStorageText").text()
+
+    assert text == (
+        "Broker profiles, subscriptions, and each broker's latest observed "
+        "MQTT values are stored in SQLite. Passwords are stored in your "
+        "operating system's credential store. Snapshot views may include "
+        "stored observations captured before the current connection or "
+        "observation window."
+    )
+    dialog.deleteLater()
+    application.processEvents()
+
+
+def test_stored_observations_dialog_renders_policy_and_inline_validation() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    view_model._retention_policy = ObservationRetentionPolicy()
+    dialog = StoredObservationsDialog(view_model)
+
+    dialog.render()
+
+    assert dialog.findChild(QComboBox, "retentionPreset").currentText() == "Balanced"
+    save = dialog.findChild(QPushButton, "saveRetentionPolicyButton")
+    assert save.isEnabled()
+    dialog.findChild(QLineEdit, "maxEntriesPerBroker").setText("20000")
+    assert dialog.findChild(QComboBox, "retentionPreset").currentText() == "Custom"
+    assert not save.isEnabled()
+    assert "total" in dialog.findChild(
+        QLabel,
+        "max_entries_per_brokerError",
+    ).text()
+
+    dialog.findChild(QComboBox, "retentionPreset").setCurrentText(
+        "Conservative"
+    )
+    assert dialog.draft_policy() == view_model.retention_presets[0].policy
+    dialog.deleteLater()
+    application.processEvents()
 
 
 def test_redesigned_window_exposes_header_and_publish_workspace() -> None:

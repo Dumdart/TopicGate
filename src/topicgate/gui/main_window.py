@@ -30,6 +30,9 @@ from topicgate.gui.components.publish_pane import PublishPane
 from topicgate.gui.components.subscription_settings import (
     SubscriptionSettingsPane,
 )
+from topicgate.gui.components.stored_observations_dialog import (
+    StoredObservationsDialog,
+)
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.settings_migration import migrate_legacy_settings
@@ -53,6 +56,7 @@ class MainWindow(QMainWindow):
         self._operation_tasks: set[asyncio.Task[None]] = set()
         self._accepting_operations = True
         self._settings = settings or QSettings()
+        self._stored_observations_dialog: StoredObservationsDialog | None = None
         if settings is None:
             migrate_legacy_settings(self._settings)
         self.setWindowTitle(view_model.title)
@@ -78,7 +82,7 @@ class MainWindow(QMainWindow):
             lambda: self._run_async(self._view_model.connect_to_broker())
         )
         self._header.reconnect_requested.connect(
-            lambda: self._run_async(self._view_model.reconnect_to_broker())
+            self._confirm_reconnect_and_observe
         )
         self._header.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
@@ -101,6 +105,22 @@ class MainWindow(QMainWindow):
         )
         self._observer_tree.delete_broker_profile_requested.connect(
             self._confirm_delete_broker_profile
+        )
+        self._observer_tree.snapshot_apply_requested.connect(
+            self._apply_snapshot_query
+        )
+        self._observer_tree.snapshot_reset_requested.connect(
+            self._view_model.reset_snapshot_query
+        )
+        self._observer_tree.reconnect_observe_requested.connect(
+            self._confirm_reconnect_and_observe
+        )
+        self._observer_tree.snapshot_panel.validation_failed.connect(
+            lambda message: QMessageBox.warning(
+                self,
+                "Invalid snapshot controls",
+                message,
+            )
         )
         self._subscription_settings.apply_requested.connect(
             self._apply_subscription
@@ -146,7 +166,7 @@ class MainWindow(QMainWindow):
             lambda: self._run_async(self._view_model.connect_to_broker())
         )
         self._connection_controls.reconnect_requested.connect(
-            lambda: self._run_async(self._view_model.reconnect_to_broker())
+            self._confirm_reconnect_and_observe
         )
         self._connection_controls.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
@@ -185,6 +205,17 @@ class MainWindow(QMainWindow):
         self._console_action = QAction("Log console", self)
         self._console_action.setCheckable(True)
 
+        self._stored_observations_action = QAction(
+            "Stored observations…",
+            self,
+        )
+        self._stored_observations_action.setObjectName(
+            "storedObservationsAction"
+        )
+        self._stored_observations_action.triggered.connect(
+            self._show_stored_observations
+        )
+
         self._quit_action = QAction("Quit", self)
         self._quit_action.setShortcut("Ctrl+Q")
         self._quit_action.triggered.connect(self.close)
@@ -196,6 +227,8 @@ class MainWindow(QMainWindow):
     def _create_menu_bar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(self._add_filter_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self._stored_observations_action)
         file_menu.addSeparator()
         file_menu.addAction(self._quit_action)
 
@@ -245,6 +278,9 @@ class MainWindow(QMainWindow):
         self._view_model.log_message.connect(self._log_dock.append_message)
 
     def _render_all(self) -> None:
+        self._observer_tree.snapshot_panel.render_query(
+            self._view_model.snapshot_query
+        )
         self._render_tree()
         self._render_details()
         self._render_settings()
@@ -256,6 +292,9 @@ class MainWindow(QMainWindow):
             self._view_model.topic_tree,
             self._view_model.topic,
             self._view_model.subscriptions,
+        )
+        self._observer_tree.snapshot_panel.render_health(
+            self._view_model.snapshot_health
         )
 
     def _render_details(self) -> None:
@@ -304,6 +343,181 @@ class MainWindow(QMainWindow):
         self._render_publish()
         busy = self._view_model.is_busy("subscription")
         self._subscription_settings.setEnabled(not busy)
+        self._observer_tree.snapshot_panel.set_busy(
+            self._view_model.is_busy("connection")
+        )
+        self._stored_observations_action.setEnabled(
+            not self._view_model.is_busy("stored-observations")
+        )
+
+    def _show_stored_observations(self) -> None:
+        dialog = self._stored_observations_dialog
+        if dialog is None:
+            dialog = StoredObservationsDialog(self._view_model, self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(
+                lambda: setattr(self, "_stored_observations_dialog", None)
+            )
+            dialog.save_policy_requested.connect(
+                lambda policy: self._run_async(
+                    self._preview_and_save_retention_policy(policy)
+                )
+            )
+            dialog.broker_requested.connect(
+                lambda broker_id: self._run_async(
+                    self._view_model.load_stored_observations(broker_id)
+                )
+            )
+            dialog.deletion_requested.connect(
+                lambda scope, broker_id, topics: self._run_async(
+                    self._preview_and_delete_cache(
+                        scope,
+                        broker_id,
+                        topics,
+                    )
+                )
+            )
+            self._stored_observations_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._run_async(self._view_model.load_stored_observations())
+
+    async def _preview_and_save_retention_policy(self, policy) -> None:
+        preview = await self._view_model.preview_retention_policy(policy)
+        if preview.has_deletions:
+            reasons = "\n".join(
+                f"- {group.reason.value.replace('_', ' ').title()}: "
+                f"{len(group.entries)} observations, "
+                f"{group.stored_payload_bytes} stored bytes from "
+                f"{self._view_model.broker_name(group.broker_id)}"
+                for group in preview.groups
+            )
+            confirmed = self._confirm_destructive(
+                "Apply retention policy?",
+                f"Enforcement will permanently remove "
+                f"{preview.deletion.total_entries} observations "
+                f"({preview.deletion.stored_payload_bytes} stored bytes).\n\n"
+                f"{reasons}\n\nPer-topic payload limits affect new observations "
+                "and do not retroactively truncate existing rows.",
+                f"Delete {preview.deletion.total_entries} observations & save",
+            )
+            if not confirmed:
+                return
+        try:
+            await self._view_model.confirm_retention_policy(preview)
+        except ValueError as error:
+            if "preview" not in str(error).lower():
+                raise
+            self._view_model.log_message.emit(
+                "Retention policy preview invalidated by concurrent changes."
+            )
+            QMessageBox.warning(
+                self,
+                "Retention preview changed",
+                "Persisted observations changed after the preview. "
+                "TopicGate will build a fresh preview for confirmation.",
+            )
+            await self._preview_and_save_retention_policy(policy)
+
+    async def _preview_and_delete_cache(
+        self,
+        scope: str,
+        broker_id: UUID,
+        topics: tuple[str, ...],
+    ) -> None:
+        preview = await self._view_model.preview_cache_deletion(
+            scope,
+            broker_id=broker_id,
+            topics=topics,
+        )
+        if not preview.entries:
+            QMessageBox.information(
+                self,
+                "Stored observations",
+                "There is nothing to delete for this scope.",
+            )
+            return
+        broker_names = ", ".join(
+            self._view_model.broker_name(item)
+            for item in preview.broker_ids
+        )
+        confirmed = self._confirm_destructive(
+            "Delete stored observations?",
+            f"Scope: {scope.replace('_', ' ').title()}\n"
+            f"Brokers: {broker_names}\n"
+            f"Entries: {preview.total_entries}\n"
+            f"Stored bytes: {preview.stored_payload_bytes}\n"
+            f"Oldest: {preview.oldest_received_at}\n"
+            f"Newest: {preview.newest_received_at}\n\n"
+            "Deletion is permanent. Observations updated after this preview "
+            "will be skipped.",
+            f"Delete {preview.total_entries} observations",
+        )
+        if confirmed:
+            result = await self._view_model.confirm_cache_deletion(preview)
+            if result.is_partial:
+                QMessageBox.warning(
+                    self,
+                    "Partial deletion",
+                    f"Deleted {result.deleted_count} of "
+                    f"{result.previewed_count} observations; "
+                    f"{result.skipped_count} changed after preview.",
+                )
+
+    def _confirm_destructive(
+        self,
+        title: str,
+        message: str,
+        button_text: str,
+    ) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(title)
+        dialog.setText(message)
+        delete_button = dialog.addButton(
+            button_text,
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        cancel_button = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel_button)
+        dialog.exec()
+        return dialog.clickedButton() is delete_button
+
+    def _apply_snapshot_query(self, query: object) -> None:
+        try:
+            self._view_model.apply_snapshot_query(query)
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(self, "Invalid snapshot controls", str(error))
+
+    def _confirm_reconnect_and_observe(self, query: object = None) -> None:
+        try:
+            selected_query = (
+                query
+                if query is not None
+                else self._observer_tree.snapshot_panel.query
+            )
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Invalid snapshot controls",
+                str(error),
+            )
+            return
+        broker = self._view_model.active_broker_profile
+        result = QMessageBox.question(
+            self,
+            "Reconnect and observe?",
+            f"Reconnect to '{broker.name}' and capture a new snapshot?\n\n"
+            "This interrupts the active MQTT connection, renews it using "
+            "the selected broker profile, waits for fresh observations, "
+            "and then captures snapshot state.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result == QMessageBox.StandardButton.Yes:
+            self._run_async(
+                self._view_model.reconnect_and_observe(selected_query)
+            )
 
     def _show_operation_error(self, title: str, message: str) -> None:
         QMessageBox.warning(self, title, message)
