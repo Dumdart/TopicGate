@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 
 from fastmcp import Client
 
@@ -60,7 +62,8 @@ async def test_cached_plugin_bundle_exposes_read_only_tools(
     server_config["env"]["TOPICGATE_DATA_DIR"] = str(tmp_path / "data")
 
     assert "$schema" not in config
-    assert server_config["command"] == "topicgate"
+    assert server_config["command"] == "python"
+    assert server_config["args"][:2] == ["-m", "topicgate"]
     assert "PYTHONPATH" not in server_config["env"]
 
     async with Client(config) as client:
@@ -74,3 +77,15 @@ async def test_cached_plugin_bundle_exposes_read_only_tools(
         "list_subscriptions",
         "list_topics",
     }
+
+
+def test_topicgate_package_supports_python_module_execution() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "topicgate", "--help"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Run the TopicGate MCP server." in result.stdout
