@@ -7,6 +7,7 @@ from sqlalchemy.engine import Connection, Engine
 
 
 BASELINE_REVISION = "93fa5748f4b5"
+EXPECTED_SCHEMA_REVISION = "d2a4c6e8f010"
 BASELINE_TABLES = {
     "app_config",
     "broker_profile",
@@ -19,7 +20,12 @@ BASELINE_TABLES = {
 
 def upgrade_database(engine: Engine) -> None:
     """Upgrade a new or existing TopicGate database to the latest schema."""
-    with engine.begin() as connection:
+    with engine.connect() as connection:
+        if engine.dialect.name == "sqlite":
+            # Check concurrent desktop/MCP startup cannot run Alembic in parallel.
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        else:
+            connection.begin()
         config = _alembic_config(connection)
         tables = set(inspect(connection).get_table_names())
 
@@ -35,7 +41,12 @@ def upgrade_database(engine: Engine) -> None:
                 )
             command.stamp(config, BASELINE_REVISION)
 
-        command.upgrade(config, "head")
+        try:
+            command.upgrade(config, "head")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
 
 def _alembic_config(connection: Connection) -> Config:

@@ -1,6 +1,6 @@
 import pytest
 from alembic import command
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from topicgate.infrastructure.database.base import Base
@@ -20,6 +20,8 @@ def test_new_database_is_migrated_to_head(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{database_path.as_posix()}")
     assert "mqtt_message" in inspect(engine).get_table_names()
     assert "observation_retention_policy" in inspect(engine).get_table_names()
+    assert "control_operation_lease" in inspect(engine).get_table_names()
+    assert "control_operation_state" in inspect(engine).get_table_names()
     with engine.connect() as connection:
         revision = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
@@ -33,6 +35,19 @@ def test_new_database_is_migrated_to_head(tmp_path) -> None:
     assert policy == (1_000, 10_000, None, 256 * 1024 * 1024)
     database.dispose()
     engine.dispose()
+
+
+def test_sqlite_connections_enable_wal_and_busy_timeout(tmp_path) -> None:
+    database_path = tmp_path / "coordination.db"
+    database = DatabaseContext(f"sqlite:///{database_path.as_posix()}")
+
+    with database.session() as session:
+        journal_mode = session.execute(text("PRAGMA journal_mode")).scalar_one()
+        busy_timeout = session.execute(text("PRAGMA busy_timeout")).scalar_one()
+
+    assert journal_mode == "wal"
+    assert busy_timeout == 5000
+    database.dispose()
 
 
 def test_existing_unversioned_database_is_stamped_then_upgraded(tmp_path) -> None:

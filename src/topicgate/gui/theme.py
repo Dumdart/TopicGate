@@ -1,10 +1,21 @@
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 
 LIGHT_THEME = """
 QWidget { color: #202124; font-size: 13px; }
-QMainWindow, QWidget#applicationRoot { background: #f3f4f6; }
+QMainWindow, QDialog, QMessageBox, QWidget#applicationRoot { background: #f3f4f6; color: #202124; }
+QMessageBox QLabel { background: transparent; color: #202124; }
 QFrame[workspacePane="true"], QFrame#applicationHeader { background: #ffffff; border: 1px solid #c8ced6; border-radius: 8px; }
+QFrame#observerEmptyState { background: #f8fafc; border: 1px solid #c8ced6; border-radius: 5px; }
+QLabel#observerEmptyStateText { background: transparent; color: #4b5563; }
+QWidget#snapshotPanel, QWidget#snapshotContent, QGroupBox#snapshotControls, QGroupBox#snapshotHealthPanel { background: #ffffff; }
+QFrame#snapshotHeader { background: #fbfcfd; border: 1px solid #c8ced6; border-radius: 5px; }
+QScrollArea#snapshotPanelScrollArea { background: #ffffff; }
+QToolButton#snapshotToggleButton { border: 0; background: transparent; font-weight: 650; padding: 3px 5px; }
+QToolButton#snapshotToggleButton:hover { background: #eef2f6; }
+QGroupBox#snapshotControls, QGroupBox#snapshotHealthPanel { border: 1px solid #c8ced6; border-radius: 5px; margin-top: 8px; padding-top: 8px; }
+QGroupBox#snapshotControls::title, QGroupBox#snapshotHealthPanel::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; color: #4b5563; font-weight: 650; }
 QLabel#applicationTitle { font-size: 22px; font-weight: 650; }
 QLabel#sectionTitle, QLabel#workspaceHeading { color: #4b5563; font-weight: 650; }
 QLabel#sectionTitle { font-size: 11px; }
@@ -33,4 +44,18 @@ QDockWidget { border-top: 1px solid #c8ced6; }
 
 
 def apply_light_theme(application: QApplication) -> None:
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#f3f4f6"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#fafbfc"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#dce9f7"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#737b85"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#202124"))
+    application.setPalette(palette)
     application.setStyleSheet(LIGHT_THEME)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topicgate"
-version = "0.2.0"
+version = "1.0.0"
 description = "Secure local access to your MQTT topics"
 readme = "README.md"
 license = "MIT"
@@ -42,3 +42,6 @@ topicgate-gui = "topicgate.gui.app:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+topicgate = ["assets/*.png", "assets/*.svg"]

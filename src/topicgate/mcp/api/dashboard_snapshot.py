@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from base64 import b64decode, b64encode
 from dataclasses import asdict
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +22,12 @@ from topicgate.presentation.topic_presentation import (
     collect_visible_topic_paths,
     matching_subscription,
     subscription_detail,
+    topic_detail,
+)
+from topicgate.presentation.snapshot_presentation import (
+    datetime_label,
+    duration_label,
+    limitation_label,
 )
 
 
@@ -38,9 +42,14 @@ class DashboardSnapshotBuilder:
         self._runtime = runtime
         self._snapshot_service = snapshot_service
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(
+        self,
+        preferred_path: str = "",
+        *,
+        broker_snapshot: BrokerSnapshot | None = None,
+    ) -> dict[str, Any]:
         active = self._runtime.active_broker
-        broker_snapshot = self._build_snapshot(active.id)
+        broker_snapshot = broker_snapshot or self._build_snapshot(active.id)
         subscriptions = tuple(self._runtime.list_subscriptions(active.id))
         observed = tuple(item.topic for item in broker_snapshot.topics)
         visible_topics = tuple(
@@ -57,23 +66,36 @@ class DashboardSnapshotBuilder:
             broker_display_summary(
                 item,
                 active.id,
-                broker_snapshot.connection_status,
+                self._runtime.get_connection_status(item.id),
             )
             for item in self._runtime.list_brokers()
         ]
-        initial_path = (
+        default_path = (
             visible_names[0]
             if visible_names
             else subscriptions[0].topic_filter
             if subscriptions
             else ""
         )
+        tree_rows = self._tree_rows(
+            paths,
+            subscriptions,
+            visible_topics,
+        )
+        selectable_paths = {
+            row["path"] for row in tree_rows if row["selectable"]
+        }
+        initial_path = (
+            preferred_path
+            if preferred_path in selectable_paths
+            else default_path
+        )
         completeness = asdict(broker_snapshot.completeness)
         completeness["status_label"] = (
             "Complete" if broker_snapshot.completeness.is_complete else "Limited"
         )
         completeness["limitations_labels"] = [
-            self._limitation_label(item.value)
+            limitation_label(item)
             for item in broker_snapshot.completeness.limitations
         ]
         return {
@@ -84,7 +106,7 @@ class DashboardSnapshotBuilder:
                 broker_snapshot.connection_status.replace("_", " ").title()
             ),
             "captured_at": broker_snapshot.captured_at.isoformat(),
-            "captured_at_label": self._datetime_label(
+            "captured_at_label": datetime_label(
                 broker_snapshot.captured_at
             ),
             "observation_started_at": (
@@ -92,11 +114,11 @@ class DashboardSnapshotBuilder:
                 if broker_snapshot.observation_started_at is None
                 else broker_snapshot.observation_started_at.isoformat()
             ),
-            "observation_started_at_label": self._datetime_label(
+            "observation_started_at_label": datetime_label(
                 broker_snapshot.observation_started_at
             ),
             "observed_for_seconds": broker_snapshot.observed_for_seconds,
-            "observed_for_label": self._duration_label(
+            "observed_for_label": duration_label(
                 broker_snapshot.observed_for_seconds
             ),
             "dropped_message_count": broker_snapshot.dropped_message_count,
@@ -107,11 +129,7 @@ class DashboardSnapshotBuilder:
             "topics": [
                 self._topic_row(item) for item in visible_topics
             ],
-            "tree_rows": self._tree_rows(
-                paths,
-                subscriptions,
-                visible_topics,
-            ),
+            "tree_rows": tree_rows,
             "freshness": asdict(broker_snapshot.freshness),
             "results": asdict(broker_snapshot.results),
             "completeness": completeness,
@@ -121,6 +139,40 @@ class DashboardSnapshotBuilder:
                 initial_path,
             ),
         }
+
+    def broker_control(self, broker_id: UUID) -> dict[str, Any]:
+        broker = self._runtime.get_broker(broker_id)
+        active_id = self._runtime.active_broker.id
+        summary = broker_display_summary(
+            broker,
+            active_id,
+            self._runtime.get_connection_status(broker_id),
+        )
+        status = summary.connection_status
+        is_active = broker_id == active_id
+        can_disconnect = is_active and status in {
+            "connecting",
+            "connected",
+            "reconnecting",
+        }
+        can_reconnect_observe = not is_active or status in {
+            "disconnected",
+            "connected",
+            "reconnecting",
+        }
+        result = self._broker_dict(summary)
+        result.update(
+            {
+                "selected_broker_id": str(broker_id),
+                "can_connect": not is_active or status == "disconnected",
+                "can_reconnect_observe": can_reconnect_observe,
+                "can_disconnect": can_disconnect,
+                "connect_disabled": is_active and status != "disconnected",
+                "reconnect_observe_disabled": not can_reconnect_observe,
+                "disconnect_disabled": not can_disconnect,
+            }
+        )
+        return result
 
     def selection(self, broker_id: UUID, path: str) -> dict[str, Any]:
         broker_snapshot = self._build_snapshot(broker_id)
@@ -160,99 +212,9 @@ class DashboardSnapshotBuilder:
         topic: str,
         dropped_message_count: int,
     ) -> dict[str, Any]:
-        if state is None:
-            return {
-                "topic": topic,
-                "has_value": False,
-                "payload_text": "",
-                "payload_base64": "",
-                "decoded_payload": "Waiting for a message",
-                "raw_payload": "-",
-                "payload_display": "No value observed",
-                "payload_encoding": "-",
-                "payload_size": 0,
-                "payload_size_label": "-",
-                "rendered_payload_size": 0,
-                "is_truncated": False,
-                "truncation_label": "",
-                "qos": None,
-                "qos_label": "-",
-                "retained": None,
-                "retain_label": "-",
-                "received_at": "-",
-                "age_seconds": None,
-                "age_seconds_label": "-",
-                "message_count": 0,
-                "dropped_message_count": dropped_message_count,
-                "source": None,
-                "source_label": "-",
-                "status": "waiting",
-                "status_label": "Waiting",
-                "status_detail": "No value has been observed for this topic.",
-                "ingestion_truncated": False,
-                "rendering_truncated": False,
-            }
-
-        payload = state.payload
-        is_utf8 = payload.encoding == SnapshotPayloadEncoding.UTF8
-        payload_text = (
-            payload.value if is_utf8 else "Payload is not valid UTF-8."
-        )
-        payload_base64 = (
-            b64encode(payload.value.encode("utf-8")).decode("ascii")
-            if is_utf8
-            else payload.value
-        )
-        rendered_bytes = (
-            payload.value.encode("utf-8")
-            if is_utf8
-            else b64decode(payload.value)
-        )
-        truncation_label = (
-            "Payload truncated: showing "
-            f"{payload.rendered_size} of {payload.original_size} bytes"
-            if payload.truncated
-            else ""
-        )
-        return {
-            "topic": state.topic,
-            "has_value": True,
-            "payload_text": payload_text,
-            "payload_base64": payload_base64,
-            "decoded_payload": payload.value,
-            "raw_payload": rendered_bytes.hex(" "),
-            "payload_display": payload.value,
-            "payload_encoding": "UTF-8" if is_utf8 else "Base64",
-            "payload_size": payload.original_size,
-            "payload_size_label": DashboardSnapshotBuilder._size_label(
-                payload.original_size
-            ),
-            "rendered_payload_size": payload.rendered_size,
-            "is_truncated": payload.truncated,
-            "truncation_label": truncation_label,
-            "qos": state.qos,
-            "qos_label": str(state.qos),
-            "retained": state.retain,
-            "retain_label": "Yes" if state.retain else "No",
-            "received_at": state.received_at.isoformat(timespec="seconds"),
-            "age_seconds": state.age_seconds,
-            "age_seconds_label": f"{state.age_seconds:.1f} seconds",
-            "message_count": state.message_count,
-            "dropped_message_count": dropped_message_count,
-            "source": state.source.value,
-            "source_label": (
-                "Persisted storage"
-                if state.source.value == "stored"
-                else "Live MQTT observation"
-            ),
-            "status": state.status.value,
-            "status_label": state.status.value.title(),
-            "status_detail": DashboardSnapshotBuilder._status_detail(
-                state.status.value
-            ),
-            "ingestion_truncated": payload.ingestion_truncated,
-            "rendering_truncated": payload.rendering_truncated,
-        }
+        result = asdict(topic_detail(state, topic, dropped_message_count))
+        result["age_seconds_label"] = result["age_label"]
+        return result
 
     @staticmethod
     def _topic_row(state: SnapshotTopicState) -> dict[str, Any]:
@@ -272,49 +234,6 @@ class DashboardSnapshotBuilder:
             "status": state.status.value,
             "is_truncated": state.payload.truncated,
         }
-
-    @staticmethod
-    def _status_detail(status: str) -> str:
-        if status == "stale":
-            return "Value predates the current observation window."
-        if status == "cached":
-            return "Value was restored from persisted storage."
-        return "Value was received during the current runtime."
-
-    @staticmethod
-    def _datetime_label(value: datetime | None) -> str:
-        if value is None:
-            return "Not started"
-        return value.isoformat(timespec="seconds")
-
-    @staticmethod
-    def _duration_label(seconds: float | None) -> str:
-        if seconds is None:
-            return "Not observing"
-        return f"{seconds:.1f} seconds"
-
-    @staticmethod
-    def _limitation_label(value: str) -> str:
-        labels = {
-            "current_state_only": "Current state only; this is not message history.",
-            "retained_delivery_unconfirmed": (
-                "Retained delivery cannot be confirmed from snapshot state."
-            ),
-            "broker_disconnected": "Broker is disconnected.",
-            "observation_not_started": "Live observation has not started.",
-            "stored_state_predates_observation": (
-                "Persisted values may predate the current observation window."
-            ),
-            "dropped_messages": "Messages were dropped before processing.",
-            "stale_states_omitted": "Stale states were omitted by the age limit.",
-            "result_limit_reached": "Topics were omitted by the result limit.",
-            "payload_truncated": "One or more payloads are truncated.",
-        }
-        return labels[value]
-
-    @staticmethod
-    def _size_label(size: int) -> str:
-        return f"{size} byte" if size == 1 else f"{size} bytes"
 
     @staticmethod
     def _subscription_row(subscription: Subscription) -> dict[str, Any]:
@@ -355,5 +274,5 @@ class DashboardSnapshotBuilder:
                 )
                 append(node.children, depth + 1)
 
-        append(build_topic_tree(paths, subscriptions, observed), 0)
+        append(build_topic_tree(paths, subscriptions, observed, topics), 0)
         return rows

@@ -12,9 +12,13 @@ from topicgate.infrastructure.database.migrations import upgrade_database
 
 class DatabaseContext:
     def __init__(self, url: str):
-        self._engine = create_engine(url)
+        self.url = url
+        self._engine = create_engine(
+            url,
+            connect_args={"timeout": 5.0} if url.startswith("sqlite") else {},
+        )
         if self._engine.dialect.name == "sqlite":
-            event.listen(self._engine, "connect", self._enable_sqlite_foreign_keys)
+            event.listen(self._engine, "connect", self._configure_sqlite_connection)
         upgrade_database(self._engine)
 
         self._sessions = sessionmaker(
@@ -42,9 +46,11 @@ class DatabaseContext:
         self._engine.dispose()
 
     @staticmethod
-    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         try:
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA journal_mode=WAL")
         finally:
             cursor.close()

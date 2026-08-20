@@ -9,6 +9,8 @@ from topicgate.app.services.observation_retention_policy_service import (
     ObservationRetentionPolicyService,
 )
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
+from topicgate.app.services.control_operation_service import ControlOperationService
+from topicgate.app.services.mcp_setup_service import McpSetupService
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.interfaces.observer_repository import ObserverRepository
@@ -37,10 +39,13 @@ class AppDependencies:
         self,
         data_dir: Path | None = None,
         credential_store: CredentialStore | None = None,
+        *,
+        control_owner: str = "application",
     ) -> None:
 
         database_path = prepare_database_path(data_dir)
         self._db_context = DatabaseContext(sqlite_url(database_path))
+        self.database_path = database_path
         self.credential_store = (
             OSCredentialStore() if credential_store is None else credential_store
         )
@@ -59,6 +64,10 @@ class AppDependencies:
         self.observation_cache = ObservationCacheService(
             self.topic_messages,
             self.retention_policy,
+        )
+        self.control_operations = ControlOperationService(
+            self._db_context,
+            control_owner,
         )
         self.persistence = PersistenceLifecycle(
             self.topic_messages,
@@ -85,8 +94,17 @@ class AppDependencies:
             profile.id,
             self._create_observer_repository,
             self.observation_cache,
+            self.control_operations,
         )
         self.snapshot_service = BrokerSnapshotService(self.runtime)
+        self.mcp_setup = McpSetupService(
+            self.runtime,
+            self.snapshot_service,
+            self._db_context,
+            self.credential_store,
+            database_path.parent,
+            database_path,
+        )
 
         self.service_items: tuple[ServiceItem, ...] = (
             self.persistence,

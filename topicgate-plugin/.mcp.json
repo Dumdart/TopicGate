@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "topicgate": {
+      "type": "stdio",
+      "command": "topicgate",
+      "args": [
+        "--mode",
+        "read-only"
+      ]
+    }
+  }
+}

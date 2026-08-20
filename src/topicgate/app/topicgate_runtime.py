@@ -1,10 +1,13 @@
+from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime
 from uuid import UUID
 
 from topicgate.app.services.service_item import ServiceItem
 from topicgate.app.services.observation_cache_service import ObservationCacheService
+from topicgate.app.services.control_operation_service import ControlOperationService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.interfaces.broker_profile_store import BrokerProfileStore
 from topicgate.core.interfaces.observer_repository import ObserverRepository
@@ -14,6 +17,14 @@ from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionPreview,
+)
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+    ObservationDeletionResult,
+    PersistedTopicSummary,
+    RetentionPolicyApplicationResult,
+    RetentionPolicyPreview,
 )
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
@@ -34,6 +45,7 @@ class TopicGateRuntime(ServiceItem):
             [BrokerProfile], ObserverRepository
         ] | None = None,
         observation_cache: ObservationCacheService | None = None,
+        control_operations: ControlOperationService | None = None,
     ) -> None:
         self._brokers = broker_repository
         self._active_broker_id = (
@@ -44,6 +56,7 @@ class TopicGateRuntime(ServiceItem):
         self._mqtt_repositories = mqtt_repositories
         self._mqtt_repository_factory = mqtt_repository_factory
         self._observation_cache = observation_cache
+        self._control_operations = control_operations
         if self._active_broker_id not in self._mqtt_repositories:
             raise ValueError("The active broker requires an MQTT repository.")
 
@@ -101,7 +114,52 @@ class TopicGateRuntime(ServiceItem):
         self,
         policy: ObservationRetentionPolicy,
     ) -> ObservationRetentionPolicy:
-        return self._require_observation_cache().update_retention_policy(policy)
+        with self.control_operation("update retention policy"):
+            return self._require_observation_cache().update_retention_policy(policy)
+
+    def get_cache_usage(self) -> CacheUsageSummary:
+        usage = self._require_observation_cache().get_cache_usage()
+        by_broker = {item.broker_id: item for item in usage.brokers}
+        return CacheUsageSummary(
+            tuple(
+                by_broker.get(
+                    broker.id,
+                    BrokerCacheUsage(broker.id, 0, 0, None, None),
+                )
+                for broker in self.list_brokers()
+            )
+        )
+
+    def list_persisted_topics(
+        self,
+        broker_id: UUID,
+    ) -> tuple[PersistedTopicSummary, ...]:
+        self._get_broker_profile(broker_id)
+        return self._require_observation_cache().get_persisted_topics(
+            broker_id,
+            self.list_subscriptions(broker_id),
+        )
+
+    def preview_retention_policy(
+        self,
+        policy: ObservationRetentionPolicy,
+    ) -> RetentionPolicyPreview:
+        return self._require_observation_cache().preview_retention_policy(
+            policy,
+            self._subscriptions_by_broker(),
+        )
+
+    def confirm_retention_policy(
+        self,
+        preview: RetentionPolicyPreview,
+    ) -> RetentionPolicyApplicationResult:
+        with self.control_operation("enforce retention policy"):
+            result = self._require_observation_cache().confirm_retention_policy(
+                preview,
+                self._subscriptions_by_broker(),
+            )
+            self._reconcile_deleted_entries(result.enforcement.deleted_entries)
+            return result
 
     def preview_clear_cache(
         self,
@@ -124,12 +182,30 @@ class TopicGateRuntime(ServiceItem):
             self.list_subscriptions(broker_id),
         )
 
+    def preview_all_cache(self) -> ObservationDeletionPreview:
+        return self._require_observation_cache().preview_all()
+
+    def confirm_cache_deletion_detailed(
+        self,
+        preview: ObservationDeletionPreview,
+    ) -> ObservationDeletionResult:
+        with self.control_operation("delete stored observations"):
+            for broker_id in preview.broker_ids:
+                self._get_broker_profile(broker_id)
+            result = self._require_observation_cache().confirm_deletion_detailed(
+                preview
+            )
+            self._reconcile_deleted_entries(result.deleted_entries)
+            return result
+
     def confirm_cache_deletion(
         self,
         preview: ObservationDeletionPreview,
     ) -> int:
-        self._get_broker_profile(preview.broker_id)
-        return self._require_observation_cache().confirm_deletion(preview)
+        with self.control_operation("delete stored observations"):
+            if preview.broker_id is not None:
+                self._get_broker_profile(preview.broker_id)
+            return self._require_observation_cache().confirm_deletion(preview)
 
     @property
     def connection_status(self) -> object:
@@ -172,20 +248,24 @@ class TopicGateRuntime(ServiceItem):
         return self.active_repo.connection_statuses()
 
     async def connect(self) -> None:
-        await self.active_repo.connect()
+        with self.control_operation("connect broker"):
+            await self.active_repo.connect()
 
     async def disconnect(self) -> None:
-        await self.active_repo.disconnect()
+        with self.control_operation("disconnect broker"):
+            await self.active_repo.disconnect()
 
     async def reconnect(self) -> None:
-        await self.active_repo.reconnect()
+        with self.control_operation("reconnect broker"):
+            await self.active_repo.reconnect()
 
     def create_broker(self, name: str, mqtt_config: MqttConfig) -> BrokerSummary:
-        if self._mqtt_repository_factory is None:
-            raise RuntimeError("An observer repository factory is required.")
-        profile = self._brokers.create_profile(name, mqtt_config)
-        self._mqtt_repositories[profile.id] = self._mqtt_repository_factory(profile)
-        return self._broker_summary(profile)
+        with self.control_operation("create broker profile"):
+            if self._mqtt_repository_factory is None:
+                raise RuntimeError("An observer repository factory is required.")
+            profile = self._brokers.create_profile(name, mqtt_config)
+            self._mqtt_repositories[profile.id] = self._mqtt_repository_factory(profile)
+            return self._broker_summary(profile)
 
     def update_broker(
         self,
@@ -193,22 +273,32 @@ class TopicGateRuntime(ServiceItem):
         mqtt_config: MqttConfig,
         name: str | None = None,
     ) -> BrokerSummary:
-        profile = self._get_broker_profile(broker_id)
-        config = self._config_with_stored_password(profile, mqtt_config)
-        profile.name = (
-            self._validated_profile_name(name, broker_id)
-            if name is not None
-            else profile.name
-        )
-        profile.config = config
-        self._brokers.update_profile(profile)
-        return self.get_broker(broker_id)
+        with self.control_operation("update broker profile"):
+            profile = self._get_broker_profile(broker_id)
+            config = self._config_with_stored_password(profile, mqtt_config)
+            profile.name = (
+                self._validated_profile_name(name, broker_id)
+                if name is not None
+                else profile.name
+            )
+            profile.config = config
+            self._brokers.update_profile(profile)
+            return self.get_broker(broker_id)
 
     async def activate_broker(
         self,
         broker_id: UUID,
         mqtt_config: MqttConfig | None = None,
         name: str | None = None,
+    ) -> BrokerSummary:
+        with self.control_operation("activate broker profile"):
+            return await self._activate_broker(broker_id, mqtt_config, name)
+
+    async def _activate_broker(
+        self,
+        broker_id: UUID,
+        mqtt_config: MqttConfig | None,
+        name: str | None,
     ) -> BrokerSummary:
         profile = self._get_broker_profile(broker_id)
         config = (
@@ -247,50 +337,62 @@ class TopicGateRuntime(ServiceItem):
         return self.active_broker
 
     async def delete_broker(self, broker_id: UUID) -> BrokerSummary:
-        profile = self._get_broker_profile(broker_id)
-        profiles = self.list_brokers()
-        if len(profiles) == 1:
-            raise ValueError("At least one broker profile is required.")
-        if profile.id == self.active_broker.id:
-            replacement = next(item for item in profiles if item.id != profile.id)
-            await self.activate_broker(replacement.id)
-        if self._observation_cache is not None:
-            self._observation_cache.flush_pending_writes()
-        deleted = self._brokers.delete_profile(profile.id)
-        self._mqtt_repositories.pop(profile.id)
-        return self._broker_summary(deleted)
+        with self.control_operation("delete broker profile"):
+            profile = self._get_broker_profile(broker_id)
+            profiles = self.list_brokers()
+            if len(profiles) == 1:
+                raise ValueError("At least one broker profile is required.")
+            if profile.id == self.active_broker.id:
+                replacement = next(item for item in profiles if item.id != profile.id)
+                await self.activate_broker(replacement.id)
+            if self._observation_cache is not None:
+                self._observation_cache.flush_pending_writes()
+            deleted = self._brokers.delete_profile(profile.id)
+            self._mqtt_repositories.pop(profile.id)
+            return self._broker_summary(deleted)
 
     async def add_subscription(
         self,
         broker_id: UUID,
         subscription: Subscription,
     ) -> None:
-        self._require_active_broker(broker_id)
-        await self.active_repo.add_subscription(subscription)
-        self._persist_active_subscriptions()
+        with self.control_operation("add subscription"):
+            self._require_active_broker(broker_id)
+            await self.active_repo.add_subscription(subscription)
+            self._persist_active_subscriptions()
 
     async def update_subscription(
         self,
         broker_id: UUID,
         original_filter: str,
         subscription: Subscription,
-    ) -> None:
-        self._require_active_broker(broker_id)
-        await self.active_repo.update_subscription(original_filter, subscription)
-        self._persist_active_subscriptions()
+    ) -> ObservationDeletionResult | None:
+        with self.control_operation("update subscription"):
+            self._require_active_broker(broker_id)
+            await self.active_repo.update_subscription(original_filter, subscription)
+            self._persist_active_subscriptions()
+            return self._cleanup_unsubscribed_if_enabled(broker_id)
 
     async def remove_subscription(
         self,
         broker_id: UUID,
         subscription: Subscription,
-    ) -> None:
-        self._require_active_broker(broker_id)
-        await self.active_repo.remove_subscription(subscription)
-        self._persist_active_subscriptions()
+    ) -> ObservationDeletionResult | None:
+        with self.control_operation("remove subscription"):
+            self._require_active_broker(broker_id)
+            await self.active_repo.remove_subscription(subscription)
+            self._persist_active_subscriptions()
+            return self._cleanup_unsubscribed_if_enabled(broker_id)
 
     async def publish(self, broker_id: UUID, topic: str, payload: bytes) -> None:
-        self._require_active_broker(broker_id)
-        await self.active_repo.publish(topic, payload)
+        with self.control_operation("publish MQTT message"):
+            self._require_active_broker(broker_id)
+            await self.active_repo.publish(topic, payload)
+
+    def control_operation(self, name: str):
+        if self._control_operations is None:
+            return nullcontext()
+        return self._control_operations.operation(name)
 
     def _persist_active_subscriptions(self) -> None:
         workspace_id = self._get_broker_profile().workspace_id
@@ -298,6 +400,43 @@ class TopicGateRuntime(ServiceItem):
             workspace_id,
             tuple(self.active_repo.subscriptions),
         )
+
+    def _cleanup_unsubscribed_if_enabled(
+        self,
+        broker_id: UUID,
+    ) -> ObservationDeletionResult | None:
+        cache = self._observation_cache
+        if cache is None or not cache.get_retention_policy().auto_remove_unsubscribed:
+            return None
+        preview = cache.preview_unsubscribed(
+            broker_id,
+            self.list_subscriptions(broker_id),
+        )
+        if preview.entries:
+            result = cache.confirm_deletion_detailed(preview)
+            self._reconcile_deleted_entries(result.deleted_entries)
+            return result
+        return None
+
+    def _subscriptions_by_broker(
+        self,
+    ) -> dict[UUID, tuple[Subscription, ...]]:
+        return {
+            broker.id: self.list_subscriptions(broker.id)
+            for broker in self.list_brokers()
+        }
+
+    def _reconcile_deleted_entries(self, entries) -> int:
+        grouped = defaultdict(list)
+        for entry in entries:
+            grouped[entry.broker_id].append(entry)
+        removed = 0
+        for broker_id, broker_entries in grouped.items():
+            repository = self._repository_for(broker_id)
+            evict = getattr(repository, "evict_stored_observations", None)
+            if evict is not None:
+                removed += evict(tuple(broker_entries))
+        return removed
 
     def _require_active_broker(self, broker_id: UUID) -> None:
         if broker_id != self.active_broker.id:

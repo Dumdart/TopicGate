@@ -4,9 +4,12 @@ from PySide6.QtCore import QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QFrame,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QMenu,
+    QScrollArea,
     QStyle,
     QToolButton,
     QTreeView,
@@ -16,6 +19,7 @@ from PySide6.QtWidgets import (
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
+from topicgate.gui.components.snapshot_panel import SnapshotPanel
 from topicgate.presentation.topic_presentation import TopicTreeNode
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -31,6 +35,10 @@ class ObserverTreePane(WorkspacePane):
     add_broker_profile_requested = Signal()
     edit_broker_profile_requested = Signal(object)
     delete_broker_profile_requested = Signal()
+    snapshot_apply_requested = Signal(object)
+    snapshot_reset_requested = Signal()
+    reconnect_observe_requested = Signal(object)
+    empty_state_action_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__("Observer Tree")
@@ -39,12 +47,14 @@ class ObserverTreePane(WorkspacePane):
         controls = QHBoxLayout()
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Search topics...")
+        self._search_edit.setAccessibleName("Search observed topics")
         self._search_edit.setClearButtonEnabled(True)
         controls.addWidget(self._search_edit, 1)
 
         add_button = QToolButton()
         add_button.setText("+ Filter")
         add_button.setToolTip("Add an MQTT subscription filter")
+        add_button.setAccessibleName("Add MQTT subscription filter")
         add_button.clicked.connect(self.add_filter_requested)
         controls.addWidget(add_button)
 
@@ -60,7 +70,7 @@ class ObserverTreePane(WorkspacePane):
         self.content_layout.addLayout(controls)
 
         self._model = QStandardItemModel(self)
-        self._model.setHorizontalHeaderLabels(["Topic", ""])
+        self._model.setHorizontalHeaderLabels(["Topic", "", "State"])
         self._proxy = QSortFilterProxyModel(self)
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -82,11 +92,60 @@ class ObserverTreePane(WorkspacePane):
             QHeaderView.ResizeMode.Fixed,
         )
         self._tree.header().resizeSection(1, 34)
+        self._tree.header().setSectionResizeMode(
+            2,
+            QHeaderView.ResizeMode.Fixed,
+        )
+        self._tree.header().resizeSection(2, 136)
         self._tree.selectionModel().currentChanged.connect(
             self._selection_changed
         )
         self._search_edit.textChanged.connect(self._proxy.setFilterFixedString)
         self.content_layout.addWidget(self._tree, 1)
+        self._empty_state = QFrame()
+        self._empty_state.setObjectName("observerEmptyState")
+        self._empty_state.setFrameShape(QFrame.Shape.StyledPanel)
+        empty_layout = QHBoxLayout(self._empty_state)
+        self._empty_state_text = QLabel()
+        self._empty_state_text.setObjectName("observerEmptyStateText")
+        self._empty_state_text.setWordWrap(True)
+        empty_layout.addWidget(self._empty_state_text, 1)
+        self._empty_state_action = QToolButton()
+        self._empty_state_action.setObjectName("observerEmptyStateAction")
+        self._empty_state_action.clicked.connect(
+            lambda: self.empty_state_action_requested.emit(
+                str(self._empty_state_action.property("action") or "")
+            )
+        )
+        empty_layout.addWidget(self._empty_state_action)
+        self.content_layout.addWidget(self._empty_state)
+        self.snapshot_panel = SnapshotPanel()
+        self.snapshot_panel.apply_requested.connect(
+            self.snapshot_apply_requested.emit
+        )
+        self.snapshot_panel.reset_requested.connect(
+            self.snapshot_reset_requested.emit
+        )
+        self.snapshot_panel.reconnect_observe_requested.connect(
+            self.reconnect_observe_requested.emit
+        )
+        snapshot_scroll = QScrollArea()
+        snapshot_scroll.setObjectName("snapshotPanelScrollArea")
+        snapshot_scroll.setWidgetResizable(True)
+        snapshot_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        snapshot_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        snapshot_scroll.setMinimumHeight(68)
+        snapshot_scroll.setMaximumHeight(68)
+        snapshot_scroll.setWidget(self.snapshot_panel)
+
+        def resize_snapshot(expanded: bool) -> None:
+            snapshot_scroll.setMinimumHeight(300 if expanded else 68)
+            snapshot_scroll.setMaximumHeight(360 if expanded else 68)
+
+        self.snapshot_panel.expansion_changed.connect(resize_snapshot)
+        self.content_layout.addWidget(snapshot_scroll)
 
     def render(
         self,
@@ -114,6 +173,55 @@ class ObserverTreePane(WorkspacePane):
             self._tree.expandToDepth(1)
         self.select_topic(selected_topic)
 
+    def render_empty_state(
+        self,
+        connection_status: str,
+        subscriptions: tuple[Subscription, ...],
+        query_is_filtered: bool,
+        has_cached_values: bool,
+        has_topics: bool,
+    ) -> None:
+        """Explain why the workspace has no immediately useful live values."""
+        if has_topics and not has_cached_values:
+            self._empty_state.setVisible(False)
+            return
+        if not subscriptions:
+            message, action, label = (
+                "No subscriptions are configured. Add a filter before TopicGate can observe values.",
+                "add-filter",
+                "Add filter",
+            )
+        elif connection_status == "disconnected":
+            message, action, label = (
+                "The active broker is disconnected. Cached values may be old until you reconnect.",
+                "connect",
+                "Connect",
+            )
+        elif query_is_filtered and not has_topics:
+            message, action, label = (
+                "No values match the current snapshot filters. Clear filters or capture a fresh snapshot.",
+                "clear-filters",
+                "Clear filters",
+            )
+        elif has_cached_values:
+            message, action, label = (
+                "Only persisted values are available. Their source and age are shown in Details; reconnect to collect fresh values.",
+                "observe",
+                "Reconnect & observe",
+            )
+        else:
+            message, action, label = (
+                "No values have been observed yet. Capture a fresh snapshot after publishers send messages.",
+                "observe",
+                "Reconnect & observe",
+            )
+        self._empty_state_text.setText(message)
+        self._empty_state_text.setAccessibleName(message)
+        self._empty_state_action.setText(label)
+        self._empty_state_action.setAccessibleName(label)
+        self._empty_state_action.setProperty("action", action)
+        self._empty_state.setVisible(True)
+
     def render_tree(
         self,
         nodes: tuple[TopicTreeNode, ...],
@@ -130,6 +238,14 @@ class ObserverTreePane(WorkspacePane):
         append(nodes)
         self.render(paths, selected_topic, subscriptions)
 
+        def add_badges(items: tuple[TopicTreeNode, ...]) -> None:
+            for node in items:
+                if node.badges:
+                    self._set_badges(node)
+                add_badges(node.children)
+
+        add_badges(nodes)
+
     def select_topic(self, topic: str) -> None:
         item = self._items.get(topic)
         if item is None:
@@ -144,6 +260,9 @@ class ObserverTreePane(WorkspacePane):
 
     def collapse_all(self) -> None:
         self._tree.collapseAll()
+
+    def focus_search(self) -> None:
+        self._search_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def render_broker_profiles(
         self,
@@ -193,6 +312,9 @@ class ObserverTreePane(WorkspacePane):
     def set_profile_switching(self, switching: bool) -> None:
         """Prevent duplicate profile switches while the broker reconnects."""
         self._broker_profile_button.setEnabled(not switching)
+        action = str(self._empty_state_action.property("action") or "")
+        if action in {"connect", "observe"}:
+            self._empty_state_action.setEnabled(not switching)
 
     def _add_topic(self, topic: str) -> None:
         parent = self._model.invisibleRootItem()
@@ -205,9 +327,11 @@ class ObserverTreePane(WorkspacePane):
                 item = QStandardItem(segment or "/")
                 item.setEditable(False)
                 item.setData(path, TOPIC_ROLE)
+                state_item = QStandardItem()
+                state_item.setEditable(False)
                 action_item = QStandardItem()
                 action_item.setEditable(False)
-                parent.appendRow([item, action_item])
+                parent.appendRow([item, state_item, action_item])
                 self._items[path] = item
             parent = item
 
@@ -259,6 +383,34 @@ class ObserverTreePane(WorkspacePane):
             self._proxy.mapFromSource(action_index),
             action_widget,
         )
+
+    def _set_badges(self, node: TopicTreeNode) -> None:
+        item = self._items.get(node.path)
+        if item is None:
+            return
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(3)
+        colors = {
+            "success": ("#dcfce7", "#166534"),
+            "info": ("#dbeafe", "#1e40af"),
+            "warning": ("#fef3c7", "#92400e"),
+            "neutral": ("#e5e7eb", "#374151"),
+        }
+        for badge in node.badges:
+            label = QLabel(badge.label)
+            label.setObjectName("topicStateBadge")
+            label.setProperty("badgeKey", badge.key)
+            background, foreground = colors[badge.tone]
+            label.setStyleSheet(
+                f"background: {background}; color: {foreground}; "
+                "border-radius: 5px; padding: 1px 4px; font-size: 10px;"
+            )
+            layout.addWidget(label)
+        layout.addStretch(1)
+        state_index = item.index().siblingAtColumn(2)
+        self._tree.setIndexWidget(self._proxy.mapFromSource(state_index), widget)
 
     def _restore_expanded_paths(self, expanded_paths: set[str]) -> None:
         for path in expanded_paths:

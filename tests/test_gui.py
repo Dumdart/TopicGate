@@ -3,13 +3,13 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QSettings, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,9 +23,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QSplitter,
+    QSpinBox,
+    QTableWidget,
     QToolBar,
     QToolButton,
     QTreeView,
+    QWidget,
 )
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -35,15 +38,258 @@ from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+    ObservationDeletionResult,
+)
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+    ObservationDeletionPreview,
+)
 from topicgate.gui.components.about_dialog import AboutDialog
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
 )
 from topicgate.gui.components.observer_tree import ObserverTreePane
+from topicgate.gui.components.snapshot_panel import SnapshotPanel
+from topicgate.gui.components.stored_observations_dialog import (
+    StoredObservationsDialog,
+)
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
+from topicgate.gui.theme import LIGHT_THEME, apply_light_theme
+from topicgate.presentation.snapshot_presentation import (
+    BrokerSnapshotHealth,
+    SnapshotQuery,
+)
+
+
+def test_snapshot_panel_applies_clears_and_renders_health() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+    requested: list[SnapshotQuery] = []
+    observations: list[SnapshotQuery] = []
+    resets: list[bool] = []
+    pane.apply_requested.connect(requested.append)
+    pane.reconnect_observe_requested.connect(observations.append)
+    pane.reset_requested.connect(lambda: resets.append(True))
+    toggle = pane.findChild(QToolButton, "snapshotToggleButton")
+    content = pane.findChild(QWidget, "snapshotContent")
+    assert not pane.is_expanded
+    assert not toggle.isChecked()
+    assert content.isHidden()
+    assert "collapsed" in toggle.accessibleDescription()
+    assert pane.findChild(QLabel, "snapshotSummaryConnection").text() == (
+        "Disconnected"
+    )
+    assert pane.findChild(
+        QPushButton,
+        "reconnectObserveButton",
+    ).accessibleName() == "Reconnect & observe"
+
+    toggle.setFocus()
+    QTest.keyClick(toggle, Qt.Key.Key_Space)
+    assert pane.is_expanded
+    assert not content.isHidden()
+    assert "expanded" in toggle.accessibleDescription()
+    pane.findChild(QLineEdit, "snapshotTopicFilter").setText("home/#")
+    pane.findChild(QLineEdit, "snapshotMaximumAge").setText("10.5")
+    pane.findChild(QSpinBox, "snapshotResultLimit").setValue(12)
+    pane.findChild(QSpinBox, "snapshotPayloadLimit").setValue(512)
+
+    pane.findChild(QPushButton, "applySnapshotButton").click()
+    assert requested[-1] == SnapshotQuery("home/#", 10.5, 12, 512)
+    pane.findChild(QPushButton, "reconnectObserveButton").click()
+    assert observations[-1] == SnapshotQuery("home/#", 10.5, 12, 512)
+
+    health = BrokerSnapshotHealth(
+        "captured",
+        "connected",
+        "observing",
+        "4.0 seconds",
+        3,
+        2,
+        1,
+        1,
+        5,
+        "Limited",
+        ("Current state only.",),
+    )
+    pane.render_health(health)
+    assert pane.findChild(QLabel, "snapshotReturnedCount").text() == "3"
+    assert pane.findChild(QLabel, "snapshotCompletenessStatus").text() == "Limited"
+    assert pane.findChild(QLabel, "snapshotSummaryReturned").text() == (
+        "Returned 3"
+    )
+    assert pane.findChild(QLabel, "snapshotSummaryDropped").text() == (
+        "Dropped 5"
+    )
+    assert pane.findChild(QLabel, "snapshotSummaryCompleteness").text() == (
+        "Limited"
+    )
+
+    pane.set_expanded(False)
+    assert pane.query == SnapshotQuery("home/#", 10.5, 12, 512)
+    assert content.isHidden()
+
+    pane.findChild(QPushButton, "clearSnapshotFiltersButton").click()
+    assert resets == [True]
+    assert pane.query == SnapshotQuery()
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_snapshot_panel_reports_field_specific_age_errors() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+    requested: list[SnapshotQuery] = []
+    errors: list[str] = []
+    pane.apply_requested.connect(requested.append)
+    pane.validation_failed.connect(errors.append)
+    pane.findChild(QLineEdit, "snapshotMaximumAge").setText("invalid")
+
+    pane.findChild(QPushButton, "applySnapshotButton").click()
+
+    assert requested == []
+    assert errors == [
+        "Maximum age must be a non-negative number or blank."
+    ]
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_snapshot_panel_exposes_freshness_legend_and_accessible_filters() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = SnapshotPanel()
+
+    legend = pane.findChild(QLabel, "snapshotFreshnessLegend")
+    topic_filter = pane.findChild(QLineEdit, "snapshotTopicFilter")
+    apply = pane.findChild(QPushButton, "applySnapshotButton")
+
+    assert legend is not None
+    assert "Live" in legend.text()
+    assert "Cached" in legend.text()
+    assert legend.accessibleName() == "Freshness and source legend"
+    assert topic_filter.accessibleName() == "Snapshot topic filter"
+    assert apply.accessibleName() == "Apply snapshot filters"
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_about_dialog_describes_persisted_observations() -> None:
+    application = QApplication.instance() or QApplication([])
+    dialog = AboutDialog()
+
+    text = dialog.findChild(QLabel, "aboutStorageText").text()
+
+    assert text == (
+        "Broker profiles, subscriptions, and each broker's latest observed "
+        "MQTT values are stored in SQLite. Passwords are stored in your "
+        "operating system's credential store. Snapshot views may include "
+        "stored observations captured before the current connection or "
+        "observation window."
+    )
+    dialog.deleteLater()
+    application.processEvents()
+
+
+def test_stored_observations_dialog_renders_policy_and_inline_validation() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    view_model._retention_policy = ObservationRetentionPolicy()
+    dialog = StoredObservationsDialog(view_model)
+
+    dialog.render()
+
+    assert dialog.findChild(QComboBox, "retentionPreset").currentText() == "Balanced"
+    save = dialog.findChild(QPushButton, "saveRetentionPolicyButton")
+    assert save.isEnabled()
+    assert dialog.findChild(QLineEdit, "maxEntriesPerBroker").accessibleName() == (
+        "Maximum entries per broker"
+    )
+    assert dialog.findChild(QTableWidget, "cacheUsageTable").accessibleName() == (
+        "Cache usage by broker"
+    )
+    dialog.findChild(QLineEdit, "maxEntriesPerBroker").setText("20000")
+    assert dialog.findChild(QComboBox, "retentionPreset").currentText() == "Custom"
+    assert not save.isEnabled()
+    assert "total" in dialog.findChild(
+        QLabel,
+        "max_entries_per_brokerError",
+    ).text()
+
+    dialog.findChild(QComboBox, "retentionPreset").setCurrentText(
+        "Conservative"
+    )
+    assert dialog.draft_policy() == view_model.retention_presets[0].policy
+    dialog.deleteLater()
+    application.processEvents()
+
+
+async def test_cache_deletion_cancellation_preserves_inactive_broker_state() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    inactive = view_model.broker_profiles[1]
+    entry = ObservationDeletionEntry(
+        inactive.id,
+        "stored/topic",
+        uuid4(),
+        datetime.now(timezone.utc),
+        12,
+    )
+    preview = ObservationDeletionPreview(inactive.id, (entry,), "broker")
+    view_model.preview_cache_deletion = AsyncMock(return_value=preview)
+    view_model.confirm_cache_deletion = AsyncMock()
+    window = MainWindow(view_model)
+
+    with patch.object(window, "_confirm_destructive", return_value=False):
+        await window._preview_and_delete_cache("broker", inactive.id, ())
+
+    view_model.confirm_cache_deletion.assert_not_awaited()
+    window.close()
+    application.processEvents()
+
+
+async def test_cache_deletion_confirmation_reports_partial_inactive_result() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    inactive = view_model.broker_profiles[1]
+    first = ObservationDeletionEntry(
+        inactive.id,
+        "stored/first",
+        uuid4(),
+        datetime.now(timezone.utc),
+        12,
+    )
+    changed = ObservationDeletionEntry(
+        inactive.id,
+        "stored/changed",
+        uuid4(),
+        datetime.now(timezone.utc),
+        8,
+    )
+    preview = ObservationDeletionPreview(inactive.id, (first, changed), "broker")
+    result = ObservationDeletionResult((first, changed), (first,), (changed,))
+    view_model.preview_cache_deletion = AsyncMock(return_value=preview)
+    view_model.confirm_cache_deletion = AsyncMock(return_value=result)
+    window = MainWindow(view_model)
+
+    with (
+        patch.object(window, "_confirm_destructive", return_value=True),
+        patch("topicgate.gui.main_window.QMessageBox.warning") as warning,
+    ):
+        await window._preview_and_delete_cache("broker", inactive.id, ())
+
+    view_model.confirm_cache_deletion.assert_awaited_once_with(preview)
+    assert "Deleted 1 of 2" in warning.call_args.args[2]
+    window.close()
+    application.processEvents()
 
 
 def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
@@ -75,6 +321,127 @@ def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
     assert "color: #737b85" in window.styleSheet()
 
     window.close()
+    application.processEvents()
+
+
+def test_desktop_onboarding_and_mcp_setup_guide_the_first_run() -> None:
+    application = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(Path(".pytest_cache/first-run.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    window = MainWindow(MainViewModel(runtime_for(FakeGuiRepository())), settings)
+
+    checklist = window.findChild(QWidget, "firstRunChecklist")
+    broker = window.findChild(QLabel, "firstRunBrokerStatus")
+    mcp_action = window.findChild(QAction, "mcpSetupAction")
+    assert checklist is not None
+    assert broker.text() == "Next: Configure a broker profile"
+    assert mcp_action.shortcut().toString() == "Ctrl+Shift+M"
+
+    mcp_action.trigger()
+    dialog = window.findChild(QDialog, "mcpSetupDialog")
+    assert dialog is not None
+    assert '"--mode", "read-only"' in dialog.findChild(
+        QPlainTextEdit, "mcpSetupConfiguration"
+    ).toPlainText()
+    mode = dialog.findChild(QComboBox, "mcpConfigurationMode")
+    mode.setCurrentIndex(1)
+    assert '"--mode", "control"' in dialog.findChild(
+        QPlainTextEdit, "mcpSetupConfiguration"
+    ).toPlainText()
+    assert "publishing" in dialog.findChild(QLabel, "mcpModeWarning").text()
+    assert "untrusted" in dialog.findChild(
+        QLabel, "mcpUntrustedDataWarning"
+    ).text().lower()
+    dialog.findChild(QPushButton, "runMcpPreflightButton").click()
+    assert "WARNING" in dialog.findChild(QLabel, "mcpPreflightResults").text()
+    dialog.findChild(QPushButton, "testMcpSnapshotButton").click()
+    assert "PASS: Broker snapshot" in dialog.findChild(
+        QLabel, "mcpPreflightResults"
+    ).text()
+    dialog.accept()
+    assert settings.value("onboarding/mcpConfigured", False, type=bool)
+    window.close()
+    application.processEvents()
+
+
+def test_desktop_persists_snapshot_preferences_and_focuses_search() -> None:
+    application = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(Path(".pytest_cache/snapshot-preferences.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    first = MainWindow(MainViewModel(runtime_for(FakeGuiRepository())), settings)
+    first._apply_snapshot_query(SnapshotQuery("devices/#", 12.0, 9, 256))
+    first._observer_tree.snapshot_panel.set_expanded(True)
+    first.close()
+
+    second = MainWindow(MainViewModel(runtime_for(FakeGuiRepository())), settings)
+    assert second._view_model.snapshot_query == SnapshotQuery("devices/#", 12.0, 9, 256)
+    assert second._observer_tree.snapshot_panel.is_expanded
+    second.show()
+    application.processEvents()
+    second._focus_topic_search_action.trigger()
+    assert second._observer_tree._search_edit.hasFocus()
+    second.close()
+    application.processEvents()
+
+
+def test_observer_empty_states_explain_recovery_actions() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = ObserverTreePane()
+    pane.render_empty_state("disconnected", (), False, False, False)
+    assert "No subscriptions" in pane.findChild(QLabel, "observerEmptyStateText").text()
+
+    pane.render_empty_state("connected", (Subscription("devices/#"),), True, False, False)
+    action = pane.findChild(QToolButton, "observerEmptyStateAction")
+    assert "current snapshot filters" in pane.findChild(
+        QLabel, "observerEmptyStateText"
+    ).text()
+    assert action.text() == "Clear filters"
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_light_theme_keeps_dialog_and_empty_state_text_readable() -> None:
+    application = QApplication.instance() or QApplication([])
+
+    apply_light_theme(application)
+
+    palette = application.palette()
+    assert palette.color(QPalette.ColorRole.Window).name() == "#f3f4f6"
+    assert palette.color(QPalette.ColorRole.WindowText).name() == "#202124"
+    assert palette.color(QPalette.ColorRole.ButtonText).name() == "#202124"
+    assert "QMessageBox QLabel" in LIGHT_THEME
+    assert "QFrame#observerEmptyState" in LIGHT_THEME
+    assert "QLabel#observerEmptyStateText" in LIGHT_THEME
+
+
+def test_cache_administration_warns_when_limits_are_approached() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    profile = view_model.active_broker_profile
+    view_model._retention_policy = ObservationRetentionPolicy(
+        max_entries_per_broker=10,
+        max_entries_total=20,
+        max_payload_bytes_per_topic=10,
+        max_payload_bytes_per_broker=100,
+        max_persisted_payload_database_bytes_total=200,
+        warning_threshold=0.8,
+    )
+    view_model._cache_usage = CacheUsageSummary(
+        (BrokerCacheUsage(profile.id, 8, 80, None, None),)
+    )
+    dialog = StoredObservationsDialog(view_model)
+    dialog.render()
+
+    warning = dialog.findChild(QLabel, "cacheRetentionWarningBanner")
+    assert not warning.isHidden()
+    assert "80%" in warning.text()
+    dialog.deleteLater()
     application.processEvents()
 
 
@@ -290,19 +657,24 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     connection_controls = window.findChild(ConnectionControls)
     assert connection_controls is not None
     assert connection_status is not None
-    assert connection_status.text() == "MQTT Connected"
+    assert connection_status.text() == "Connected"
     assert connection_status.status == "connected"
-    assert connection_status.minimumWidth() >= 188
-    assert connection_status.minimumHeight() >= 34
+    assert connection_status.minimumWidth() >= 108
+    assert connection_status.minimumHeight() >= 24
+    assert connection_status.accessibleName() == "MQTT connection status"
     assert connection_status.accessibleDescription() == (
         "MQTT connection is connected."
     )
     assert connection_status.toolTip() == "MQTT broker is connected"
     assert window.findChild(QToolButton, "brokerSettingsButton") is None
-    assert (
-        window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
-        is connection_status
-    )
+    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is None
+    assert window.findChild(QLabel, "brokerEndpoint").parentWidget().isAncestorOf(
+        connection_status
+    ) or connection_status.parentWidget().objectName() == "applicationHeader"
+    assert window.findChild(
+        QPushButton,
+        "headerReconnectButton",
+    ).accessibleName() == "Reconnect & observe"
     assert window.findChild(QToolBar, "observerToolbar") is None
     assert not window.findChild(QAction, "connectAction").isEnabled()
     assert window.findChild(QAction, "reconnectAction").isEnabled()
@@ -347,7 +719,7 @@ def test_connection_controls_bundle_actions_and_request_signals() -> None:
         action.trigger()
 
     assert requests == ["connect", "reconnect", "disconnect"]
-    controls.status_label.deleteLater()
+    assert not hasattr(controls, "status_label")
     controls.deleteLater()
     application.processEvents()
 

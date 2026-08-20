@@ -1,0 +1,33 @@
+{
+  "name": "topicgate",
+  "version": "1.0.0+codex.20260820100329",
+  "description": "Secure local access to your MQTT topics via TopicGate MCP",
+  "author": {
+    "name": "Dumdart",
+    "url": "https://github.com/Dumdart"
+  },
+  "homepage": "https://github.com/Dumdart/TopicGate",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "repository": "https://github.com/Dumdart/TopicGate",
+  "license": "MIT",
+  "interface": {
+    "displayName": "TopicGate",
+    "shortDescription": "Secure local access to your MQTT topics",
+    "longDescription": "Inspect broker profiles, connection health, subscriptions, topics, and the latest MQTT state observed by TopicGate.",
+    "developerName": "Dumdart",
+    "category": "Productivity",
+    "capabilities": [
+      "Read-only",
+      "MQTT"
+    ],
+    "defaultPrompt": [
+      "Help me set up TopicGate.",
+      "Inspect my TopicGate MQTT state.",
+      "Show the latest observed MQTT values."
+    ],
+    "brandColor": "#1976D2",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
+  }
+}

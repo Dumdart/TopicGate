@@ -61,9 +61,11 @@ class AboutDialog(QDialog):
         storage_title = QLabel("Local by design")
         storage_title.setStyleSheet("font-weight: 700;")
         storage_text = QLabel(
-            "Broker profiles and subscriptions are stored in SQLite. "
+            "Broker profiles, subscriptions, and each broker's latest "
+            "observed MQTT values are stored in SQLite. "
             "Passwords are stored in your operating system's credential store. "
-            "Live MQTT message values are not persisted."
+            "Snapshot views may include stored observations captured before "
+            "the current connection or observation window."
         )
         storage_text.setObjectName("aboutStorageText")
         storage_text.setWordWrap(True)

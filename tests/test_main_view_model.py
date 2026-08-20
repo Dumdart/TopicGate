@@ -1,7 +1,10 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
+
+import pytest
 
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.broker_profile import BrokerProfile
@@ -14,7 +17,9 @@ from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.app.topicgate_runtime import TopicGateRuntime
+from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.gui.main_view_model import MainViewModel, mqtt_filter_matches
+from topicgate.presentation.snapshot_presentation import SnapshotQuery
 from topicgate.core.payload_limits import (
     MAX_FORMATTED_JSON_CHARACTERS,
     MAX_RENDERED_PAYLOAD_BYTES,
@@ -43,6 +48,24 @@ async def test_publish_message_supports_utf8_and_strict_base64() -> None:
         assert str(error) == "Payload is not valid base64."
     else:
         raise AssertionError("Expected invalid base64 to be rejected")
+
+
+async def test_broker_lifecycle_operations_do_not_overlap() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    view_model = MainViewModel(runtime)
+    profile = view_model.active_broker_profile
+
+    async with view_model._operation("connection"):
+        try:
+            await view_model.activate_broker_profile(profile.id, profile.config)
+        except RuntimeError as error:
+            assert "already in progress" in str(error)
+        else:
+            raise AssertionError("Expected overlapping lifecycle operation to fail")
+
+    async with view_model._operation("stored-observations"):
+        with pytest.raises(RuntimeError, match="already in progress"):
+            await view_model.reconnect_to_broker()
 
 
 class FakeObserverRepository:
@@ -755,3 +778,57 @@ async def test_removing_subscription_keeps_topics_covered_by_another_filter() ->
         ]
 
     await scenario()
+
+
+def test_snapshot_query_validation_and_reset_preserve_cached_state() -> None:
+    repository = FakeObserverRepository()
+    runtime = runtime_for(repository)
+    view_model = MainViewModel(runtime)
+    original_snapshot = view_model.broker_snapshot
+
+    try:
+        view_model.apply_snapshot_query(
+            SnapshotQuery(topic_filter="home/#/invalid")
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected the invalid MQTT filter to be rejected")
+
+    assert view_model.snapshot_query == SnapshotQuery()
+    assert view_model.broker_snapshot is original_snapshot
+
+    view_model.apply_snapshot_query(SnapshotQuery("home/#", 5, 10, 256))
+    view_model.reset_snapshot_query()
+
+    assert view_model.snapshot_query == SnapshotQuery()
+    assert view_model.broker_snapshot.topic_filter == "#"
+
+
+async def test_reconnect_observe_failure_preserves_query_and_snapshot() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    real_service = BrokerSnapshotService(runtime)
+    snapshot_service = MagicMock()
+    snapshot_service.build_current.side_effect = real_service.build_current
+    snapshot_service.observe = AsyncMock(side_effect=RuntimeError("offline"))
+    view_model = MainViewModel(runtime, snapshot_service=snapshot_service)
+    original_query = view_model.snapshot_query
+    original_snapshot = view_model.broker_snapshot
+    requested = SnapshotQuery("home/#", 30, 20, 512)
+
+    try:
+        await view_model.reconnect_and_observe(requested)
+    except RuntimeError as error:
+        assert str(error) == "offline"
+    else:
+        raise AssertionError("Expected reconnect and observe to fail")
+
+    assert view_model.snapshot_query is original_query
+    assert view_model.broker_snapshot is original_snapshot
+    snapshot_service.observe.assert_awaited_once_with(
+        view_model.active_broker_profile.id,
+        topic_filter="home/#",
+        max_age_seconds=30,
+        result_limit=20,
+        payload_limit_bytes=512,
+    )
