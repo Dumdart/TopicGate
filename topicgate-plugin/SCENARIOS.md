@@ -143,11 +143,16 @@ expected skill path and the key assertions to check.
 
 **Prompt:** "Show me the MQTT topics."
 
-**Expected behaviour (any skill):**
+**Expected skill:** `setup-topicgate`
 **Assertions:**
 - Detects that `topicgate` tools are not available.
-- Tells the user to install TopicGate (`pip install topicgate`), verify the
-  executable is on PATH, add the harness configuration, and restart.
+- Introduces TopicGate as a local MQTT desktop application and read-only MCP server.
+- Explains that observed values can be cached, stale, or partial rather than
+  authoritative broker history.
+- Tells the user to install and verify TopicGate with `python -m pip install
+  topicgate` followed by `python -m topicgate --help`.
+- Explains that `python topicgate` is invalid because the `-m` option is required.
+- Tells the user to refresh the plugin, restart Codex, and open a new thread.
 - Does not attempt to substitute another tool.
 
 ---

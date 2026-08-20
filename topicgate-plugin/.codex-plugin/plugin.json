@@ -1,6 +1,6 @@
 {
   "name": "topicgate",
-  "version": "1.0.0+codex.20260820082251",
+  "version": "1.0.0+codex.20260820083717",
   "description": "Secure local access to your MQTT topics via TopicGate MCP",
   "author": {
     "name": "Dumdart",
@@ -22,9 +22,9 @@
       "MQTT"
     ],
     "defaultPrompt": [
+      "Help me set up TopicGate.",
       "Inspect my TopicGate MQTT state.",
-      "Show the latest observed MQTT values.",
-      "Check my MQTT broker connection health."
+      "Show the latest observed MQTT values."
     ],
     "brandColor": "#1976D2",
     "composerIcon": "./assets/icon.png",
