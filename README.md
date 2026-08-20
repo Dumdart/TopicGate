@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="#get-started">Get started</a> ·
-  <a href="#use-it-from-codex">Use it from Codex</a> ·
+  <a href="#connect-an-agent">Connect an agent</a> ·
   <a href="#how-observations-work">Understand observations</a> ·
   <a href="docs/desktop-workflow.md">Desktop workflow</a>
 </p>
@@ -37,35 +37,14 @@ TopicGate supports exact MQTT paths and the standard `+` and `#` wildcard filter
 TopicGate requires Python 3.11+ and access to an MQTT 5-compatible broker. It is currently installed from a source checkout; package distribution is planned but not yet published.
 
 > [!IMPORTANT]
-> **Windows is the only validated platform today.** The macOS and Linux paths, desktop behaviour, and credential-store integrations have not been tested end to end. Codex is the only MCP host and plugin harness validated so far; other MCP clients may work, but are not currently supported installation paths.
+> **Windows is the only validated platform today.** The macOS and Linux paths, desktop behaviour, and credential-store integrations have not been tested end to end. Codex is the only agent host validated end to end so far. Claude Code, GitHub Copilot, and Cursor plugin packaging are covered by repository contract tests, but runtime validation is still pending. TopicGate uses `keyring` for the operating-system credential store; those integrations have not yet been tested across platforms.
 
 The Windows development installation is:
 
 ```powershell
 git clone https://github.com/Dumdart/TopicGate.git
 cd TopicGate
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 python -m pip install -e .
-```
-
-Then install mcp in readonly mode (codex):
-
-```powershell
-codex mcp add topicgate -- python -m topicgate   
-```
-
-or with full access:
-
-```powershell
-codex mcp add topicgate -- python -m topicgate --mode control
-```
-
-Install Plugin (codex):
-
-```powershell
-codex plugin marketplace add .
-codex plugin add topicgate@topicgate
 ```
 
 For an unvalidated macOS or Linux source checkout, activate the environment with `source .venv/bin/activate`. Install the optional MCP Apps dashboard with `uv sync --extra apps` or `python -m pip install -e ".[apps]"`.
@@ -113,23 +92,21 @@ Use the absolute path to `topicgate` or `topicgate.exe` if the environment is no
 fastmcp call --command topicgate --target list_brokers --json
 ```
 
-## Use it from Codex
+## Connect an agent
 
-TopicGate includes a Codex plugin with eight focused skills for setting up the connection, inspecting the current MQTT state, working with subscriptions, and safely refreshing or publishing only when control mode is enabled. Codex is the only plugin host tested by this project.
+TopicGate can be connected to an MCP-capable agent after you have configured a broker and observed data in the desktop application. The server is read-only by default; enable control mode only in a host you trust to change broker connections, subscriptions, or device state.
 
-<p align="center">
-  <img src="docs/images/plugin_in_codex.png" alt="TopicGate installed in Codex with its MCP server and skills enabled." width="720" />
-</p>
+Agent setup differs by host. Use the installation guide for yours:
 
-Install the bundled `topicgate-plugin` through your Codex plugin marketplace, enable it, and start a new thread. The plugin's default MCP configuration uses `topicgate --mode read-only` and the same platform application-data directory as TopicGate Desktop, so it can inspect the profiles, subscriptions, and observations configured there. If the executable is not on `PATH`, use TopicGate Desktop's MCP setup page to copy a configuration with the resolved absolute path.
+| Agent | Setup guide | Support |
+| --- | --- | --- |
+| Codex | [Install TopicGate for Codex](docs/install/CODEX.md) | Plugin and MCP server validated. |
+| Claude Code | [Install TopicGate for Claude Code](docs/install/CLAUDE_CODE.md) | Plugin package and MCP configuration; runtime validation pending. |
+| VS Code / GitHub Copilot | [Install TopicGate for GitHub Copilot](docs/install/VSCODE_COPILOT.md) | Agent Plugins 1.0 package; runtime validation pending. |
+| Cursor | [Install TopicGate for Cursor](docs/install/CURSOR.md) | Agent Plugins 1.0 package; runtime validation pending. |
 
-Try one of these prompts:
+If `topicgate` is not on the agent host's `PATH`, use the MCP setup page in TopicGate Desktop to copy a configuration with the resolved executable path.
 
-```text
-Help me set up TopicGate.
-Inspect my TopicGate MQTT state.
-Show the latest observed MQTT values.
-```
 
 ## How observations work
 
