@@ -152,7 +152,7 @@ expected skill path and the key assertions to check.
 - Tells the user to install and verify TopicGate with `python -m pip install
   topicgate` followed by `python -m topicgate --help`.
 - Explains that `python topicgate` is invalid because the `-m` option is required.
-- Tells the user to refresh the plugin, restart Codex, and open a new thread.
+- Tells the user to refresh the plugin, restart the agent host, and open a new thread.
 - Does not attempt to substitute another tool.
 
 ---

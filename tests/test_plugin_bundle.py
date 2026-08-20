@@ -42,6 +42,30 @@ def test_plugin_bundle_matches_codex_ingestion_contract() -> None:
         assert asset.is_file()
 
 
+def test_plugin_bundle_matches_claude_code_ingestion_contract() -> None:
+    manifest = json.loads(
+        (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    marketplace = json.loads(
+        (REPOSITORY_ROOT / ".claude-plugin" / "marketplace.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    marketplace_plugin = next(
+        plugin for plugin in marketplace["plugins"] if plugin["name"] == manifest["name"]
+    )
+
+    assert marketplace_plugin["source"] == "./topicgate-plugin"
+    assert marketplace_plugin["version"] == manifest["version"]
+    assert manifest["author"]["name"]
+    assert manifest["skills"] == "./skills/"
+    assert manifest["mcpServers"] == "./.mcp.json"
+    assert (PLUGIN_ROOT / manifest["skills"].removeprefix("./")).is_dir()
+    assert (PLUGIN_ROOT / manifest["mcpServers"].removeprefix("./")).is_file()
+
+
 def test_plugin_skills_have_valid_frontmatter() -> None:
     skill_files = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 
