@@ -44,8 +44,6 @@ The Windows development installation is:
 ```powershell
 git clone https://github.com/Dumdart/TopicGate.git
 cd TopicGate
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 python -m pip install -e .
 ```
 
