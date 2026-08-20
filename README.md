@@ -121,7 +121,7 @@ TopicGate includes a Codex plugin with eight focused skills for setting up the c
   <img src="docs/images/plugin_in_codex.png" alt="TopicGate installed in Codex with its MCP server and skills enabled." width="720" />
 </p>
 
-Install the bundled `topicgate-plugin` through your Codex plugin marketplace, enable it, and start a new thread. The plugin's default MCP configuration uses `topicgate --mode read-only` and keeps its data in the plugin data directory. If the executable is not on `PATH`, use TopicGate Desktop's MCP setup page to copy a configuration with the resolved absolute path.
+Install the bundled `topicgate-plugin` through your Codex plugin marketplace, enable it, and start a new thread. The plugin's default MCP configuration uses `topicgate --mode read-only` and the same platform application-data directory as TopicGate Desktop, so it can inspect the profiles, subscriptions, and observations configured there. If the executable is not on `PATH`, use TopicGate Desktop's MCP setup page to copy a configuration with the resolved absolute path.
 
 Try one of these prompts:
 

@@ -62,16 +62,16 @@ async def test_cached_plugin_bundle_exposes_read_only_tools(
     shutil.copytree(PLUGIN_ROOT, cached_plugin)
     config = json.loads((cached_plugin / ".mcp.json").read_text(encoding="utf-8"))
     server_config = config["mcpServers"]["topicgate"]
-    server_config["env"]["TOPICGATE_DATA_DIR"] = str(tmp_path / "data")
 
     assert "$schema" not in config
     assert server_config["command"] == "topicgate"
     assert server_config["args"] == ["--mode", "read-only"]
-    assert "PYTHONPATH" not in server_config["env"]
+    assert "env" not in server_config
 
     # Check the bundle contract separately from PATH discovery in this test process.
     server_config["command"] = sys.executable
     server_config["args"] = ["-m", "topicgate", "--mode", "read-only"]
+    server_config["env"] = {"TOPICGATE_DATA_DIR": str(tmp_path / "data")}
 
     async with Client(config) as client:
         tools = await client.list_tools()
