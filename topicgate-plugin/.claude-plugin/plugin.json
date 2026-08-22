@@ -1,0 +1,19 @@
+{
+  "name": "topicgate",
+  "version": "1.0.0",
+  "description": "Secure local access to your MQTT topics through TopicGate MCP",
+  "author": {
+    "name": "Dumdart",
+    "url": "https://github.com/Dumdart"
+  },
+  "homepage": "https://github.com/Dumdart/TopicGate",
+  "repository": "https://github.com/Dumdart/TopicGate",
+  "license": "MIT",
+  "keywords": [
+    "mqtt",
+    "mcp",
+    "iot"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

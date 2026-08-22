@@ -42,6 +42,61 @@ def test_plugin_bundle_matches_codex_ingestion_contract() -> None:
         assert asset.is_file()
 
 
+def test_plugin_bundle_matches_claude_code_ingestion_contract() -> None:
+    manifest = json.loads(
+        (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    marketplace = json.loads(
+        (REPOSITORY_ROOT / ".claude-plugin" / "marketplace.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    marketplace_plugin = next(
+        plugin for plugin in marketplace["plugins"] if plugin["name"] == manifest["name"]
+    )
+
+    assert marketplace_plugin["source"] == "./topicgate-plugin"
+    assert marketplace_plugin["version"] == manifest["version"]
+    assert manifest["author"]["name"]
+    assert manifest["skills"] == "./skills/"
+    assert manifest["mcpServers"] == "./.mcp.json"
+    assert (PLUGIN_ROOT / manifest["skills"].removeprefix("./")).is_dir()
+    assert (PLUGIN_ROOT / manifest["mcpServers"].removeprefix("./")).is_file()
+
+
+def test_plugin_bundle_matches_copilot_and_cursor_agent_plugins_contract() -> None:
+    manifest = json.loads(
+        (PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8")
+    )
+    mcp_config = json.loads(
+        (PLUGIN_ROOT / "mcp.json").read_text(encoding="utf-8")
+    )
+    marketplace = json.loads(
+        (REPOSITORY_ROOT / ".claude-plugin" / "marketplace.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    marketplace_plugin = next(
+        plugin for plugin in marketplace["plugins"] if plugin["name"] == manifest["name"]
+    )
+    server_config = mcp_config["mcpServers"]["topicgate"]
+
+    assert manifest["$schema"] == (
+        "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+    )
+    assert marketplace_plugin["source"] == "./topicgate-plugin"
+    assert marketplace_plugin["version"] == manifest["version"]
+    assert (PLUGIN_ROOT / "skills").is_dir()
+    assert mcp_config["$schema"] == (
+        "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
+    )
+    assert server_config["type"] == "stdio"
+    assert server_config["command"] == "topicgate"
+    assert server_config["args"] == ["--mode", "read-only"]
+
+
 def test_plugin_skills_have_valid_frontmatter() -> None:
     skill_files = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 

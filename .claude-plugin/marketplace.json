@@ -1,0 +1,14 @@
+{
+  "name": "topicgate",
+  "owner": {
+    "name": "Dumdart"
+  },
+  "plugins": [
+    {
+      "name": "topicgate",
+      "source": "./topicgate-plugin",
+      "description": "Secure local access to MQTT state through TopicGate",
+      "version": "1.0.0"
+    }
+  ]
+}
