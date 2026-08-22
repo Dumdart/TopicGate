@@ -2,9 +2,25 @@
 
 Codex can use TopicGate either as a standalone MCP server or through the bundled plugin. The plugin is the recommended setup because it also provides focused TopicGate skills.
 
+## Install TopicGate
+
+TopicGate's official MCP Registry identifier is `io.github.Dumdart/topicgate`. The registry provides package metadata rather than installing packages; after a release has been published, registry-aware clients can discover TopicGate with that identifier. Install the released PyPI package before connecting an MCP host:
+
+```powershell
+uv tool install topicgate
+topicgate-gui
+```
+
+Alternatively:
+
+```powershell
+python -m pip install topicgate
+topicgate-gui
+```
+
 Before connecting Codex, install TopicGate and use TopicGate Desktop to configure a broker, add subscriptions, and observe data. The MCP server reads the same local application-data directory as the desktop app.
 
-## Install the plugin
+## Development: install the plugin from a local checkout
 
 From a TopicGate source checkout, add the checkout as a Codex plugin marketplace and install the bundled plugin:
 

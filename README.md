@@ -34,20 +34,24 @@ TopicGate supports exact MQTT paths and the standard `+` and `#` wildcard filter
 
 ### 1. Install
 
-TopicGate requires Python 3.11+ and access to an MQTT 5-compatible broker. It is currently installed from a source checkout; package distribution is planned but not yet published.
+TopicGate requires Python 3.11+ and access to an MQTT 5-compatible broker. Install the released package with uv:
 
 > [!IMPORTANT]
-> **Windows is the only validated platform today.** The macOS and Linux paths, desktop behaviour, and credential-store integrations have not been tested end to end. Codex is the only agent host validated end to end so far. Claude Code, GitHub Copilot, and Cursor plugin packaging are covered by repository contract tests, but runtime validation is still pending. TopicGate uses `keyring` for the operating-system credential store; those integrations have not yet been tested across platforms.
-
-The Windows development installation is:
+> **Windows is the only validated platform today.** The macOS and Linux paths, desktop behaviour, and credential-store integrations have not been tested end to end. TopicGate uses `keyring` for the operating-system credential store; those integrations have not yet been tested across platforms.
 
 ```powershell
-git clone https://github.com/Dumdart/TopicGate.git
-cd TopicGate
-python -m pip install -e .
+uv tool install topicgate
+topicgate-gui
 ```
 
-For an unvalidated macOS or Linux source checkout, activate the environment with `source .venv/bin/activate`. Install the optional MCP Apps dashboard with `uv sync --extra apps` or `python -m pip install -e ".[apps]"`.
+Alternatively, install it with pip:
+
+```powershell
+python -m pip install topicgate
+topicgate-gui
+```
+
+For upgrades, uninstallation, backups, and recovery, see [Installation recovery and upgrades](docs/install/UPGRADE_AND_RECOVERY.md).
 
 ### 2. Configure and observe
 
@@ -163,19 +167,23 @@ Set `TOPICGATE_DATA_DIR` to use a specific directory. The database contains brok
 
 Use **File > Stored observations** in the desktop app to review cache use and retention. Deleting `topicgate.db` permanently removes saved profiles, subscriptions, settings, and observations unless you have backed it up first.
 
-## Distribution and onboarding roadmap
-
-Before TopicGate is released as a package, the project plans to:
-
-1. Publish platform-specific installation guidance and decide whether Windows should also receive an installer or packaged executable.
-2. Validate Windows Credential Locker, macOS Keychain, and Linux secret-service behaviour.
-3. Add backup and restore guidance plus migration and release notes.
-4. Publish the Codex plugin only against a released TopicGate version.
-5. Document troubleshooting for PATH, stdio launch, credentials, broker TLS, and dashboard dependencies.
-
-The release goal is that users no longer need an editable source checkout, desktop and plugin installation are reproducible, and upgrade and recovery procedures are documented.
-
 ## Development
+
+For a source checkout:
+
+```powershell
+git clone https://github.com/Dumdart/TopicGate.git
+cd TopicGate
+uv sync --extra apps --extra test
+uv run topicgate-gui
+```
+
+Alternatively, use an editable pip install:
+
+```powershell
+python -m pip install -e ".[apps,test]"
+topicgate-gui
+```
 
 Run the full test suite before submitting changes:
 

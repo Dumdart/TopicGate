@@ -2,9 +2,25 @@
 
 Claude Code can use TopicGate either through the bundled plugin or as a standalone stdio MCP server. The plugin is the recommended setup because it also installs the focused TopicGate skills.
 
+## Install TopicGate
+
+TopicGate's official MCP Registry identifier is `io.github.Dumdart/topicgate`. The registry provides package metadata rather than installing packages; after a release has been published, registry-aware clients can discover TopicGate with that identifier. Install the released PyPI package before connecting an MCP host:
+
+```powershell
+uv tool install topicgate
+topicgate-gui
+```
+
+Alternatively:
+
+```powershell
+python -m pip install topicgate
+topicgate-gui
+```
+
 Before connecting Claude Code, install TopicGate and use TopicGate Desktop to configure a broker, add subscriptions, and observe data. The MCP server reads the same local application-data directory as the desktop app.
 
-## Install from a local checkout
+## Development: install from a local checkout
 
 From the TopicGate repository root, register the current directory as a local marketplace and install the plugin:
 

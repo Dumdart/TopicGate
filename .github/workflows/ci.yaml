@@ -3,6 +3,8 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
+
 
 permissions:
   contents: read
@@ -12,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify release versions
+        run: python -m release.run_ci
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

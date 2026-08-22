@@ -2,9 +2,25 @@
 
 Cursor loads TopicGate through the portable Agent Plugins 1.0 package. The plugin installs eight TopicGate skills and starts the local MCP server in read-only mode.
 
+## Install TopicGate
+
+TopicGate's official MCP Registry identifier is `io.github.Dumdart/topicgate`. The registry provides package metadata rather than installing packages; after a release has been published, registry-aware clients can discover TopicGate with that identifier. Install the released PyPI package before connecting an MCP host:
+
+```powershell
+uv tool install topicgate
+topicgate-gui
+```
+
+Alternatively:
+
+```powershell
+python -m pip install topicgate
+topicgate-gui
+```
+
 Before installing the plugin, install TopicGate and use TopicGate Desktop to configure a broker, add subscriptions, and observe data. The MCP server reads the same local application-data directory as the desktop app.
 
-## Test or install the plugin locally
+## Development: test or install the plugin locally
 
 From a TopicGate source checkout, copy the `topicgate-plugin` directory to Cursor's local plugin directory:
 
