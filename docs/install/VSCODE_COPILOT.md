@@ -2,6 +2,22 @@
 
 TopicGate is packaged as an Agent Plugins 1.0 plugin for GitHub Copilot in VS Code and GitHub Copilot CLI. The plugin installs eight TopicGate skills and starts the local MCP server in read-only mode.
 
+## Install TopicGate
+
+TopicGate's official MCP Registry identifier is `io.github.Dumdart/topicgate`. The registry provides package metadata rather than installing packages; after a release has been published, registry-aware clients can discover TopicGate with that identifier. Install the released PyPI package before connecting an MCP host:
+
+```powershell
+uv tool install topicgate
+topicgate-gui
+```
+
+Alternatively:
+
+```powershell
+python -m pip install topicgate
+topicgate-gui
+```
+
 Before installing the plugin, install TopicGate and use TopicGate Desktop to configure a broker, add subscriptions, and observe data. The MCP server reads the same local application-data directory as the desktop app.
 
 ## Install in VS Code
@@ -22,7 +38,7 @@ After installation, start a new chat. The skills appear in **Chat: Configure Ski
 
 ## Install with GitHub Copilot CLI
 
-From the TopicGate repository root, register the current directory as a local marketplace and install the plugin:
+For local development, from the TopicGate repository root, register the current directory as a local marketplace and install the plugin:
 
 ```powershell
 copilot plugin marketplace add .
