@@ -4,7 +4,7 @@ import os
 import tomllib
 from pathlib import Path
 
-def plugin_base_version(plugin) -> str:
+def json_base_version(plugin) -> str:
     plugin_version = plugin["version"]
     return plugin_version.split("+", 1)[0]
 
@@ -30,17 +30,24 @@ def get_versions(expected: str | None = None) ->  dict[str, str]:
         .read_text(encoding="utf-8")
     )
 
+    server = json.loads(
+        Path("server.json")
+        .read_text(encoding="utf-8")
+    )
+
     package_version = pyproject["project"]["version"]
 
-    plugin_base = plugin_base_version(plugin)
-    codex_plugin_base = plugin_base_version(codex_plugin)
-    claude_plugin_base = plugin_base_version(claude_plugin)
+    plugin_base = json_base_version(plugin)
+    codex_plugin_base = json_base_version(codex_plugin)
+    claude_plugin_base = json_base_version(claude_plugin)
+    serverbase = json_base_version(server)
 
     versions = {
         "Python package": package_version,
         "Plugin base version": plugin_base,
         "Codex plugin base version": codex_plugin_base,
         "Claude plugin base version": claude_plugin_base,
+        "Server base version": serverbase
     }
 
     if expected:
