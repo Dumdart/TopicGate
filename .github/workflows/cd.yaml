@@ -28,7 +28,8 @@ jobs:
 
       - name: Build release distributions
         run: |
-          python -m pip install -e .
+          python -m pip install --upgrade build
+          python -m build
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -50,7 +51,7 @@ jobs:
       - name: Retrieve release distributions
         uses: actions/download-artifact@v4
         with:
-          name: release-dists-${{ github.ref_name }}
+          name: release-dists
           path: dist/
 
       - name: Publish release distributions to PyPI
@@ -81,3 +82,26 @@ jobs:
 
       - name: Publish to MCP Registry
         run: mcp-publisher publish server.json
+
+  github-release:
+    needs:
+      - pypi-publish
+      - mcp-registry-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Retrieve release distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --title "TopicGate ${{ github.ref_name }}" \
+            --generate-notes
