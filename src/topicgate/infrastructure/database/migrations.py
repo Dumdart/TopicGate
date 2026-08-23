@@ -17,6 +17,10 @@ BASELINE_TABLES = {
     "workspace_subscription",
 }
 
+_DATABASE_PACKAGE_DIR = Path(__file__).resolve().parent
+_ALEMBIC_CONFIG_PATH = _DATABASE_PACKAGE_DIR / "alembic.ini"
+_ALEMBIC_SCRIPT_LOCATION = _DATABASE_PACKAGE_DIR / "alembic"
+
 
 def upgrade_database(engine: Engine) -> None:
     """Upgrade a new or existing TopicGate database to the latest schema."""
@@ -50,8 +54,7 @@ def upgrade_database(engine: Engine) -> None:
 
 
 def _alembic_config(connection: Connection) -> Config:
-    repository_root = Path(__file__).resolve().parents[4]
-    config = Config(repository_root / "alembic.ini")
-    config.set_main_option("script_location", str(repository_root / "alembic"))
+    config = Config(str(_ALEMBIC_CONFIG_PATH))
+    config.set_main_option("script_location", str(_ALEMBIC_SCRIPT_LOCATION))
     config.attributes["connection"] = connection
     return config

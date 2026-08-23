@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from alembic import command
 from sqlalchemy import create_engine, inspect, text
@@ -9,6 +11,7 @@ from topicgate.infrastructure.database.migrations import (
     BASELINE_REVISION,
     _alembic_config,
 )
+import topicgate.infrastructure.database.migrations as migrations
 import topicgate.infrastructure.database.models  # noqa: F401
 
 
@@ -35,6 +38,18 @@ def test_new_database_is_migrated_to_head(tmp_path) -> None:
     assert policy == (1_000, 10_000, None, 256 * 1024 * 1024)
     database.dispose()
     engine.dispose()
+
+
+def test_alembic_config_uses_package_local_migrations() -> None:
+    config = _alembic_config(None)
+    package_database_dir = Path(migrations.__file__).resolve().parent
+
+    assert Path(config.config_file_name).resolve() == (
+        package_database_dir / "alembic.ini"
+    )
+    assert Path(config.get_main_option("script_location")).resolve() == (
+        package_database_dir / "alembic"
+    )
 
 
 def test_sqlite_connections_enable_wal_and_busy_timeout(tmp_path) -> None:
