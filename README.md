@@ -1,5 +1,7 @@
 # TopicGate
 
+<!-- mcp-name: io.github.Dumdart/topicgate -->
+
 <p align="center">
   <strong>Secure local access to the MQTT state you need.</strong><br />
   A desktop observer and read-only MCP server for people and AI agents.
