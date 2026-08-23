@@ -31,6 +31,9 @@ jobs:
           python -m pip install --upgrade build
           python -m build
 
+      - name: Verify clean wheel installation
+        run: python -m release.verify_distribution dist/*.whl
+
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:

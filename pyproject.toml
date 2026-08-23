@@ -32,6 +32,7 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 cache_dir = ".pytest_cache"
 addopts = "--basetemp=.pytest-tmp"
 asyncio_mode = "auto"
