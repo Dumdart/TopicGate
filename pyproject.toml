@@ -44,4 +44,12 @@ topicgate-gui = "topicgate.gui.app:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-topicgate = ["assets/*.png", "assets/*.svg"]
+topicgate = [
+    "assets/*.png",
+    "assets/*.svg",
+    "infrastructure/database/alembic.ini",
+    "infrastructure/database/alembic/*.py",
+    "infrastructure/database/alembic/*.mako",
+    "infrastructure/database/alembic/README",
+    "infrastructure/database/alembic/versions/*.py",
+]
