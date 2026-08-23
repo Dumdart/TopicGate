@@ -33,6 +33,7 @@ def get_versions(expected: str | None = None) -> dict[str, str]:
         Path(".claude-plugin/marketplace.json")
         .read_text(encoding="utf-8")
     )
+
     marketplace_plugin = next(
         (
             candidate
