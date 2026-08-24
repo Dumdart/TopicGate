@@ -43,14 +43,12 @@ TopicGate requires Python 3.11+ and access to an MQTT 5-compatible broker. Insta
 
 ```powershell
 uv tool install topicgate
-topicgate-gui
 ```
 
 Alternatively, install it with pip:
 
 ```powershell
 python -m pip install topicgate
-topicgate-gui
 ```
 
 For upgrades, uninstallation, backups, and recovery, see [Installation recovery and upgrades](docs/install/UPGRADE_AND_RECOVERY.md).

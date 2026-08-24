@@ -1,42 +1,20 @@
 # Install TopicGate for Cursor
 
-Cursor loads TopicGate through the portable Agent Plugins 1.0 package. The plugin installs eight TopicGate skills and starts the local MCP server in read-only mode.
+Cursor loads TopicGate through the portable Agent Plugins 1.0 package.
 
-## Install TopicGate
+Before configuring Cursor, follow the [main TopicGate setup guide](../../README.md#get-started) to install TopicGate, launch Desktop, and configure a broker. Then return here for Cursor-specific setup.
 
-TopicGate's official MCP Registry identifier is `io.github.Dumdart/topicgate`. The registry provides package metadata rather than installing packages; after a release has been published, registry-aware clients can discover TopicGate with that identifier. Install the released PyPI package before connecting an MCP host:
+## Install the plugin from GitHub
 
-```powershell
-uv tool install topicgate
-topicgate-gui
-```
-
-Alternatively:
+Cursor requires the full repository URL when adding the TopicGate marketplace:
 
 ```powershell
-python -m pip install topicgate
-topicgate-gui
+cursor-agent plugin marketplace add https://github.com/Dumdart/TopicGate
 ```
 
-Before installing the plugin, install TopicGate and use TopicGate Desktop to configure a broker, add subscriptions, and observe data. The MCP server reads the same local application-data directory as the desktop app.
+Run `cursor-agent`, enter `/plugin`, open the **Marketplace** tab, and install TopicGate. Choose user or project scope when prompted. The installed plugin is also available in the Cursor IDE.
 
-## Development: test or install the plugin locally
-
-From a TopicGate source checkout, copy the `topicgate-plugin` directory to Cursor's local plugin directory:
-
-```powershell
-$destination = Join-Path $env:USERPROFILE ".cursor\plugins\local\topicgate"
-New-Item -ItemType Directory -Force -Path $destination
-Copy-Item -Recurse -Force -Path ".\topicgate-plugin\*" -Destination $destination
-```
-
-Restart Cursor or run **Developer: Reload Window**. Open **Customize** and confirm that the TopicGate skills and MCP server are enabled. Skills appear under **Agent Decides** and can also be invoked with `/skill-name`.
-
-Cursor caches the copied plugin. Repeat the copy and reload steps after changing the local plugin source.
-
-Public one-click installation requires TopicGate to be submitted to and approved for the Cursor Marketplace. Until then, use the local installation above or distribute it through a Cursor team marketplace.
-
-## Install only the MCP server
+## MCP server only
 
 Use this project configuration when you want the MCP tools without the plugin skills. Create `.cursor/mcp.json` in the project:
 
