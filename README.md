@@ -39,7 +39,7 @@ TopicGate supports exact MQTT paths and the standard `+` and `#` wildcard filter
 TopicGate requires Python 3.11+ and access to an MQTT 5-compatible broker. Install the released package with uv:
 
 > [!IMPORTANT]
-> **Windows is the only validated platform today.** The macOS and Linux paths, desktop behaviour, and credential-store integrations have not been tested end to end. TopicGate uses `keyring` for the operating-system credential store; those integrations have not yet been tested across platforms.
+> **TopicGate is currently a Windows-first developer preview.** Windows is the only validated platform today. The macOS and Linux paths, desktop behaviour, and credential-store integrations have not been tested end to end. TopicGate uses `keyring` for the operating-system credential store; those integrations have not yet been tested across platforms.
 
 ```powershell
 uv tool install topicgate
