@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topicgate"
-version = "1.1.4.2"
+version = "1.2.0"
 description = "Secure local access to your MQTT topics"
 readme = "README.md"
 license = "MIT"
