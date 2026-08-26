@@ -1,6 +1,6 @@
 {
   "name": "topicgate",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Secure local access to your MQTT topics via TopicGate MCP",
   "author": {
     "name": "Dumdart",
