@@ -9,6 +9,7 @@ from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.repository.topic_message_repository import (
@@ -162,6 +163,66 @@ def test_queued_writes_are_flushed_in_order(tmp_path, credential_store) -> None:
         repository.flush()
 
         assert repository.get_message(message.observation_id) == updated
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_record_message_updates_current_map_and_queues_latest_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'recorded.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    repository = TopicMessageRepository(database)
+    message = _message(broker_id, "home/temperature", datetime.now(timezone.utc))
+    updated = replace(
+        message,
+        payload=b"22.0",
+        payload_size=4,
+        message_count=2,
+        observation_id=uuid4(),
+    )
+
+    try:
+        repository.record_message(message)
+        repository.record_message(updated)
+
+        assert repository.get_latest_messages(broker_id) == (updated,)
+        assert (
+            repository.get_observation_status(updated.observation_id)
+            is ObservationStatus.LIVE
+        )
+        with pytest.raises(KeyError, match="Unknown observation"):
+            repository.get_observation_status(message.observation_id)
+        assert repository.get_message(updated.observation_id) == updated
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_repository_hydrates_persisted_messages_as_cached(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'hydrated-current.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    message = _message(broker_id, "cached/topic", datetime.now(timezone.utc))
+    writer = TopicMessageRepository(database)
+    writer.update_message(message)
+    writer.close()
+
+    repository = TopicMessageRepository(database)
+    try:
+        assert repository.get_latest_messages(broker_id) == (message,)
+        assert (
+            repository.get_observation_status(message.observation_id)
+            is ObservationStatus.CACHED
+        )
     finally:
         repository.close()
         database.dispose()
