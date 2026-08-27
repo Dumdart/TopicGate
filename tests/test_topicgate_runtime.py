@@ -42,6 +42,7 @@ def profile(name: str, host: str = "broker") -> BrokerProfile:
 def runtime_with(
     profiles: tuple[BrokerProfile, ...],
     observation_cache=None,
+    observation_query=None,
 ) -> tuple[TopicGateRuntime, MagicMock, MagicMock]:
     brokers = MagicMock()
     active_id = profiles[0].id
@@ -84,6 +85,7 @@ def runtime_with(
             active_id,
             lambda _profile: mqtt,
             observation_cache,
+            observation_query=observation_query,
         ),
         brokers,
         mqtt,
@@ -406,6 +408,28 @@ def test_runtime_delegates_stored_observation_queries() -> None:
     query.query_stored_observations.assert_called_once_with(message_filter)
     query.get_cache_usage.assert_called_once_with()
     query.get_persisted_topics.assert_called_once_with(active.id, ())
+
+
+def test_runtime_scopes_observation_storage_summary_to_a_broker() -> None:
+    active = profile("Default")
+    other = profile("Other")
+    query = MagicMock(spec=ObservationQueryService)
+    active_usage = BrokerCacheUsage(active.id, 2, 12, None, None)
+    other_usage = BrokerCacheUsage(other.id, 1, 6, None, None)
+    query.get_cache_usage.return_value = CacheUsageSummary(
+        (active_usage, other_usage)
+    )
+    runtime, _, _ = runtime_with(
+        (active, other),
+        observation_query=query,
+    )
+
+    assert runtime.get_observation_storage_summary() == CacheUsageSummary(
+        (active_usage, other_usage)
+    )
+    assert runtime.get_observation_storage_summary(other.id) == CacheUsageSummary(
+        (other_usage,)
+    )
 
 
 def test_runtime_exposes_mqtt_event_streams() -> None:

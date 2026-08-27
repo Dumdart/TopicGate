@@ -106,6 +106,22 @@ class TopicGateRuntime(ServiceItem):
             message_filter
         )
 
+    def get_observation_storage_summary(
+        self,
+        broker: UUID | None = None,
+    ) -> CacheUsageSummary:
+        """Return persisted observation storage usage for one or all brokers."""
+        if broker is not None:
+            self._get_broker_profile(broker)
+
+        usage = self.get_cache_usage()
+        if broker is None:
+            return usage
+
+        return CacheUsageSummary(
+            tuple(item for item in usage.brokers if item.broker_id == broker)
+        )
+
     def get_broker(self, broker_id: UUID | None = None) -> BrokerSummary:
         return self._broker_summary(self._get_broker_profile(broker_id))
 
