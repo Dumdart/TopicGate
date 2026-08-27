@@ -29,6 +29,8 @@ def build_repository(
     model: ObserverModel | None = None,
     *,
     clock=None,
+    broker_id=None,
+    message_recorder=None,
 ) -> tuple[ObserverMqttRepository, MagicMock]:
     manager = MagicMock()
     manager.activate = AsyncMock()
@@ -49,6 +51,8 @@ def build_repository(
             ["SmartHome/#"],
             model,
             clock=clock,
+            broker_id=broker_id,
+            message_recorder=message_recorder,
         )
 
     return repository, manager
@@ -101,6 +105,29 @@ def test_repository_truncates_before_updating_model_and_sink() -> None:
     assert state.payload_size == 6
     assert state.observation_id is not None
     assert captured == [state]
+
+
+def test_repository_records_processed_topic_message() -> None:
+    broker_id = uuid4()
+    recorder = MagicMock()
+    repository, _ = build_repository(
+        broker_id=broker_id,
+        message_recorder=recorder,
+    )
+
+    repository.handle_message(
+        None,
+        None,
+        MqttMessage("SmartHome/value", b"42", 1, True),
+    )
+
+    recorded = recorder.record_message.call_args.args[0]
+    observation = repository.get_state("SmartHome/value")
+    assert observation is not None
+    assert recorded.broker_id == broker_id
+    assert recorded.topic == observation.topic
+    assert recorded.payload == observation.payload
+    assert recorded.observation_id == observation.observation_id
 
 
 def test_exact_eviction_removes_only_matching_stored_observations() -> None:

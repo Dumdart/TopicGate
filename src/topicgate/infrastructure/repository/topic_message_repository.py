@@ -11,6 +11,7 @@ from topicgate.core.interfaces.stored_observation_administrator import (
     StoredObservationAdministrator,
 )
 from topicgate.core.interfaces.stored_observation_reader import StoredObservationReader
+from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.interfaces.topic_message_store import TopicMessageStore
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_cache_administration import (
@@ -38,7 +39,10 @@ from topicgate.processors.observation_retention_processor import (
 
 
 class TopicMessageRepository(
-    TopicMessageStore, StoredObservationReader, StoredObservationAdministrator
+    TopicMessageStore,
+    StoredObservationReader,
+    StoredObservationAdministrator,
+    TopicMessageRecorder,
 ):
     """Persist the latest observed MQTT message for each broker topic."""
 
@@ -51,9 +55,11 @@ class TopicMessageRepository(
     ) -> None:
         self._db = db
         self._policy_provider = policy_provider
+
         self._write_queue: Queue[
             tuple[Literal["create", "update"], TopicMessage] | None
         ] = Queue()
+
         self._error_lock = Lock()
         self._write_error: BaseException | None = None
         self._closed = False
@@ -143,6 +149,9 @@ class TopicMessageRepository(
             TopicMessageMapper.to_dto(row)
             for row in list(matching_rows)[: message_filter.limit]
         )
+
+    def record_message(self, entry: TopicMessage) -> None:
+        self.update_message(entry)
 
     def create_message(self, message: TopicMessage) -> TopicMessage:
         self._enqueue("create", message)

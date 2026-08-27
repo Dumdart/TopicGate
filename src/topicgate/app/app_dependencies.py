@@ -1,6 +1,4 @@
 from pathlib import Path
-from uuid import UUID
-
 from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.services.service_item import ServiceItem
 from topicgate.app.services.persistence_lifecycle import PersistenceLifecycle
@@ -16,8 +14,6 @@ from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
-from topicgate.core.models.mqtt_observation import MqttObservation
-from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.credentials.os_credential_store import OSCredentialStore
@@ -124,29 +120,6 @@ class AppDependencies:
             list(profile.workspace.subscriptions),
             profile.workspace.model,
             retention_policy=self.retention_policy.get,
-            observation_sink=lambda observation: self._persist_observation(
-                profile.id,
-                observation,
-            ),
-        )
-
-    def _persist_observation(
-        self,
-        broker_id: UUID,
-        observation: MqttObservation,
-    ) -> None:
-        if observation.observation_id is None:
-            raise ValueError("A live observation requires an observation ID.")
-        self.topic_messages.update_message(
-            TopicMessage(
-                broker_id=broker_id,
-                topic=observation.topic,
-                payload=observation.payload,
-                qos=observation.qos,
-                retain=observation.retain,
-                received_at=observation.received_at,
-                payload_size=observation.payload_size or len(observation.payload),
-                message_count=observation.message_count,
-                observation_id=observation.observation_id,
-            )
+            broker_id=profile.id,
+            message_recorder=self.topic_messages,
         )

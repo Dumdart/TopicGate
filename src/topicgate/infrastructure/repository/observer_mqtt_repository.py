@@ -2,8 +2,10 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Collection
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import (
@@ -18,6 +20,7 @@ from topicgate.core.models.observation_retention_policy import (
 )
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.core.observer_limits import TOPIC_TREE_REFRESH_INTERVAL_SECONDS
 from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
@@ -48,12 +51,21 @@ class ObserverMqttRepository:
         retention_policy: Callable[[], ObservationRetentionPolicy] | None = None,
         observation_sink: Callable[[MqttObservation], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        *,
+        broker_id: UUID | None = None,
+        message_recorder: TopicMessageRecorder | None = None,
     ) -> None:
+        if (broker_id is None) != (message_recorder is None):
+            raise ValueError(
+                "broker_id and message_recorder must be provided together."
+            )
         self._state = model if model is not None else ObserverModel(root_stats=[])
         self._message_processor = ObserverModelMqttMessageProcessor()
         self._retention_policy = retention_policy or ObservationRetentionPolicy
         self._observation_sink = observation_sink
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._broker_id = broker_id
+        self._message_recorder = message_recorder
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
             maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
         )
@@ -134,7 +146,6 @@ class ObserverMqttRepository:
     async def update_broker(
         self,
         new_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         """Replace the MQTT connection with one configured for a new broker."""
@@ -158,8 +169,6 @@ class ObserverMqttRepository:
             self._subscription_manager = SubscriptionManager(
                 self._mqtt_gate, self.handle_message
             )
-            if model is not None:
-                self._state = model
 
             try:
                 ObserverModelProcessor.rebuild(
@@ -204,8 +213,26 @@ class ObserverMqttRepository:
         if not self._message_processor.process(self._state, msg):
             self._dropped_message_count += 1
             return
+        observation = self._state.topic_states[msg.topic]
+        if self._message_recorder is not None and self._broker_id is not None:
+            if observation.observation_id is None:
+                raise ValueError("A live observation requires an observation ID.")
+            self._message_recorder.record_message(
+                TopicMessage(
+                    broker_id=self._broker_id,
+                    topic=observation.topic,
+                    payload=observation.payload,
+                    qos=observation.qos,
+                    retain=observation.retain,
+                    received_at=observation.received_at,
+                    payload_size=observation.payload_size
+                    or len(observation.payload),
+                    message_count=observation.message_count,
+                    observation_id=observation.observation_id,
+                )
+            )
         if self._observation_sink is not None:
-            self._observation_sink(self._state.topic_states[msg.topic])
+            self._observation_sink(observation)
         if self.message_queue.full():
             self.message_queue.get_nowait()
             self._dropped_message_count += 1

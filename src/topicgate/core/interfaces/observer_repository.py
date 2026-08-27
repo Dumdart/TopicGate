@@ -63,8 +63,6 @@ class ObserverRepository(Protocol):
     async def update_broker(
         self,
         new_config: MqttConfig,
-        /,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None: ...
 
