@@ -31,6 +31,9 @@ class App:
 
 
     async def run(self) -> int:
+        # Check that closing the last window does not stop qasync before
+        # asynchronous cleanup has completed.
+        self._qt_application.setQuitOnLastWindowClosed(False)
         stopped = asyncio.get_running_loop().create_future()
 
         def request_shutdown() -> None:

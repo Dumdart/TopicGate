@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import cast
 from uuid import UUID
 
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
@@ -11,6 +12,7 @@ from topicgate.core.models.mqtt_observation import (
     ObservationSource,
 )
 from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
+from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
@@ -50,6 +52,11 @@ class BrokerProfileService:
         self.configs = BrokerConfigRepository(self._db)
         self.subscriptions = SubscriptionRepository(self._db)
         self._topic_messages = topic_messages
+        self._topic_message_recorder = (
+            None
+            if topic_messages is None
+            else cast(TopicMessageRecorder, cast(object, topic_messages))
+        )
         self._settings_id = supplied_settings.id if supplied_settings else None
 
         identities = self.brokers.list_profiles()
@@ -140,6 +147,8 @@ class BrokerProfileService:
             profile_id
         )
         self.brokers.delete_profile(profile_id)
+        if self._topic_message_recorder is not None:
+            self._topic_message_recorder.remove_current_broker(profile_id)
         self._delete_password(profile_id)
         self._runtime_state.remove(profile_id)
         self.save()
@@ -216,7 +225,8 @@ class BrokerProfileService:
         )
         if self._topic_messages is None:
             return model
-        for message in self._topic_messages.get_latest_messages(broker_id):
+        for current in self._topic_messages.get_current_topics(broker_id):
+            message = current.message
             node = ObserverModelProcessor.find_or_create_node(model, message.topic)
             state = MqttObservation(
                 name=node.segment,

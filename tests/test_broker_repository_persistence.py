@@ -148,6 +148,11 @@ def test_deleting_broker_cascades_to_persisted_topic_messages(
     profiles = BrokerProfileService(database, credential_store=credential_store)
     profile = profiles.get_profile()
     messages = TopicMessageRepository(database)
+    profiles = BrokerProfileService(
+        database,
+        credential_store=credential_store,
+        topic_messages=messages,
+    )
     message = TopicMessage(
         broker_id=profile.id,
         topic="factory/temperature",
@@ -166,7 +171,7 @@ def test_deleting_broker_cascades_to_persisted_topic_messages(
 
         profiles.delete_profile(profile.id)
 
-        assert messages.get_latest_messages(profile.id) == ()
+        assert messages.get_current_topics(profile.id) == ()
     finally:
         messages.close()
         database.dispose()

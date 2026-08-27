@@ -80,7 +80,10 @@ def test_live_observations_are_queued_for_persistence(
             MqttMessage("factory/temperature", b"21.5", 1, True),
         )
 
-        stored = dependencies.topic_messages.get_latest_messages(profile.id)
+        stored = tuple(
+            current.message
+            for current in dependencies.topic_messages.get_current_topics(profile.id)
+        )
 
         assert len(stored) == 1
         assert stored[0].topic == "factory/temperature"

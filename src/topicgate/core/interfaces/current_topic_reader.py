@@ -1,17 +1,20 @@
-from abc import ABC, abstractmethod
+from typing import Protocol
 from uuid import UUID
 
-from topicgate.core.models.observation_status import ObservationStatus
-from topicgate.core.models.topic_message import TopicMessage
+from topicgate.core.models.current_topic import CurrentTopic
 
 
-class CurrentTopicReader(ABC):
+class CurrentTopicReader(Protocol):
     """Read the unified current state for broker topics."""
 
-    @abstractmethod
-    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
-        """Return the current live and cached topic states for a broker."""
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
+        """Return atomic current topic snapshots for a broker."""
+        ...
 
-    @abstractmethod
-    def get_observation_status(self, observation_id: UUID) -> ObservationStatus:
-        """Return whether a current observation is live or cached."""
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        """Return one atomic current topic snapshot when present."""
+        ...

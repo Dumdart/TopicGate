@@ -85,7 +85,9 @@ def test_usage_and_exact_id_partial_deletion(tmp_path, credential_store) -> None
         assert result.deleted_count == 0
         assert result.skipped_count == 1
         assert result.is_partial
-        assert messages.get_latest_messages(broker_id) == (replacement,)
+        assert tuple(
+            current.message for current in messages.get_current_topics(broker_id)
+        ) == (replacement,)
     finally:
         messages.close()
         database.dispose()

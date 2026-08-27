@@ -43,7 +43,9 @@ def test_unsubscribed_preview_and_confirm_delete_only_unmatched_entries(
         assert preview.total_entries == 1
         assert preview.stored_payload_bytes == len(removed.payload)
         assert service.confirm_deletion(preview) == 1
-        assert messages.get_latest_messages(broker_id) == (kept,)
+        assert tuple(
+            current.message for current in messages.get_current_topics(broker_id)
+        ) == (kept,)
     finally:
         messages.close()
         database.dispose()

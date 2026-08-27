@@ -383,8 +383,6 @@ def test_runtime_delegates_stored_observation_queries() -> None:
     persisted_topics = (MagicMock(spec=PersistedTopicSummary),)
     usage = CacheUsageSummary((BrokerCacheUsage(active.id, 1, 2, None, None),))
     query.get_message.return_value = message
-    query.get_broker_messages.return_value = (message,)
-    query.get_latest_message.return_value = message
     query.query_stored_observations.return_value = (message,)
     query.get_cache_usage.return_value = usage
     query.get_persisted_topics.return_value = persisted_topics
@@ -396,15 +394,11 @@ def test_runtime_delegates_stored_observation_queries() -> None:
     )
 
     assert runtime.get_message(message_id) is message
-    assert runtime.get_broker_messages(active.id) == (message,)
-    assert runtime.get_latest_message("home/status") is message
     assert runtime.query_stored_observations(message_filter) == (message,)
     assert runtime.get_cache_usage() == usage
     assert runtime.list_persisted_topics(active.id) == persisted_topics
 
     query.get_message.assert_called_once_with(message_id)
-    query.get_broker_messages.assert_called_once_with(active.id)
-    query.get_latest_message.assert_called_once_with("home/status")
     query.query_stored_observations.assert_called_once_with(message_filter)
     query.get_cache_usage.assert_called_once_with()
     query.get_persisted_topics.assert_called_once_with(active.id, ())

@@ -91,13 +91,6 @@ class TopicGateRuntime(ServiceItem):
     def get_message(self, message_id: UUID) -> TopicMessage:
         return self._require_observation_query().get_message(message_id)
 
-    def get_broker_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
-        self._get_broker_profile(broker_id)
-        return self._require_observation_query().get_broker_messages(broker_id)
-
-    def get_latest_message(self, topic: str | None = None) -> TopicMessage:
-        return self._require_observation_query().get_latest_message(topic)
-
     def query_stored_observations(
         self, message_filter: MessageFilter
     ) -> tuple[TopicMessage, ...]:
