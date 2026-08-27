@@ -1,18 +1,20 @@
 from datetime import datetime
 from uuid import UUID
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDateTimeEdit,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.message_filter import OrderType
 from topicgate.gui.main_view_model import MainViewModel
 from topicgate.presentation.retention_presentation import (
     AgeUnit,
@@ -64,6 +67,9 @@ class StoredObservationsDialog(QDialog):
     save_policy_requested = Signal(object)
     broker_requested = Signal(object)
     deletion_requested = Signal(str, object, object)
+    query_requested = Signal(object, str, object, object, object, int)
+    refresh_requested = Signal(object)
+    message_requested = Signal(object)
 
     def __init__(self, view_model: MainViewModel, parent=None) -> None:
         super().__init__(parent)
@@ -77,6 +83,7 @@ class StoredObservationsDialog(QDialog):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("storedObservationsPages")
         self.tabs.setAccessibleName("Stored observations settings pages")
+        self.tabs.addTab(self._history_page(), "Observation history")
         self.tabs.addTab(self._retention_page(), "Retention policy")
         self.tabs.addTab(self._cache_page(), "Cache administration")
         layout.addWidget(self.tabs)
@@ -85,6 +92,116 @@ class StoredObservationsDialog(QDialog):
         layout.addWidget(buttons)
         self._view_model.stored_observations_changed.connect(self.render)
         self._view_model.operation_state_changed.connect(self._render_busy)
+
+    def _history_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("observationHistoryPage")
+        layout = QVBoxLayout(page)
+        form = QFormLayout()
+        self.history_broker = QComboBox()
+        self.history_broker.setObjectName("historyBrokerSelection")
+        self.history_broker.setAccessibleName("Observation history broker")
+        self.history_broker.setAccessibleDescription(
+            "Select the broker whose persisted observations will be queried."
+        )
+        self.history_broker.currentIndexChanged.connect(self._history_broker_changed)
+        form.addRow("Broker", self.history_broker)
+        self.history_topic_filter = QLineEdit("#")
+        self.history_topic_filter.setObjectName("historyTopicFilter")
+        self.history_topic_filter.setAccessibleName("Observation history topic filter")
+        self.history_topic_filter.setAccessibleDescription(
+            "MQTT topic filter supporting plus and hash wildcards."
+        )
+        form.addRow("MQTT topic filter", self.history_topic_filter)
+        self.history_after_enabled, self.history_after = self._date_time_filter(
+            "After", "historyAfter"
+        )
+        form.addRow("Received after", self._optional_date_time_row(
+            self.history_after_enabled, self.history_after
+        ))
+        self.history_before_enabled, self.history_before = self._date_time_filter(
+            "Before", "historyBefore"
+        )
+        form.addRow("Received before", self._optional_date_time_row(
+            self.history_before_enabled, self.history_before
+        ))
+        self.history_order = QComboBox()
+        self.history_order.setObjectName("historySortOrder")
+        self.history_order.setAccessibleName("Observation history sort order")
+        for label, order in (
+            ("Received · newest first", OrderType.RECEIVED_DESC),
+            ("Received · oldest first", OrderType.RECEIVED_ASC),
+            ("Topic · A to Z", OrderType.TOPIC_ASC),
+            ("Topic · Z to A", OrderType.TOPIC_DESC),
+            ("Message count · highest first", OrderType.MESSAGE_COUNT_DESC),
+            ("Message count · lowest first", OrderType.MESSAGE_COUNT_ASC),
+            ("Payload size · largest first", OrderType.PAYLOAD_SIZE_DESC),
+            ("Payload size · smallest first", OrderType.PAYLOAD_SIZE_ASC),
+        ):
+            self.history_order.addItem(label, order)
+        form.addRow("Sort order", self.history_order)
+        self.history_limit = QSpinBox()
+        self.history_limit.setObjectName("historyResultLimit")
+        self.history_limit.setAccessibleName("Observation history result limit")
+        self.history_limit.setRange(1, 1000)
+        self.history_limit.setValue(50)
+        form.addRow("Result limit", self.history_limit)
+        layout.addLayout(form)
+        actions = QHBoxLayout()
+        self.query_history = QPushButton("Search")
+        self.query_history.setObjectName("queryStoredObservationsButton")
+        self.query_history.setAccessibleName("Query stored observations")
+        self.query_history.clicked.connect(self._request_query)
+        actions.addWidget(self.query_history)
+        self.refresh_history = QPushButton("Refresh")
+        self.refresh_history.setObjectName("refreshStoredObservationsButton")
+        self.refresh_history.setAccessibleName("Refresh stored observation results")
+        self.refresh_history.clicked.connect(self._request_refresh)
+        actions.addWidget(self.refresh_history)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+        self.history_state = QLabel("Query stored observations to view persisted values.")
+        self.history_state.setObjectName("historyQueryState")
+        self.history_state.setAccessibleName("Observation history query status")
+        self.history_state.setTextFormat(Qt.TextFormat.PlainText)
+        self.history_state.setWordWrap(True)
+        layout.addWidget(self.history_state)
+        self.history_results = QTableWidget(0, 6)
+        self.history_results.setObjectName("storedObservationResultsTable")
+        self.history_results.setAccessibleName("Stored observation query results")
+        self.history_results.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self.history_results.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
+        self.history_results.setHorizontalHeaderLabels(
+            ("Topic", "Received", "Payload size", "Messages", "QoS", "Retained")
+        )
+        self.history_results.itemSelectionChanged.connect(
+            self._history_selection_changed
+        )
+        layout.addWidget(self.history_results, 2)
+        self.history_payload_metadata = QLabel("Select an observation to inspect its payload.")
+        self.history_payload_metadata.setObjectName("storedObservationPayloadMetadata")
+        self.history_payload_metadata.setAccessibleName(
+            "Selected stored observation metadata"
+        )
+        self.history_payload_metadata.setTextFormat(Qt.TextFormat.PlainText)
+        self.history_payload_metadata.setWordWrap(True)
+        layout.addWidget(self.history_payload_metadata)
+        self.history_payload = QPlainTextEdit()
+        self.history_payload.setObjectName("storedObservationPayload")
+        self.history_payload.setAccessibleName("Selected stored observation payload")
+        self.history_payload.setAccessibleDescription(
+            "Plain-text rendering of the selected persisted MQTT payload."
+        )
+        self.history_payload.setReadOnly(True)
+        self.history_payload.setPlaceholderText(
+            "Select a stored observation to inspect its payload."
+        )
+        layout.addWidget(self.history_payload, 1)
+        return page
 
     def _retention_page(self) -> QWidget:
         page = QWidget()
@@ -218,6 +335,14 @@ class StoredObservationsDialog(QDialog):
         self.broker.currentIndexChanged.connect(self._broker_changed)
         broker_row.addWidget(self.broker, 1)
         layout.addLayout(broker_row)
+        self.broker_storage_summary = QLabel()
+        self.broker_storage_summary.setObjectName("selectedBrokerStorageSummary")
+        self.broker_storage_summary.setAccessibleName(
+            "Selected broker storage summary"
+        )
+        self.broker_storage_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.broker_storage_summary.setWordWrap(True)
+        layout.addWidget(self.broker_storage_summary)
         self.topics = QTableWidget(0, 4)
         self.topics.setObjectName("persistedTopicsTable")
         self.topics.setAccessibleName("Persisted topic observations")
@@ -255,6 +380,7 @@ class StoredObservationsDialog(QDialog):
             self._render_usage()
             self._render_brokers()
             self._render_topics()
+            self._render_history()
             self._render_busy()
         finally:
             self._rendering = False
@@ -385,15 +511,27 @@ class StoredObservationsDialog(QDialog):
         self.cache_warning_banner.setVisible(bool(warnings))
 
     def _render_brokers(self) -> None:
-        selected = self.broker.currentData()
-        self.broker.blockSignals(True)
-        self.broker.clear()
-        for broker in self._view_model.broker_profiles:
-            status = "active" if broker.id == self._view_model.active_broker_profile.id else "inactive"
-            self.broker.addItem(f"{broker.name} ({status})", broker.id)
-        index = self.broker.findData(selected)
-        self.broker.setCurrentIndex(max(0, index))
-        self.broker.blockSignals(False)
+        selected = self._view_model.stored_observations_broker_id
+        for combo in (self.broker, self.history_broker):
+            combo.blockSignals(True)
+            combo.clear()
+            for broker in self._view_model.broker_profiles:
+                status = (
+                    "active"
+                    if broker.id == self._view_model.active_broker_profile.id
+                    else "inactive"
+                )
+                combo.addItem(f"{broker.name} ({status})", broker.id)
+            index = combo.findData(selected)
+            combo.setCurrentIndex(max(0, index))
+            combo.blockSignals(False)
+        summary = self._view_model.broker_cache_usage_summary
+        self.broker_storage_summary.setText(
+            f"Selected broker: {summary.entry_count} observations, "
+            f"{size_label(summary.stored_payload_bytes)} stored payload; "
+            f"oldest {self._optional_datetime(summary.oldest_received_at)}, "
+            f"newest {self._optional_datetime(summary.newest_received_at)}."
+        )
 
     def _render_topics(self) -> None:
         topics = self._view_model.persisted_topics
@@ -410,9 +548,72 @@ class StoredObservationsDialog(QDialog):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.topics.setItem(row, column, item)
 
+    def _render_history(self) -> None:
+        query = self._view_model.stored_observation_filter
+        self.history_topic_filter.setText(query.topic_filter)
+        order_index = self.history_order.findData(query.order)
+        if order_index >= 0:
+            self.history_order.setCurrentIndex(order_index)
+        self.history_limit.setValue(query.limit)
+        self._set_optional_date_time(
+            self.history_after_enabled,
+            self.history_after,
+            query.after,
+        )
+        self._set_optional_date_time(
+            self.history_before_enabled,
+            self.history_before,
+            query.before,
+        )
+        results = self._view_model.stored_observation_results
+        self.history_results.setRowCount(len(results))
+        for row, message in enumerate(results):
+            values = (
+                message.topic,
+                datetime_label(message.received_at),
+                size_label(message.payload_size),
+                str(message.message_count),
+                str(message.qos),
+                "Yes" if message.retain else "No",
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, message.observation_id)
+                self.history_results.setItem(row, column, item)
+        detail = self._view_model.selected_stored_observation_detail
+        if detail.has_value:
+            self.history_payload_metadata.setText(
+                f"{detail.topic} · {detail.received_at} · QoS {detail.qos_label} · "
+                f"retained {detail.retain_label} · {detail.payload_size_label}"
+            )
+            self.history_payload.setPlainText(detail.decoded_payload)
+        else:
+            self.history_payload_metadata.setText(
+                "Select an observation to inspect its payload."
+            )
+            self.history_payload.clear()
+
     def _render_busy(self) -> None:
         busy = self._view_model.is_busy("stored-observations")
         self.tabs.setEnabled(not busy)
+        self.query_history.setEnabled(not busy)
+        self.refresh_history.setEnabled(not busy)
+        if busy:
+            self.history_state.setText("Loading stored observations…")
+        elif self._view_model.stored_observation_error:
+            self.history_state.setText(
+                "Could not query stored observations: "
+                f"{self._view_model.stored_observation_error}"
+            )
+        else:
+            count = len(self._view_model.stored_observation_results)
+            self.history_state.setText(
+                f"{count} stored observation{'s' if count != 1 else ''} returned."
+                if count
+                else "No stored observations match this query."
+            )
 
     def _preset_selected(self, name: str) -> None:
         if self._rendering or name == "Custom":
@@ -509,9 +710,93 @@ class StoredObservationsDialog(QDialog):
         if not self._rendering and self.broker.currentData() is not None:
             self.broker_requested.emit(self.broker.currentData())
 
+    def _history_broker_changed(self) -> None:
+        if not self._rendering and self.history_broker.currentData() is not None:
+            self.broker_requested.emit(self.history_broker.currentData())
+
+    def _request_query(self) -> None:
+        broker_id = self.history_broker.currentData()
+        if broker_id is None:
+            return
+        self.query_requested.emit(
+            broker_id,
+            self.history_topic_filter.text(),
+            self._optional_date_time_value(
+                self.history_after_enabled,
+                self.history_after,
+            ),
+            self._optional_date_time_value(
+                self.history_before_enabled,
+                self.history_before,
+            ),
+            self.history_order.currentData(),
+            self.history_limit.value(),
+        )
+
+    def _request_refresh(self) -> None:
+        broker_id = self.history_broker.currentData()
+        if broker_id is not None:
+            self.refresh_requested.emit(broker_id)
+
+    def _history_selection_changed(self) -> None:
+        if self._rendering:
+            return
+        row = self.history_results.currentRow()
+        if row < 0:
+            return
+        item = self.history_results.item(row, 0)
+        if item is not None:
+            self.message_requested.emit(item.data(Qt.ItemDataRole.UserRole))
+
     def _request_deletion(self, scope: str) -> None:
         topics = self.selected_topics() if scope == "selected_topics" else ()
         self.deletion_requested.emit(scope, self.broker.currentData(), topics)
+
+    @staticmethod
+    def _date_time_filter(
+        label: str,
+        object_name: str,
+    ) -> tuple[QCheckBox, QDateTimeEdit]:
+        enabled = QCheckBox("Use filter")
+        enabled.setObjectName(f"{object_name}Enabled")
+        enabled.setAccessibleName(f"Enable received {label.lower()} filter")
+        editor = QDateTimeEdit(QDateTime.currentDateTimeUtc())
+        editor.setObjectName(object_name)
+        editor.setAccessibleName(f"Received {label.lower()} date and time")
+        editor.setCalendarPopup(True)
+        editor.setDisplayFormat("yyyy-MM-dd HH:mm:ss 'UTC'")
+        editor.setEnabled(False)
+        enabled.toggled.connect(editor.setEnabled)
+        return enabled, editor
+
+    @staticmethod
+    def _optional_date_time_row(
+        enabled: QCheckBox,
+        editor: QDateTimeEdit,
+    ) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(enabled)
+        layout.addWidget(editor, 1)
+        return container
+
+    @staticmethod
+    def _optional_date_time_value(
+        enabled: QCheckBox,
+        editor: QDateTimeEdit,
+    ) -> datetime | None:
+        return editor.dateTime().toPython() if enabled.isChecked() else None
+
+    @staticmethod
+    def _set_optional_date_time(
+        enabled: QCheckBox,
+        editor: QDateTimeEdit,
+        value: datetime | None,
+    ) -> None:
+        enabled.setChecked(value is not None)
+        if value is not None:
+            editor.setDateTime(value)
 
     def _integer_field(self, form, title: str, name: str) -> QLineEdit:
         widget = QLineEdit()

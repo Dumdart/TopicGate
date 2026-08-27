@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
@@ -441,6 +442,99 @@ def test_cache_administration_warns_when_limits_are_approached() -> None:
     warning = dialog.findChild(QLabel, "cacheRetentionWarningBanner")
     assert not warning.isHidden()
     assert "80%" in warning.text()
+    dialog.deleteLater()
+    application.processEvents()
+
+
+def test_observation_history_renders_results_and_inspects_payload_as_plain_text() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    broker_id = view_model.active_broker_profile.id
+    message = TopicMessage(
+        broker_id,
+        "untrusted/<topic>",
+        b"<b>plain MQTT payload</b>",
+        2,
+        True,
+        datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc),
+        25,
+        9,
+        uuid4(),
+    )
+    view_model._stored_observation_results = (message,)
+    dialog = StoredObservationsDialog(view_model)
+    requested: list[UUID] = []
+    dialog.message_requested.connect(requested.append)
+
+    dialog.render()
+
+    table = dialog.findChild(QTableWidget, "storedObservationResultsTable")
+    assert table.rowCount() == 1
+    assert table.item(0, 0).text() == "untrusted/<topic>"
+    assert table.item(0, 2).text() == "25 bytes"
+    assert table.item(0, 3).text() == "9"
+    assert table.item(0, 4).text() == "2"
+    assert table.item(0, 5).text() == "Yes"
+    assert dialog.findChild(QLabel, "historyQueryState").text() == (
+        "1 stored observation returned."
+    )
+    table.selectRow(0)
+    assert requested == [message.observation_id]
+
+    view_model._selected_stored_observation = message
+    dialog.render()
+
+    payload = dialog.findChild(QPlainTextEdit, "storedObservationPayload")
+    assert payload.toPlainText() == "<b>plain MQTT payload</b>"
+    dialog.deleteLater()
+    application.processEvents()
+
+
+def test_observation_history_renders_empty_results_and_accessible_controls() -> None:
+    application = QApplication.instance() or QApplication([])
+    dialog = StoredObservationsDialog(
+        MainViewModel(runtime_for(FakeGuiRepository()))
+    )
+
+    dialog.render()
+
+    assert dialog.findChild(QLineEdit, "historyTopicFilter").text() == "#"
+    assert dialog.findChild(QSpinBox, "historyResultLimit").value() == 50
+    assert dialog.findChild(
+        QTableWidget,
+        "storedObservationResultsTable",
+    ).rowCount() == 0
+    assert dialog.findChild(QLabel, "historyQueryState").text() == (
+        "No stored observations match this query."
+    )
+    assert dialog.findChild(
+        QPushButton,
+        "queryStoredObservationsButton",
+    ).accessibleName() == "Query stored observations"
+    dialog.deleteLater()
+    application.processEvents()
+
+
+def test_cache_administration_keeps_global_totals_and_renders_scoped_summary() -> None:
+    application = QApplication.instance() or QApplication([])
+    view_model = MainViewModel(runtime_for(FakeGuiRepository()))
+    selected, other = view_model.broker_profiles
+    selected_usage = BrokerCacheUsage(selected.id, 2, 20, None, None)
+    other_usage = BrokerCacheUsage(other.id, 3, 30, None, None)
+    view_model._retention_policy = ObservationRetentionPolicy()
+    view_model._cache_usage = CacheUsageSummary((selected_usage, other_usage))
+    view_model._broker_cache_usage = CacheUsageSummary((selected_usage,))
+    dialog = StoredObservationsDialog(view_model)
+
+    dialog.render()
+
+    table = dialog.findChild(QTableWidget, "cacheUsageTable")
+    assert table.item(2, 0).text() == "All brokers"
+    assert table.item(2, 2).text() == "5"
+    assert table.item(2, 3).text() == "50 bytes"
+    scoped = dialog.findChild(QLabel, "selectedBrokerStorageSummary").text()
+    assert "Selected broker: 2 observations" in scoped
+    assert "20 bytes stored payload" in scoped
     dialog.deleteLater()
     application.processEvents()
 
