@@ -7,12 +7,14 @@ from uuid import UUID
 
 from topicgate.app.services.service_item import ServiceItem
 from topicgate.app.services.observation_cache_service import ObservationCacheService
+from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.services.control_operation_service import ControlOperationService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.interfaces.broker_profile_store import BrokerProfileStore
 from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.broker_summary import BrokerSummary
+from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.observation_deletion_preview import (
@@ -31,6 +33,7 @@ from topicgate.core.models.observation_retention_policy import (
 )
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
 
 
 class TopicGateRuntime(ServiceItem):
@@ -46,6 +49,7 @@ class TopicGateRuntime(ServiceItem):
         ] | None = None,
         observation_cache: ObservationCacheService | None = None,
         control_operations: ControlOperationService | None = None,
+        observation_query: ObservationQueryService | None = None,
     ) -> None:
         self._brokers = broker_repository
         self._active_broker_id = (
@@ -56,6 +60,7 @@ class TopicGateRuntime(ServiceItem):
         self._mqtt_repositories = mqtt_repositories
         self._mqtt_repository_factory = mqtt_repository_factory
         self._observation_cache = observation_cache
+        self._observation_query = observation_query
         self._control_operations = control_operations
         if self._active_broker_id not in self._mqtt_repositories:
             raise ValueError("The active broker requires an MQTT repository.")
@@ -82,6 +87,24 @@ class TopicGateRuntime(ServiceItem):
 
     def list_topics(self, broker_id: UUID | None = None) -> tuple[str, ...]:
         return self._repository_for(broker_id).get_all_topics()
+
+    def get_message(self, message_id: UUID) -> TopicMessage:
+        return self._require_observation_query().get_message(message_id)
+
+    def get_broker_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+        self._get_broker_profile(broker_id)
+        return self._require_observation_query().get_broker_messages(broker_id)
+
+    def get_latest_message(self, topic: str | None = None) -> TopicMessage:
+        return self._require_observation_query().get_latest_message(topic)
+
+    def query_stored_observations(
+        self, message_filter: MessageFilter
+    ) -> tuple[TopicMessage, ...]:
+        self._get_broker_profile(message_filter.broker_id)
+        return self._require_observation_query().query_stored_observations(
+            message_filter
+        )
 
     def get_broker(self, broker_id: UUID | None = None) -> BrokerSummary:
         return self._broker_summary(self._get_broker_profile(broker_id))
@@ -118,7 +141,7 @@ class TopicGateRuntime(ServiceItem):
             return self._require_observation_cache().update_retention_policy(policy)
 
     def get_cache_usage(self) -> CacheUsageSummary:
-        usage = self._require_observation_cache().get_cache_usage()
+        usage = self._require_observation_query().get_cache_usage()
         by_broker = {item.broker_id: item for item in usage.brokers}
         return CacheUsageSummary(
             tuple(
@@ -135,7 +158,7 @@ class TopicGateRuntime(ServiceItem):
         broker_id: UUID,
     ) -> tuple[PersistedTopicSummary, ...]:
         self._get_broker_profile(broker_id)
-        return self._require_observation_cache().get_persisted_topics(
+        return self._require_observation_query().get_persisted_topics(
             broker_id,
             self.list_subscriptions(broker_id),
         )
@@ -453,6 +476,11 @@ class TopicGateRuntime(ServiceItem):
         if self._observation_cache is None:
             raise RuntimeError("Observation cache operations are unavailable.")
         return self._observation_cache
+
+    def _require_observation_query(self) -> ObservationQueryService:
+        if self._observation_query is None:
+            raise RuntimeError("Observation query operations are unavailable.")
+        return self._observation_query
 
     def _validated_profile_name(self, name: str, broker_id: UUID) -> str:
         normalized_name = name.strip()

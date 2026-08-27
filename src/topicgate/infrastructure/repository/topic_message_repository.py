@@ -6,30 +6,27 @@ from typing import Literal, Tuple
 from uuid import UUID
 
 from sqlalchemy import Select, delete, func, select
-from sqlalchemy.orm import aliased
 
-from topicgate.core.models.message_filter import MessageFilter, OrderType
-from topicgate.core.mqtt_topics import mqtt_filter_matches
-from topicgate.core.models.observation_deletion_preview import (
-    ObservationDeletionEntry,
-    ObservationDeletionPreview,
+from topicgate.core.interfaces.stored_observation_administrator import (
+    StoredObservationAdministrator,
 )
+from topicgate.core.interfaces.stored_observation_reader import StoredObservationReader
+from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_cache_administration import (
     BrokerCacheUsage,
     CacheUsageSummary,
     ObservationDeletionResult,
 )
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+    ObservationDeletionPreview,
+)
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
 from topicgate.core.models.topic_message import TopicMessage
-from topicgate.core.interfaces.stored_observation_administrator import (
-    StoredObservationAdministrator,
-)
-from topicgate.core.interfaces.stored_observation_reader import (
-    StoredObservationReader,
-)
-from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.topic_message_mapper import (
     TopicMessageMapper,
@@ -41,9 +38,7 @@ from topicgate.processors.observation_retention_processor import (
 
 
 class TopicMessageRepository(
-    TopicMessageStore,
-    StoredObservationReader,
-    StoredObservationAdministrator,
+    TopicMessageStore, StoredObservationReader, StoredObservationAdministrator
 ):
     """Persist the latest observed MQTT message for each broker topic."""
 
@@ -86,7 +81,9 @@ class TopicMessageRepository(
     def get_latest_message(self, topic: str | None = None) -> TopicMessage:
         self.flush()
         statement = select(MqttMessageRow).order_by(
-            MqttMessageRow.received_at.desc()
+            MqttMessageRow.received_at.desc(),
+            MqttMessageRow.topic.asc(),
+            MqttMessageRow.broker_id.asc(),
         )
         if topic is not None:
             statement = statement.where(MqttMessageRow.topic == topic)
@@ -96,31 +93,7 @@ class TopicMessageRepository(
                 raise KeyError("Unknown topic message: latest message")
             return TopicMessageMapper.to_dto(row)
 
-    def get_all_latest_messages(self) -> list[tuple[str, TopicMessage]]:
-        self.flush()
-        ranked_messages = select(
-            MqttMessageRow,
-            func.row_number()
-            .over(
-                partition_by=MqttMessageRow.topic,
-                order_by=MqttMessageRow.received_at.desc(),
-            )
-            .label("message_rank"),
-        ).subquery()
-        latest_message = aliased(MqttMessageRow, ranked_messages)
-        statement = (
-            select(latest_message)
-            .where(ranked_messages.c.message_rank == 1)
-            .order_by(latest_message.topic)
-        )
-
-        with self._db.session() as session:
-            return [
-                (row.topic, TopicMessageMapper.to_dto(row))
-                for row in session.scalars(statement).all()
-            ]
-
-    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+    def get_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
         """Return the current persisted topic states for one broker."""
         self.flush()
         statement = (
@@ -134,9 +107,13 @@ class TopicMessageRepository(
                 for row in session.scalars(statement).all()
             )
 
-    def search_message(
-        self, message_filter: MessageFilter
-    ) -> tuple[TopicMessage, ...]:
+    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+        """Return the latest stored state for each topic owned by a broker."""
+        return self.get_messages(broker_id)
+
+    def search_message(self, message_filter: MessageFilter) -> tuple[TopicMessage, ...]:
+        if message_filter.limit < 0:
+            raise ValueError("Message filter limit cannot be negative.")
         self.flush()
         statement = select(MqttMessageRow).where(
             MqttMessageRow.broker_id == message_filter.broker_id
@@ -227,8 +204,7 @@ class TopicMessageRepository(
         )
         with self._db.session() as session:
             entries = tuple(
-                self._deletion_entry(row)
-                for row in session.scalars(statement).all()
+                self._deletion_entry(row) for row in session.scalars(statement).all()
             )
         return ObservationDeletionPreview(None, entries, "all_brokers")
 
@@ -374,8 +350,9 @@ class TopicMessageRepository(
                     for operation, message in latest_writes.values():
                         if policy is not None:
                             message = (
-                                ObservationRetentionProcessor
-                                .truncate_topic_message(message, policy)
+                                ObservationRetentionProcessor.truncate_topic_message(
+                                    message, policy
+                                )
                             )
                         row = TopicMessageMapper.to_row(message)
                         if operation == "create":

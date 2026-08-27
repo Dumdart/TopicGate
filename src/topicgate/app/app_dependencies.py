@@ -1,6 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
+from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.services.service_item import ServiceItem
 from topicgate.app.services.persistence_lifecycle import PersistenceLifecycle
 from topicgate.app.services.broker_profile_service import BrokerProfileService
@@ -66,6 +67,7 @@ class AppDependencies:
             self.retention_policy,
             administrator=self.topic_messages,
         )
+        self.observation_query = ObservationQueryService(self.topic_messages)
         self.control_operations = ControlOperationService(
             self._db_context,
             control_owner,
@@ -91,11 +93,12 @@ class AppDependencies:
 
         self.runtime = TopicGateRuntime(
             self.broker_profiles,
-             self.broker_runtime_state.repositories,
+            self.broker_runtime_state.repositories,
             profile.id,
-            self._create_observer_repository,
-            self.observation_cache,
-            self.control_operations,
+            mqtt_repository_factory=self._create_observer_repository,
+            observation_cache=self.observation_cache,
+            observation_query=self.observation_query,
+            control_operations=self.control_operations,
         )
         self.snapshot_service = BrokerSnapshotService(self.runtime)
         self.mcp_setup = McpSetupService(

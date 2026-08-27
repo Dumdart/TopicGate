@@ -70,6 +70,18 @@ def test_get_latest_message_raises_when_repository_is_empty(tmp_path) -> None:
         database.dispose()
 
 
+def test_search_message_rejects_negative_limit(tmp_path) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'negative-limit.db'}")
+    repository = TopicMessageRepository(database)
+
+    try:
+        with pytest.raises(ValueError, match="cannot be negative"):
+            repository.search_message(MessageFilter(broker_id=uuid4(), limit=-1))
+    finally:
+        repository.close()
+        database.dispose()
+
+
 @pytest.mark.parametrize(
     ("order", "expected_topics"),
     [
@@ -155,7 +167,7 @@ def test_queued_writes_are_flushed_in_order(tmp_path, credential_store) -> None:
         database.dispose()
 
 
-def test_get_all_latest_messages_returns_latest_message_per_topic(
+def test_get_messages_is_scoped_to_each_broker(
     tmp_path,
     credential_store,
 ) -> None:
@@ -181,10 +193,8 @@ def test_get_all_latest_messages_returns_latest_message_per_topic(
         repository.create_message(newer)
         repository.create_message(humidity)
 
-        assert repository.get_all_latest_messages() == [
-            (humidity.topic, humidity),
-            (newer.topic, newer),
-        ]
+        assert repository.get_messages(broker_id) == (humidity, older)
+        assert repository.get_messages(newer_broker_id) == (newer,)
     finally:
         repository.close()
         database.dispose()
@@ -354,9 +364,10 @@ def test_global_limits_evict_oldest_entries_across_brokers(
             )
         )
 
-        assert tuple(
-            message.topic for _, message in repository.get_all_latest_messages()
-        ) == ("middle", "newest")
+        stored = repository.get_messages(first_broker) + repository.get_messages(
+            second_broker
+        )
+        assert tuple(message.topic for message in stored) == ("newest", "middle")
     finally:
         repository.close()
         database.dispose()
@@ -425,9 +436,10 @@ def test_global_payload_limit_evicts_oldest_entry_across_brokers(
             )
         )
 
-        assert tuple(
-            message.topic for _, message in repository.get_all_latest_messages()
-        ) == ("new",)
+        stored = repository.get_messages(first_broker) + repository.get_messages(
+            second_broker
+        )
+        assert tuple(message.topic for message in stored) == ("new",)
     finally:
         repository.close()
         database.dispose()

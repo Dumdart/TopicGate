@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import cast
 from uuid import UUID
@@ -14,9 +14,7 @@ from topicgate.core.interfaces.stored_observation_reader import (
     StoredObservationReader,
 )
 from topicgate.core.models.observation_cache_administration import (
-    CacheUsageSummary,
     ObservationDeletionResult,
-    PersistedTopicSummary,
     RetentionImpactGroup,
     RetentionPolicyApplicationResult,
     RetentionPolicyPreview,
@@ -85,30 +83,6 @@ class ObservationCacheService:
         )
         return ObservationDeletionPreview(broker_id, entries)
 
-    def get_cache_usage(self) -> CacheUsageSummary:
-        return self._stored_reader.cache_usage()
-
-    def get_persisted_topics(
-        self,
-        broker_id: UUID,
-        subscriptions: Collection[Subscription],
-    ) -> tuple[PersistedTopicSummary, ...]:
-        preview = self._stored_reader.preview_deletion(broker_id)
-        return tuple(
-            PersistedTopicSummary(
-                broker_id=entry.broker_id,
-                topic=entry.topic,
-                observation_id=entry.observation_id,
-                stored_payload_bytes=entry.stored_payload_bytes,
-                received_at=entry.received_at,
-                is_subscribed=any(
-                    mqtt_filter_matches(item.topic_filter, entry.topic)
-                    for item in subscriptions
-                ),
-            )
-            for entry in preview.entries
-        )
-
     def preview_all(self) -> ObservationDeletionPreview:
         return self._stored_reader.preview_all_deletion()
 
@@ -121,7 +95,7 @@ class ObservationCacheService:
     def preview_retention_policy(
         self,
         policy: ObservationRetentionPolicy,
-        subscriptions: dict[UUID, Collection[Subscription]],
+        subscriptions: Mapping[UUID, Collection[Subscription]],
         *,
         now: datetime | None = None,
     ) -> RetentionPolicyPreview:
@@ -144,7 +118,7 @@ class ObservationCacheService:
     def confirm_retention_policy(
         self,
         preview: RetentionPolicyPreview,
-        subscriptions: dict[UUID, Collection[Subscription]],
+        subscriptions: Mapping[UUID, Collection[Subscription]],
     ) -> RetentionPolicyApplicationResult:
         if self._policies.get() != preview.previous_policy:
             raise ValueError("The retention policy changed after preview.")
@@ -171,7 +145,7 @@ class ObservationCacheService:
         cls,
         entries: tuple[ObservationDeletionEntry, ...],
         policy: ObservationRetentionPolicy,
-        subscriptions: dict[UUID, Collection[Subscription]],
+        subscriptions: Mapping[UUID, Collection[Subscription]],
         *,
         now: datetime,
     ) -> tuple[RetentionImpactGroup, ...]:
