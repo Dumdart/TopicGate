@@ -2,13 +2,14 @@ from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
 from queue import Empty, Queue
 from threading import Lock, Thread
-from typing import Literal
+from typing import Literal, Tuple
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import aliased
 
-from topicgate.core.models.message_filter import MessageFilter
+from topicgate.core.models.message_filter import MessageFilter, OrderType
+from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionEntry,
     ObservationDeletionPreview,
@@ -127,7 +128,10 @@ class TopicMessageRepository(TopicMessageStore):
         self, message_filter: MessageFilter
     ) -> tuple[TopicMessage, ...]:
         self.flush()
-        statement = select(MqttMessageRow)
+        statement = select(MqttMessageRow).where(
+            MqttMessageRow.broker_id == message_filter.broker_id
+        )
+
         if message_filter.after is not None:
             statement = statement.where(
                 MqttMessageRow.received_at >= message_filter.after
@@ -136,17 +140,22 @@ class TopicMessageRepository(TopicMessageStore):
             statement = statement.where(
                 MqttMessageRow.received_at <= message_filter.before
             )
-        if message_filter.topics:
-            statement = statement.where(
-                MqttMessageRow.topic.in_(message_filter.topics)
-            )
-        statement = statement.order_by(MqttMessageRow.received_at.desc())
+
+        statement = self._resolve_filter_order(statement, message_filter)
 
         with self._db.session() as session:
-            return tuple(
-                TopicMessageMapper.to_dto(row)
-                for row in session.scalars(statement).all()
-            )
+            rows = session.scalars(statement).all()
+
+        # Check MQTT wildcard semantics after SQL has applied its predicates.
+        matching_rows = (
+            row
+            for row in rows
+            if mqtt_filter_matches(message_filter.topic_filter, row.topic)
+        )
+        return tuple(
+            TopicMessageMapper.to_dto(row)
+            for row in list(matching_rows)[: message_filter.limit]
+        )
 
     def create_message(self, message: TopicMessage) -> TopicMessage:
         self._enqueue("create", message)
@@ -436,3 +445,48 @@ class TopicMessageRepository(TopicMessageStore):
             stored_bytes -= len(row.payload)
             excess_entries = max(0, excess_entries - 1)
             session.delete(row)
+
+    @staticmethod
+    def _resolve_filter_order(
+        statement: Select[Tuple[MqttMessageRow]],
+        message_filter: MessageFilter,
+    ) -> Select[Tuple[MqttMessageRow]]:
+        order = message_filter.order
+
+        match order:
+            case OrderType.RECEIVED_ASC:
+                return statement.order_by(
+                    MqttMessageRow.received_at.asc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.RECEIVED_DESC:
+                return statement.order_by(
+                    MqttMessageRow.received_at.desc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.TOPIC_ASC:
+                return statement.order_by(MqttMessageRow.topic.asc())
+            case OrderType.TOPIC_DESC:
+                return statement.order_by(MqttMessageRow.topic.desc())
+            case OrderType.MESSAGE_COUNT_ASC:
+                return statement.order_by(
+                    MqttMessageRow.message_count.asc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.MESSAGE_COUNT_DESC:
+                return statement.order_by(
+                    MqttMessageRow.message_count.desc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.PAYLOAD_SIZE_ASC:
+                return statement.order_by(
+                    MqttMessageRow.payload_size.asc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.PAYLOAD_SIZE_DESC:
+                return statement.order_by(
+                    MqttMessageRow.payload_size.desc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case _:
+                raise ValueError(f"Unsupported message order: {order!r}")

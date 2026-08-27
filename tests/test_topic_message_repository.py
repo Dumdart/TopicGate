@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from topicgate.app.services.broker_profile_service import BrokerProfileService
-from topicgate.core.models.message_filter import MessageFilter
+from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
@@ -40,11 +40,13 @@ def test_topic_message_repository_maps_dtos_and_supports_crud(
         assert repository.get_latest_message() == second
         assert repository.search_message(
             MessageFilter(
+                broker_id=broker_id,
                 after=received_at,
                 before=received_at + timedelta(seconds=1),
-                topics=(first.topic,),
+                topic_filter="home/#",
+                limit=2,
             )
-        ) == (first,)
+        ) == (second, first)
 
         updated = replace(first, payload=b"22.0", payload_size=4, message_count=2)
         assert repository.update_message(updated) == updated
@@ -63,6 +65,66 @@ def test_get_latest_message_raises_when_repository_is_empty(tmp_path) -> None:
     try:
         with pytest.raises(KeyError, match="latest message"):
             repository.get_latest_message()
+    finally:
+        repository.close()
+        database.dispose()
+
+
+@pytest.mark.parametrize(
+    ("order", "expected_topics"),
+    [
+        (OrderType.RECEIVED_ASC, ("zeta", "alpha", "middle")),
+        (OrderType.RECEIVED_DESC, ("middle", "alpha", "zeta")),
+        (OrderType.TOPIC_ASC, ("alpha", "middle", "zeta")),
+        (OrderType.TOPIC_DESC, ("zeta", "middle", "alpha")),
+        (OrderType.MESSAGE_COUNT_ASC, ("alpha", "zeta", "middle")),
+        (OrderType.MESSAGE_COUNT_DESC, ("middle", "zeta", "alpha")),
+        (OrderType.PAYLOAD_SIZE_ASC, ("alpha", "middle", "zeta")),
+        (OrderType.PAYLOAD_SIZE_DESC, ("zeta", "middle", "alpha")),
+    ],
+)
+def test_search_message_supports_order_types(
+    tmp_path,
+    credential_store,
+    order: OrderType,
+    expected_topics: tuple[str, ...],
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'ordered.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    repository = TopicMessageRepository(database)
+    received_at = datetime.now(timezone.utc)
+    messages = (
+        replace(
+            _message(broker_id, "zeta", received_at),
+            message_count=2,
+            payload=b"x" * 30,
+            payload_size=30,
+        ),
+        replace(
+            _message(broker_id, "alpha", received_at + timedelta(seconds=1)),
+            message_count=1,
+            payload=b"x" * 10,
+            payload_size=10,
+        ),
+        replace(
+            _message(broker_id, "middle", received_at + timedelta(seconds=2)),
+            message_count=3,
+            payload=b"x" * 20,
+            payload_size=20,
+        ),
+    )
+
+    try:
+        for message in messages:
+            repository.create_message(message)
+
+        result = repository.search_message(
+            MessageFilter(broker_id=broker_id, order=order)
+        )
+
+        assert tuple(message.topic for message in result) == expected_topics
     finally:
         repository.close()
         database.dispose()
