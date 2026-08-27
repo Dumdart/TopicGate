@@ -94,9 +94,13 @@ class AppDependencies:
             mqtt_repository_factory=self._create_observer_repository,
             observation_cache=self.observation_cache,
             observation_query=self.observation_query,
+            current_topics=self.topic_messages,
             control_operations=self.control_operations,
         )
-        self.snapshot_service = BrokerSnapshotService(self.runtime)
+        self.snapshot_service = BrokerSnapshotService(
+            self.runtime,
+            current_topics=self.topic_messages,
+        )
         self.mcp_setup = McpSetupService(
             self.runtime,
             self.snapshot_service,

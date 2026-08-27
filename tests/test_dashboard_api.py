@@ -10,9 +10,12 @@ from fastmcp import Client, FastMCP
 from topicgate.app.models.broker_snapshot import SnapshotLimitation
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.models.connection_status import ConnectionStatus
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.mqtt_observation import ObservationSource
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.mcp.api.dashboard_api import DashboardAPI
 
 
@@ -61,6 +64,27 @@ def dashboard_runtime() -> MagicMock:
             topic_state.topic: topic_state,
             unrelated_state.topic: unrelated_state,
         },
+    )
+    runtime.get_current_topics.side_effect = lambda _broker_id: tuple(
+        CurrentTopic(
+            TopicMessage(
+                broker_id=broker.id,
+                topic=state.topic,
+                payload=state.payload,
+                qos=state.qos,
+                retain=state.retain,
+                received_at=state.received_at,
+                payload_size=state.payload_size or len(state.payload),
+                message_count=state.message_count,
+                observation_id=uuid4(),
+            ),
+            (
+                ObservationStatus.CACHED
+                if state.source is ObservationSource.STORED
+                else ObservationStatus.LIVE
+            ),
+        )
+        for state in runtime.get_observer_model.return_value.topic_states.values()
     )
     runtime.get_connection_status.side_effect = lambda broker_id: (
         ConnectionStatus.CONNECTED

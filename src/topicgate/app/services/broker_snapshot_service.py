@@ -21,10 +21,14 @@ from topicgate.app.models.broker_snapshot import (
 )
 from topicgate.app.services.broker_resolver import BrokerResolver
 from topicgate.app.topicgate_runtime import TopicGateRuntime
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.connection_status import ConnectionStatus
-from topicgate.core.models.mqtt_observation import MqttObservation, ObservationSource
+from topicgate.core.models.current_topic import CurrentTopic
+from topicgate.core.models.mqtt_observation import ObservationSource
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.core.observer_limits import MAX_OBSERVED_TOPICS
 from topicgate.core.payload_limits import MAX_RENDERED_PAYLOAD_BYTES
@@ -46,12 +50,14 @@ class BrokerSnapshotService:
         self,
         runtime: TopicGateRuntime,
         *,
+        current_topics: CurrentTopicReader | None = None,
         resolver: BrokerResolver | None = None,
         clock: Clock | None = None,
         monotonic_clock: MonotonicClock | None = None,
         sleep: Sleep | None = None,
     ) -> None:
         self._runtime = runtime
+        self._current_topics = current_topics or runtime
         self._resolver = resolver or BrokerResolver(runtime)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._monotonic_clock = monotonic_clock or time.monotonic
@@ -142,22 +148,24 @@ class BrokerSnapshotService:
         actual_wait_seconds: float,
     ) -> BrokerSnapshot:
         captured_at = self._as_utc(self._clock())
-        model = self._runtime.get_observer_model(resolved.id)
         matching = sorted(
             (
-                state
-                for state in model.topic_states.values()
-                if mqtt_filter_matches(topic_filter, state.topic)
+                current
+                for current in self._current_topics.get_current_topics(resolved.id)
+                if mqtt_filter_matches(topic_filter, current.message.topic)
             ),
-            key=lambda state: state.topic,
+            key=lambda current: current.message.topic,
         )
         aged = tuple(
-            (state, self._age_seconds(captured_at, state.received_at))
-            for state in matching
+            (
+                current,
+                self._age_seconds(captured_at, current.message.received_at),
+            )
+            for current in matching
         )
         fresh = tuple(
-            (state, age)
-            for state, age in aged
+            (current, age)
+            for current, age in aged
             if max_age_seconds is None or age <= max_age_seconds
         )
         stale_count = len(aged) - len(fresh)
@@ -173,12 +181,12 @@ class BrokerSnapshotService:
         )
         topics = tuple(
             self._topic_snapshot(
-                state,
+                current,
                 age,
                 payload_limit_bytes,
                 observation_started_at=observation_started_at,
             )
-            for state, age in selected
+            for current, age in selected
         )
 
         observed_for_seconds = (
@@ -240,47 +248,53 @@ class BrokerSnapshotService:
     @classmethod
     def _topic_snapshot(
         cls,
-        state: MqttObservation,
+        current: CurrentTopic,
         age_seconds: float,
         payload_limit_bytes: int,
         *,
         observation_started_at: datetime | None,
     ) -> SnapshotTopicState:
+        message = current.message
         return SnapshotTopicState(
-            topic=state.topic,
-            payload=cls._render_payload(state, payload_limit_bytes),
-            qos=state.qos,
-            retain=state.retain,
-            received_at=cls._as_utc(state.received_at),
+            topic=message.topic,
+            payload=cls._render_payload(message, payload_limit_bytes),
+            qos=message.qos,
+            retain=message.retain,
+            received_at=cls._as_utc(message.received_at),
             age_seconds=age_seconds,
-            message_count=state.message_count,
-            source=state.source,
-            status=cls._topic_status(state, observation_started_at),
+            message_count=message.message_count,
+            source=(
+                ObservationSource.STORED
+                if current.status is ObservationStatus.CACHED
+                else ObservationSource.LIVE
+            ),
+            status=cls._topic_status(current, observation_started_at),
         )
 
     @classmethod
     def _topic_status(
         cls,
-        state: MqttObservation,
+        current: CurrentTopic,
         observation_started_at: datetime | None,
     ) -> SnapshotTopicStatus:
+        message = current.message
         if (
             observation_started_at is not None
-            and cls._as_utc(state.received_at)
+            and cls._as_utc(message.received_at)
             < cls._as_utc(observation_started_at)
         ):
             return SnapshotTopicStatus.STALE
-        if state.source == ObservationSource.STORED:
+        if current.status is ObservationStatus.CACHED:
             return SnapshotTopicStatus.CACHED
         return SnapshotTopicStatus.LIVE
 
     @staticmethod
     def _render_payload(
-        state: MqttObservation,
+        message: TopicMessage,
         payload_limit_bytes: int,
     ) -> SnapshotPayload:
-        available = bytes(state.payload)
-        original_size = max(state.payload_size or 0, len(available))
+        available = bytes(message.payload)
+        original_size = max(message.payload_size, len(available))
         rendered = available[:payload_limit_bytes]
         try:
             available.decode("utf-8")
@@ -310,7 +324,7 @@ class BrokerSnapshotService:
     def _limitations(
         *,
         status: object,
-        matching: list[MqttObservation],
+        matching: list[CurrentTopic],
         topics: tuple[SnapshotTopicState, ...],
         observation_started_at: datetime | None,
         dropped_message_count: int,
@@ -325,7 +339,9 @@ class BrokerSnapshotService:
             limitations.append(SnapshotLimitation.BROKER_DISCONNECTED)
         if observation_started_at is None:
             limitations.append(SnapshotLimitation.OBSERVATION_NOT_STARTED)
-        if any(state.source == ObservationSource.STORED for state in matching):
+        if any(
+            current.status is ObservationStatus.CACHED for current in matching
+        ):
             limitations.append(
                 SnapshotLimitation.STORED_STATE_PREDATES_OBSERVATION
             )

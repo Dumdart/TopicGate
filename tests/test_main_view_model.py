@@ -9,6 +9,7 @@ import pytest
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.observer_model import (
     ObserverModel,
     TopicNode,
@@ -16,6 +17,7 @@ from topicgate.core.models.observer_model import (
 )
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.observation_cache_administration import (
     BrokerCacheUsage,
@@ -378,6 +380,55 @@ class FakeTopicGateRuntime(TopicGateRuntime):
     """Runtime test double backed by in-memory repositories."""
 
 
+class FakeCurrentTopicReader:
+    def __init__(
+        self,
+        repositories: dict[UUID, FakeObserverRepository],
+    ) -> None:
+        self._repositories = repositories
+        self._observation_ids: dict[tuple[UUID, str], UUID] = {}
+
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
+        repository = self._repositories.get(broker_id)
+        if repository is None:
+            return ()
+        return tuple(
+            self._current_topic(broker_id, state)
+            for state in repository.get().topic_states.values()
+        )
+
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        repository = self._repositories.get(broker_id)
+        state = None if repository is None else repository.get_state(topic)
+        if state is None:
+            return None
+        return self._current_topic(broker_id, state)
+
+    def _current_topic(self, broker_id: UUID, state: TopicState) -> CurrentTopic:
+        observation_id = self._observation_ids.setdefault(
+            (broker_id, state.topic),
+            uuid4(),
+        )
+        return CurrentTopic(
+            TopicMessage(
+                broker_id=broker_id,
+                topic=state.topic,
+                payload=state.payload,
+                qos=state.qos,
+                retain=state.retain,
+                received_at=state.received_at,
+                payload_size=state.payload_size or len(state.payload),
+                message_count=state.message_count,
+                observation_id=observation_id,
+            ),
+            ObservationStatus.LIVE,
+        )
+
+
 def runtime_for(
     repository: FakeObserverRepository,
     broker_repository: FakeBrokerRepository | None = None,
@@ -387,11 +438,13 @@ def runtime_for(
     )
     profiles = brokers.get_all_profiles()
     repositories = {profile.id: repository for profile in profiles}
+    active_broker_id = brokers.get_profile().id
     return FakeTopicGateRuntime(
         brokers,
         repositories,
-        brokers.get_profile().id,
+        active_broker_id,
         lambda _profile: repository,
+        current_topics=FakeCurrentTopicReader(repositories),
     )
 
 
@@ -629,13 +682,15 @@ async def test_switching_broker_profile_moves_live_message_observation() -> None
         selected_profile.workspace.subscriptions = (Subscription("#"),)
         default_repo = FakeObserverRepository()
         selected_repo = FakeObserverRepository()
+        repositories = {
+            default_profile.id: default_repo,
+            selected_profile.id: selected_repo,
+        }
         runtime = FakeTopicGateRuntime(
             brokers,
-            {
-                default_profile.id: default_repo,
-                selected_profile.id: selected_repo,
-            },
+            repositories,
             default_profile.id,
+            current_topics=FakeCurrentTopicReader(repositories),
         )
         view_model = MainViewModel(runtime)
         await view_model.start()

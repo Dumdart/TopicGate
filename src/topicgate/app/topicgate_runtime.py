@@ -11,9 +11,11 @@ from topicgate.app.services.observation_query_service import ObservationQuerySer
 from topicgate.app.services.control_operation_service import ControlOperationService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.interfaces.broker_profile_store import BrokerProfileStore
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.broker_summary import BrokerSummary
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
@@ -50,6 +52,7 @@ class TopicGateRuntime(ServiceItem):
         observation_cache: ObservationCacheService | None = None,
         control_operations: ControlOperationService | None = None,
         observation_query: ObservationQueryService | None = None,
+        current_topics: CurrentTopicReader | None = None,
     ) -> None:
         self._brokers = broker_repository
         self._active_broker_id = (
@@ -61,6 +64,7 @@ class TopicGateRuntime(ServiceItem):
         self._mqtt_repository_factory = mqtt_repository_factory
         self._observation_cache = observation_cache
         self._observation_query = observation_query
+        self._current_topics = current_topics
         self._control_operations = control_operations
         if self._active_broker_id not in self._mqtt_repositories:
             raise ValueError("The active broker requires an MQTT repository.")
@@ -90,6 +94,18 @@ class TopicGateRuntime(ServiceItem):
 
     def get_message(self, message_id: UUID) -> TopicMessage:
         return self._require_observation_query().get_message(message_id)
+
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
+        self._get_broker_profile(broker_id)
+        return self._require_current_topics().get_current_topics(broker_id)
+
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        self._get_broker_profile(broker_id)
+        return self._require_current_topics().get_current_topic(broker_id, topic)
 
     def query_stored_observations(
         self, message_filter: MessageFilter
@@ -490,6 +506,11 @@ class TopicGateRuntime(ServiceItem):
         if self._observation_query is None:
             raise RuntimeError("Observation query operations are unavailable.")
         return self._observation_query
+
+    def _require_current_topics(self) -> CurrentTopicReader:
+        if self._current_topics is None:
+            raise RuntimeError("Current topic reads are unavailable.")
+        return self._current_topics
 
     def _validated_profile_name(self, name: str, broker_id: UUID) -> str:
         normalized_name = name.strip()
