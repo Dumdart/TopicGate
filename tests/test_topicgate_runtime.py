@@ -3,13 +3,21 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+    PersistedTopicSummary,
+)
 from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
@@ -34,6 +42,7 @@ def profile(name: str, host: str = "broker") -> BrokerProfile:
 def runtime_with(
     profiles: tuple[BrokerProfile, ...],
     observation_cache=None,
+    observation_query=None,
 ) -> tuple[TopicGateRuntime, MagicMock, MagicMock]:
     brokers = MagicMock()
     active_id = profiles[0].id
@@ -76,6 +85,7 @@ def runtime_with(
             active_id,
             lambda _profile: mqtt,
             observation_cache,
+            observation_query=observation_query,
         ),
         brokers,
         mqtt,
@@ -361,6 +371,65 @@ async def test_runtime_exposes_topic_queries_connection_commands_and_publish() -
         mqtt.publish.assert_awaited_once_with("home/set", b"off")
 
     await scenario()
+
+
+def test_runtime_delegates_stored_observation_queries() -> None:
+    active = profile("Default")
+    _, brokers, mqtt = runtime_with((active,))
+    query = MagicMock(spec=ObservationQueryService)
+    message_id = uuid4()
+    message_filter = MessageFilter(active.id)
+    message = MagicMock(spec=TopicMessage)
+    persisted_topics = (MagicMock(spec=PersistedTopicSummary),)
+    usage = CacheUsageSummary((BrokerCacheUsage(active.id, 1, 2, None, None),))
+    query.get_message.return_value = message
+    query.get_broker_messages.return_value = (message,)
+    query.get_latest_message.return_value = message
+    query.query_stored_observations.return_value = (message,)
+    query.get_cache_usage.return_value = usage
+    query.get_persisted_topics.return_value = persisted_topics
+    runtime = TopicGateRuntime(
+        brokers,
+        {active.id: mqtt},
+        active.id,
+        observation_query=query,
+    )
+
+    assert runtime.get_message(message_id) is message
+    assert runtime.get_broker_messages(active.id) == (message,)
+    assert runtime.get_latest_message("home/status") is message
+    assert runtime.query_stored_observations(message_filter) == (message,)
+    assert runtime.get_cache_usage() == usage
+    assert runtime.list_persisted_topics(active.id) == persisted_topics
+
+    query.get_message.assert_called_once_with(message_id)
+    query.get_broker_messages.assert_called_once_with(active.id)
+    query.get_latest_message.assert_called_once_with("home/status")
+    query.query_stored_observations.assert_called_once_with(message_filter)
+    query.get_cache_usage.assert_called_once_with()
+    query.get_persisted_topics.assert_called_once_with(active.id, ())
+
+
+def test_runtime_scopes_observation_storage_summary_to_a_broker() -> None:
+    active = profile("Default")
+    other = profile("Other")
+    query = MagicMock(spec=ObservationQueryService)
+    active_usage = BrokerCacheUsage(active.id, 2, 12, None, None)
+    other_usage = BrokerCacheUsage(other.id, 1, 6, None, None)
+    query.get_cache_usage.return_value = CacheUsageSummary(
+        (active_usage, other_usage)
+    )
+    runtime, _, _ = runtime_with(
+        (active, other),
+        observation_query=query,
+    )
+
+    assert runtime.get_observation_storage_summary() == CacheUsageSummary(
+        (active_usage, other_usage)
+    )
+    assert runtime.get_observation_storage_summary(other.id) == CacheUsageSummary(
+        (other_usage,)
+    )
 
 
 def test_runtime_exposes_mqtt_event_streams() -> None:

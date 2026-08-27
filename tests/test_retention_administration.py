@@ -6,6 +6,7 @@ import pytest
 
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.app.services.observation_cache_service import ObservationCacheService
+from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.core.models.observation_cache_administration import (
     RetentionRemovalReason,
 )
@@ -62,7 +63,7 @@ def test_usage_and_exact_id_partial_deletion(tmp_path, credential_store) -> None
     original = _message(broker_id, "home/value", b"old")
     try:
         messages.update_message(original)
-        usage = service.get_cache_usage().brokers[0]
+        usage = ObservationQueryService(messages).get_cache_usage().brokers[0]
         display = cache_usage_display(
             usage,
             ObservationRetentionPolicy(max_entries_per_broker=1),

@@ -1,12 +1,20 @@
-from collections.abc import Collection
 from collections import defaultdict
+from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from uuid import UUID
 
+from topicgate.app.services.observation_retention_policy_service import (
+    ObservationRetentionPolicyService,
+)
+from topicgate.core.interfaces.stored_observation_administrator import (
+    StoredObservationAdministrator,
+)
+from topicgate.core.interfaces.stored_observation_reader import (
+    StoredObservationReader,
+)
 from topicgate.core.models.observation_cache_administration import (
-    CacheUsageSummary,
     ObservationDeletionResult,
-    PersistedTopicSummary,
     RetentionImpactGroup,
     RetentionPolicyApplicationResult,
     RetentionPolicyPreview,
@@ -14,8 +22,6 @@ from topicgate.core.models.observation_cache_administration import (
 )
 from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionEntry,
-)
-from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionPreview,
 )
 from topicgate.core.models.observation_retention_policy import (
@@ -23,12 +29,6 @@ from topicgate.core.models.observation_retention_policy import (
 )
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.mqtt_topics import mqtt_filter_matches
-from topicgate.app.services.observation_retention_policy_service import (
-    ObservationRetentionPolicyService,
-)
-from topicgate.infrastructure.repository.topic_message_repository import (
-    TopicMessageRepository,
-)
 
 
 class ObservationCacheService:
@@ -36,10 +36,17 @@ class ObservationCacheService:
 
     def __init__(
         self,
-        messages: TopicMessageRepository,
+        stored_reader: StoredObservationReader,
         policies: ObservationRetentionPolicyService,
+        *,
+        administrator: StoredObservationAdministrator | None = None,
     ) -> None:
-        self._messages = messages
+        self._stored_reader = stored_reader
+        self._stored_administrator = (
+            cast(StoredObservationAdministrator, cast(object, stored_reader))
+            if administrator is None
+            else administrator
+        )
         self._policies = policies
 
     def get_retention_policy(self) -> ObservationRetentionPolicy:
@@ -50,7 +57,7 @@ class ObservationCacheService:
         policy: ObservationRetentionPolicy,
     ) -> ObservationRetentionPolicy:
         persisted = self._policies.update(policy)
-        self._messages.enforce_retention()
+        self._stored_administrator.enforce_retention()
         return persisted
 
     def preview_clear_cache(
@@ -58,14 +65,14 @@ class ObservationCacheService:
         broker_id: UUID,
         topics: Collection[str] | None = None,
     ) -> ObservationDeletionPreview:
-        return self._messages.preview_deletion(broker_id, topics)
+        return self._stored_reader.preview_deletion(broker_id, topics)
 
     def preview_unsubscribed(
         self,
         broker_id: UUID,
         subscriptions: Collection[Subscription],
     ) -> ObservationDeletionPreview:
-        preview = self._messages.preview_deletion(broker_id)
+        preview = self._stored_reader.preview_deletion(broker_id)
         entries = tuple(
             entry
             for entry in preview.entries
@@ -76,59 +83,31 @@ class ObservationCacheService:
         )
         return ObservationDeletionPreview(broker_id, entries)
 
-    def get_cache_usage(self) -> CacheUsageSummary:
-        return self._messages.cache_usage()
-
-    def get_persisted_topics(
-        self,
-        broker_id: UUID,
-        subscriptions: Collection[Subscription],
-    ) -> tuple[PersistedTopicSummary, ...]:
-        preview = self._messages.preview_deletion(broker_id)
-        return tuple(
-            PersistedTopicSummary(
-                broker_id=entry.broker_id,
-                topic=entry.topic,
-                observation_id=entry.observation_id,
-                stored_payload_bytes=entry.stored_payload_bytes,
-                received_at=entry.received_at,
-                is_subscribed=any(
-                    mqtt_filter_matches(item.topic_filter, entry.topic)
-                    for item in subscriptions
-                ),
-            )
-            for entry in preview.entries
-        )
-
     def preview_all(self) -> ObservationDeletionPreview:
-        return self._messages.preview_all_deletion()
+        return self._stored_reader.preview_all_deletion()
 
     def confirm_deletion_detailed(
         self,
         preview: ObservationDeletionPreview,
     ) -> ObservationDeletionResult:
-        return self._messages.delete_previewed_detailed(preview)
+        return self._stored_administrator.delete_previewed_detailed(preview)
 
     def preview_retention_policy(
         self,
         policy: ObservationRetentionPolicy,
-        subscriptions: dict[UUID, Collection[Subscription]],
+        subscriptions: Mapping[UUID, Collection[Subscription]],
         *,
         now: datetime | None = None,
     ) -> RetentionPolicyPreview:
         current = self._policies.get()
-        all_entries = self._messages.preview_all_deletion().entries
+        all_entries = self._stored_reader.preview_all_deletion().entries
         grouped = self._retention_impact(
             all_entries,
             policy,
             subscriptions,
             now=now or datetime.now(timezone.utc),
         )
-        entries = tuple(
-            entry
-            for group in grouped
-            for entry in group.entries
-        )
+        entries = tuple(entry for group in grouped for entry in group.entries)
         return RetentionPolicyPreview(
             current,
             policy,
@@ -139,7 +118,7 @@ class ObservationCacheService:
     def confirm_retention_policy(
         self,
         preview: RetentionPolicyPreview,
-        subscriptions: dict[UUID, Collection[Subscription]],
+        subscriptions: Mapping[UUID, Collection[Subscription]],
     ) -> RetentionPolicyApplicationResult:
         if self._policies.get() != preview.previous_policy:
             raise ValueError("The retention policy changed after preview.")
@@ -159,14 +138,14 @@ class ObservationCacheService:
         return self.confirm_deletion_detailed(preview).deleted_count
 
     def flush_pending_writes(self) -> None:
-        self._messages.flush()
+        self._stored_administrator.flush()
 
     @classmethod
     def _retention_impact(
         cls,
         entries: tuple[ObservationDeletionEntry, ...],
         policy: ObservationRetentionPolicy,
-        subscriptions: dict[UUID, Collection[Subscription]],
+        subscriptions: Mapping[UUID, Collection[Subscription]],
         *,
         now: datetime,
     ) -> tuple[RetentionImpactGroup, ...]:
@@ -194,9 +173,7 @@ class ObservationCacheService:
                     mqtt_filter_matches(item.topic_filter, entry.topic)
                     for item in subscriptions.get(entry.broker_id, ())
                 ):
-                    reasons[entry.observation_id] = (
-                        RetentionRemovalReason.UNSUBSCRIBED
-                    )
+                    reasons[entry.observation_id] = RetentionRemovalReason.UNSUBSCRIBED
 
         if policy.auto_remove_excess:
             by_broker: dict[UUID, list[ObservationDeletionEntry]] = defaultdict(list)
@@ -224,8 +201,7 @@ class ObservationCacheService:
             stored_bytes = sum(item.stored_payload_bytes for item in remaining)
             while (
                 len(remaining) > policy.max_entries_total
-                or stored_bytes
-                > policy.max_persisted_payload_database_bytes_total
+                or stored_bytes > policy.max_persisted_payload_database_bytes_total
             ):
                 reason = (
                     RetentionRemovalReason.GLOBAL_ENTRY_LIMIT

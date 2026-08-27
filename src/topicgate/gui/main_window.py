@@ -513,6 +513,30 @@ class MainWindow(QMainWindow):
                     )
                 )
             )
+            dialog.query_requested.connect(
+                lambda broker_id, topic_filter, after, before, order, limit: (
+                    self._run_async(
+                        self._view_model.query_stored_observations(
+                            broker_id,
+                            topic_filter,
+                            after,
+                            before,
+                            order,
+                            limit,
+                        )
+                    )
+                )
+            )
+            dialog.refresh_requested.connect(
+                lambda broker_id: self._run_async(
+                    self._view_model.load_stored_observations(broker_id)
+                )
+            )
+            dialog.message_requested.connect(
+                lambda message_id: self._run_async(
+                    self._view_model.inspect_stored_observation(message_id)
+                )
+            )
             self._stored_observations_dialog = dialog
         dialog.show()
         dialog.raise_()

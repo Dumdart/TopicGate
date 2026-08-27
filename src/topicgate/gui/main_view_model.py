@@ -3,6 +3,7 @@ import binascii
 from base64 import b64decode
 from contextlib import asynccontextmanager
 from contextlib import suppress
+from datetime import datetime
 from typing import AsyncIterator
 from uuid import UUID
 
@@ -14,6 +15,8 @@ from topicgate.app.services.mcp_setup_service import McpSetupService
 from topicgate.app.models.mcp_setup import McpPreflightCheck, McpSetupInformation
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
+from topicgate.core.models.message_filter import MessageFilter, OrderType
+from topicgate.core.models.mqtt_observation import MqttObservation, ObservationSource
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.observation_cache_administration import (
     CacheUsageSummary,
@@ -28,6 +31,7 @@ from topicgate.core.models.observation_deletion_preview import (
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.presentation.snapshot_presentation import (
@@ -89,8 +93,15 @@ class MainViewModel(QObject):
         self._preserve_snapshot_during_observation = False
         self._retention_policy: ObservationRetentionPolicy | None = None
         self._cache_usage = CacheUsageSummary(())
+        self._broker_cache_usage = CacheUsageSummary(())
         self._persisted_topics: tuple[PersistedTopicSummary, ...] = ()
         self._stored_observations_broker_id = self.active_broker_profile.id
+        self._stored_observation_filter = MessageFilter(
+            self._stored_observations_broker_id
+        )
+        self._stored_observation_results: tuple[TopicMessage, ...] = ()
+        self._selected_stored_observation: TopicMessage | None = None
+        self._stored_observation_error: str | None = None
 
     @property
     def title(self) -> str:
@@ -177,6 +188,46 @@ class MainViewModel(QObject):
     @property
     def cache_usage_summary(self) -> CacheUsageSummary:
         return self._cache_usage
+
+    @property
+    def broker_cache_usage_summary(self) -> CacheUsageSummary:
+        return self._broker_cache_usage
+
+    @property
+    def stored_observations_broker_id(self) -> UUID:
+        return self._stored_observations_broker_id
+
+    @property
+    def stored_observation_filter(self) -> MessageFilter:
+        return self._stored_observation_filter
+
+    @property
+    def stored_observation_results(self) -> tuple[TopicMessage, ...]:
+        return self._stored_observation_results
+
+    @property
+    def stored_observation_error(self) -> str | None:
+        return self._stored_observation_error
+
+    @property
+    def selected_stored_observation_detail(self) -> TopicDetail:
+        message = self._selected_stored_observation
+        if message is None:
+            return topic_detail(None)
+        return topic_detail(
+            MqttObservation(
+                name=message.topic.rsplit("/", maxsplit=1)[-1],
+                topic=message.topic,
+                payload=message.payload,
+                qos=message.qos,
+                retain=message.retain,
+                recieved_at=message.received_at,
+                message_count=message.message_count,
+                payload_size=message.payload_size,
+                source=ObservationSource.STORED,
+                observation_id=message.observation_id,
+            )
+        )
 
     @property
     def persisted_topics(self) -> tuple[PersistedTopicSummary, ...]:
@@ -380,16 +431,103 @@ class MainViewModel(QObject):
     ) -> None:
         selected = broker_id or self._stored_observations_broker_id
         async with self._operation("stored-observations"):
-            policy, usage, topics = await asyncio.gather(
-                asyncio.to_thread(self._runtime.get_retention_policy),
-                asyncio.to_thread(self._runtime.get_cache_usage),
-                asyncio.to_thread(self._runtime.list_persisted_topics, selected),
+            query = MessageFilter(
+                broker_id=selected,
+                topic_filter=self._stored_observation_filter.topic_filter,
+                after=self._stored_observation_filter.after,
+                before=self._stored_observation_filter.before,
+                order=self._stored_observation_filter.order,
+                limit=self._stored_observation_filter.limit,
             )
+            self._stored_observation_error = None
+            try:
+                policy, usage, broker_usage, topics, results = await asyncio.gather(
+                    asyncio.to_thread(self._runtime.get_retention_policy),
+                    asyncio.to_thread(
+                        self._runtime.get_observation_storage_summary,
+                        None,
+                    ),
+                    asyncio.to_thread(
+                        self._runtime.get_observation_storage_summary,
+                        selected,
+                    ),
+                    asyncio.to_thread(self._runtime.list_persisted_topics, selected),
+                    asyncio.to_thread(
+                        self._runtime.query_stored_observations,
+                        query,
+                    ),
+                )
+            except Exception as error:
+                self._set_stored_observation_error(error)
+                raise
             self._stored_observations_broker_id = selected
+            self._stored_observation_filter = query
             self._retention_policy = policy
             self._cache_usage = usage
+            self._broker_cache_usage = broker_usage
             self._persisted_topics = topics
+            self._stored_observation_results = results
+            self._selected_stored_observation = None
             self.stored_observations_changed.emit()
+
+    async def query_stored_observations(
+        self,
+        broker_id: UUID,
+        topic_filter: str = "#",
+        after: datetime | None = None,
+        before: datetime | None = None,
+        order: OrderType = OrderType.RECEIVED_DESC,
+        limit: int = 50,
+    ) -> tuple[TopicMessage, ...]:
+        if after is not None and before is not None and after > before:
+            error = ValueError("The after date-time must not be later than before.")
+            self._set_stored_observation_error(error)
+            raise error
+        if limit < 1:
+            error = ValueError("The result limit must be at least 1.")
+            self._set_stored_observation_error(error)
+            raise error
+        message_filter = MessageFilter(
+            broker_id=broker_id,
+            topic_filter=topic_filter.strip() or "#",
+            after=after,
+            before=before,
+            order=order,
+            limit=limit,
+        )
+        async with self._operation("stored-observations"):
+            self._stored_observation_error = None
+            self._selected_stored_observation = None
+            try:
+                results = await asyncio.to_thread(
+                    self._runtime.query_stored_observations,
+                    message_filter,
+                )
+            except Exception as error:
+                self._stored_observation_results = ()
+                self._set_stored_observation_error(error)
+                raise
+            self._stored_observations_broker_id = broker_id
+            self._stored_observation_filter = message_filter
+            self._stored_observation_results = results
+            self.stored_observations_changed.emit()
+            return results
+
+    async def inspect_stored_observation(self, message_id: UUID) -> TopicMessage:
+        async with self._operation("stored-observations"):
+            self._stored_observation_error = None
+            try:
+                message = await asyncio.to_thread(
+                    self._runtime.get_message,
+                    message_id,
+                )
+            except Exception as error:
+                self._selected_stored_observation = None
+                self._set_stored_observation_error(error)
+                raise
+            self._selected_stored_observation = message
+            self.stored_observations_changed.emit()
+            return message
 
     async def preview_retention_policy(
         self,
@@ -487,13 +625,56 @@ class MainViewModel(QObject):
             return result
 
     async def _reload_stored_observation_data(self) -> None:
-        self._cache_usage, self._persisted_topics = await asyncio.gather(
-            asyncio.to_thread(self._runtime.get_cache_usage),
+        query = MessageFilter(
+            broker_id=self._stored_observations_broker_id,
+            topic_filter=self._stored_observation_filter.topic_filter,
+            after=self._stored_observation_filter.after,
+            before=self._stored_observation_filter.before,
+            order=self._stored_observation_filter.order,
+            limit=self._stored_observation_filter.limit,
+        )
+        (
+            self._cache_usage,
+            self._broker_cache_usage,
+            self._persisted_topics,
+            self._stored_observation_results,
+        ) = await asyncio.gather(
+            asyncio.to_thread(
+                self._runtime.get_observation_storage_summary,
+                None,
+            ),
+            asyncio.to_thread(
+                self._runtime.get_observation_storage_summary,
+                self._stored_observations_broker_id,
+            ),
             asyncio.to_thread(
                 self._runtime.list_persisted_topics,
                 self._stored_observations_broker_id,
             ),
+            asyncio.to_thread(
+                self._runtime.query_stored_observations,
+                query,
+            ),
         )
+        self._stored_observation_filter = query
+        self._stored_observation_error = None
+        selected_id = (
+            self._selected_stored_observation.observation_id
+            if self._selected_stored_observation is not None
+            else None
+        )
+        self._selected_stored_observation = next(
+            (
+                item
+                for item in self._stored_observation_results
+                if item.observation_id == selected_id
+            ),
+            None,
+        )
+
+    def _set_stored_observation_error(self, error: BaseException) -> None:
+        self._stored_observation_error = str(error)
+        self.stored_observations_changed.emit()
 
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._operation("subscription"):
@@ -502,6 +683,7 @@ class MainViewModel(QObject):
                 subscription,
             )
             self.log_message.emit(f"Added subscription: {subscription.topic_filter}")
+            await self._refresh_stored_observations_after_subscription_change()
             self.refresh_snapshot()
             self.subscriptions_changed.emit()
 
@@ -518,6 +700,7 @@ class MainViewModel(QObject):
                     f"{cleanup.deleted_count} observations "
                     f"({size_label(cleanup.deleted_bytes)})."
                 )
+            await self._refresh_stored_observations_after_subscription_change()
             if self._topic and not any(
                 mqtt_filter_matches(item.topic_filter, self._topic)
                 for item in self.subscriptions
@@ -544,10 +727,22 @@ class MainViewModel(QObject):
                     f"{cleanup.deleted_count} observations "
                     f"({size_label(cleanup.deleted_bytes)})."
                 )
+            await self._refresh_stored_observations_after_subscription_change()
             if self._topic == original_filter:
                 self._topic = subscription.topic_filter
             self.refresh_snapshot()
             self.subscriptions_changed.emit()
+
+    async def _refresh_stored_observations_after_subscription_change(
+        self,
+    ) -> None:
+        if (
+            self._retention_policy is None
+            or not self._retention_policy.auto_remove_unsubscribed
+        ):
+            return
+        await self._reload_stored_observation_data()
+        self.stored_observations_changed.emit()
 
     async def reconnect_to_broker(self) -> None:
         async with self._operation("connection"):

@@ -1,12 +1,13 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import (
     ObserverModel,
@@ -15,6 +16,19 @@ from topicgate.core.models.observer_model import (
 )
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
+from topicgate.core.models.observation_cache_administration import (
+    BrokerCacheUsage,
+    CacheUsageSummary,
+    ObservationDeletionResult,
+)
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+    ObservationDeletionPreview,
+)
+from topicgate.core.models.observation_retention_policy import (
+    ObservationRetentionPolicy,
+)
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
@@ -62,6 +76,139 @@ async def test_broker_lifecycle_operations_do_not_overlap() -> None:
             assert "already in progress" in str(error)
         else:
             raise AssertionError("Expected overlapping lifecycle operation to fail")
+
+
+async def test_stored_observation_query_builds_filter_and_runs_in_thread() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    broker_id = runtime.active_broker.id
+    after = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    before = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    message = TopicMessage(
+        broker_id,
+        "home/kitchen/temperature",
+        b"21.5",
+        1,
+        False,
+        before,
+        4,
+        7,
+        uuid4(),
+    )
+    query = MagicMock(return_value=(message,))
+    runtime.query_stored_observations = query  # type: ignore[method-assign]
+
+    async def run_in_place(function, *args):
+        return function(*args)
+
+    with patch(
+        "topicgate.gui.main_view_model.asyncio.to_thread",
+        new_callable=AsyncMock,
+        side_effect=run_in_place,
+    ) as to_thread:
+        results = await MainViewModel(runtime).query_stored_observations(
+            broker_id,
+            "home/+/temperature",
+            after,
+            before,
+            OrderType.MESSAGE_COUNT_DESC,
+            12,
+        )
+
+    expected = MessageFilter(
+        broker_id,
+        "home/+/temperature",
+        after,
+        before,
+        OrderType.MESSAGE_COUNT_DESC,
+        12,
+    )
+    assert results == (message,)
+    query.assert_called_once_with(expected)
+    to_thread.assert_awaited_once_with(query, expected)
+
+
+async def test_stored_observation_payload_error_is_reported_in_state() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    runtime.get_message = MagicMock(  # type: ignore[method-assign]
+        side_effect=KeyError("Observation was deleted")
+    )
+    view_model = MainViewModel(runtime)
+
+    with pytest.raises(KeyError, match="Observation was deleted"):
+        await view_model.inspect_stored_observation(uuid4())
+
+    assert view_model.stored_observation_error == "'Observation was deleted'"
+    assert not view_model.selected_stored_observation_detail.has_value
+
+
+async def test_cache_deletion_refreshes_results_and_both_storage_summaries() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    broker_id = runtime.active_broker.id
+    observation_id = uuid4()
+    entry = ObservationDeletionEntry(
+        broker_id,
+        "home/old",
+        observation_id,
+        datetime(2026, 8, 1, tzinfo=timezone.utc),
+        3,
+    )
+    preview = ObservationDeletionPreview(broker_id, (entry,), "broker")
+    deletion = ObservationDeletionResult((entry,), (entry,), ())
+    remaining = TopicMessage(
+        broker_id,
+        "home/current",
+        b"on",
+        0,
+        True,
+        datetime(2026, 8, 2, tzinfo=timezone.utc),
+        2,
+        1,
+        uuid4(),
+    )
+    all_usage = CacheUsageSummary(
+        (BrokerCacheUsage(broker_id, 1, 2, remaining.received_at, remaining.received_at),)
+    )
+    scoped_usage = CacheUsageSummary(all_usage.brokers)
+    runtime.confirm_cache_deletion_detailed = MagicMock(  # type: ignore[method-assign]
+        return_value=deletion
+    )
+    runtime.get_observation_storage_summary = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda broker=None: all_usage if broker is None else scoped_usage
+    )
+    runtime.list_persisted_topics = MagicMock(return_value=())  # type: ignore[method-assign]
+    runtime.query_stored_observations = MagicMock(  # type: ignore[method-assign]
+        return_value=(remaining,)
+    )
+    view_model = MainViewModel(runtime)
+
+    await view_model.confirm_cache_deletion(preview)
+
+    assert view_model.cache_usage_summary is all_usage
+    assert view_model.broker_cache_usage_summary is scoped_usage
+    assert view_model.stored_observation_results == (remaining,)
+    summary_calls = runtime.get_observation_storage_summary.call_args_list
+    assert [item.args for item in summary_calls] == [(None,), (broker_id,)]
+
+
+async def test_subscription_change_refreshes_storage_when_cleanup_is_enabled() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    usage = CacheUsageSummary(())
+    runtime.get_observation_storage_summary = MagicMock(  # type: ignore[method-assign]
+        return_value=usage
+    )
+    runtime.list_persisted_topics = MagicMock(return_value=())  # type: ignore[method-assign]
+    runtime.query_stored_observations = MagicMock(return_value=())  # type: ignore[method-assign]
+    view_model = MainViewModel(runtime)
+    view_model._retention_policy = ObservationRetentionPolicy(
+        auto_remove_unsubscribed=True
+    )
+
+    await view_model.add_subscription(Subscription("new/#"))
+
+    runtime.query_stored_observations.assert_called_once_with(
+        MessageFilter(view_model.active_broker_profile.id)
+    )
+    assert runtime.get_observation_storage_summary.call_count == 2
 
     async with view_model._operation("stored-observations"):
         with pytest.raises(RuntimeError, match="already in progress"):

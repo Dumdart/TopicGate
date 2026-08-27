@@ -2,27 +2,31 @@ from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
 from queue import Empty, Queue
 from threading import Lock, Thread
-from typing import Literal
+from typing import Literal, Tuple
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import Select, delete, func, select
 
-from topicgate.core.models.message_filter import MessageFilter
-from topicgate.core.models.observation_deletion_preview import (
-    ObservationDeletionEntry,
-    ObservationDeletionPreview,
+from topicgate.core.interfaces.stored_observation_administrator import (
+    StoredObservationAdministrator,
 )
+from topicgate.core.interfaces.stored_observation_reader import StoredObservationReader
+from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_cache_administration import (
     BrokerCacheUsage,
     CacheUsageSummary,
     ObservationDeletionResult,
 )
+from topicgate.core.models.observation_deletion_preview import (
+    ObservationDeletionEntry,
+    ObservationDeletionPreview,
+)
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
 from topicgate.core.models.topic_message import TopicMessage
-from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.topic_message_mapper import (
     TopicMessageMapper,
@@ -33,7 +37,9 @@ from topicgate.processors.observation_retention_processor import (
 )
 
 
-class TopicMessageRepository(TopicMessageStore):
+class TopicMessageRepository(
+    TopicMessageStore, StoredObservationReader, StoredObservationAdministrator
+):
     """Persist the latest observed MQTT message for each broker topic."""
 
     _MAX_WRITE_BATCH = 100
@@ -75,7 +81,9 @@ class TopicMessageRepository(TopicMessageStore):
     def get_latest_message(self, topic: str | None = None) -> TopicMessage:
         self.flush()
         statement = select(MqttMessageRow).order_by(
-            MqttMessageRow.received_at.desc()
+            MqttMessageRow.received_at.desc(),
+            MqttMessageRow.topic.asc(),
+            MqttMessageRow.broker_id.asc(),
         )
         if topic is not None:
             statement = statement.where(MqttMessageRow.topic == topic)
@@ -85,31 +93,7 @@ class TopicMessageRepository(TopicMessageStore):
                 raise KeyError("Unknown topic message: latest message")
             return TopicMessageMapper.to_dto(row)
 
-    def get_all_latest_messages(self) -> list[tuple[str, TopicMessage]]:
-        self.flush()
-        ranked_messages = select(
-            MqttMessageRow,
-            func.row_number()
-            .over(
-                partition_by=MqttMessageRow.topic,
-                order_by=MqttMessageRow.received_at.desc(),
-            )
-            .label("message_rank"),
-        ).subquery()
-        latest_message = aliased(MqttMessageRow, ranked_messages)
-        statement = (
-            select(latest_message)
-            .where(ranked_messages.c.message_rank == 1)
-            .order_by(latest_message.topic)
-        )
-
-        with self._db.session() as session:
-            return [
-                (row.topic, TopicMessageMapper.to_dto(row))
-                for row in session.scalars(statement).all()
-            ]
-
-    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+    def get_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
         """Return the current persisted topic states for one broker."""
         self.flush()
         statement = (
@@ -123,11 +107,18 @@ class TopicMessageRepository(TopicMessageStore):
                 for row in session.scalars(statement).all()
             )
 
-    def search_message(
-        self, message_filter: MessageFilter
-    ) -> tuple[TopicMessage, ...]:
+    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+        """Return the latest stored state for each topic owned by a broker."""
+        return self.get_messages(broker_id)
+
+    def search_message(self, message_filter: MessageFilter) -> tuple[TopicMessage, ...]:
+        if message_filter.limit < 0:
+            raise ValueError("Message filter limit cannot be negative.")
         self.flush()
-        statement = select(MqttMessageRow)
+        statement = select(MqttMessageRow).where(
+            MqttMessageRow.broker_id == message_filter.broker_id
+        )
+
         if message_filter.after is not None:
             statement = statement.where(
                 MqttMessageRow.received_at >= message_filter.after
@@ -136,17 +127,22 @@ class TopicMessageRepository(TopicMessageStore):
             statement = statement.where(
                 MqttMessageRow.received_at <= message_filter.before
             )
-        if message_filter.topics:
-            statement = statement.where(
-                MqttMessageRow.topic.in_(message_filter.topics)
-            )
-        statement = statement.order_by(MqttMessageRow.received_at.desc())
+
+        statement = self._resolve_filter_order(statement, message_filter)
 
         with self._db.session() as session:
-            return tuple(
-                TopicMessageMapper.to_dto(row)
-                for row in session.scalars(statement).all()
-            )
+            rows = session.scalars(statement).all()
+
+        # Check MQTT wildcard semantics after SQL has applied its predicates.
+        matching_rows = (
+            row
+            for row in rows
+            if mqtt_filter_matches(message_filter.topic_filter, row.topic)
+        )
+        return tuple(
+            TopicMessageMapper.to_dto(row)
+            for row in list(matching_rows)[: message_filter.limit]
+        )
 
     def create_message(self, message: TopicMessage) -> TopicMessage:
         self._enqueue("create", message)
@@ -208,8 +204,7 @@ class TopicMessageRepository(TopicMessageStore):
         )
         with self._db.session() as session:
             entries = tuple(
-                self._deletion_entry(row)
-                for row in session.scalars(statement).all()
+                self._deletion_entry(row) for row in session.scalars(statement).all()
             )
         return ObservationDeletionPreview(None, entries, "all_brokers")
 
@@ -355,8 +350,9 @@ class TopicMessageRepository(TopicMessageStore):
                     for operation, message in latest_writes.values():
                         if policy is not None:
                             message = (
-                                ObservationRetentionProcessor
-                                .truncate_topic_message(message, policy)
+                                ObservationRetentionProcessor.truncate_topic_message(
+                                    message, policy
+                                )
                             )
                         row = TopicMessageMapper.to_row(message)
                         if operation == "create":
@@ -436,3 +432,48 @@ class TopicMessageRepository(TopicMessageStore):
             stored_bytes -= len(row.payload)
             excess_entries = max(0, excess_entries - 1)
             session.delete(row)
+
+    @staticmethod
+    def _resolve_filter_order(
+        statement: Select[Tuple[MqttMessageRow]],
+        message_filter: MessageFilter,
+    ) -> Select[Tuple[MqttMessageRow]]:
+        order = message_filter.order
+
+        match order:
+            case OrderType.RECEIVED_ASC:
+                return statement.order_by(
+                    MqttMessageRow.received_at.asc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.RECEIVED_DESC:
+                return statement.order_by(
+                    MqttMessageRow.received_at.desc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.TOPIC_ASC:
+                return statement.order_by(MqttMessageRow.topic.asc())
+            case OrderType.TOPIC_DESC:
+                return statement.order_by(MqttMessageRow.topic.desc())
+            case OrderType.MESSAGE_COUNT_ASC:
+                return statement.order_by(
+                    MqttMessageRow.message_count.asc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.MESSAGE_COUNT_DESC:
+                return statement.order_by(
+                    MqttMessageRow.message_count.desc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.PAYLOAD_SIZE_ASC:
+                return statement.order_by(
+                    MqttMessageRow.payload_size.asc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case OrderType.PAYLOAD_SIZE_DESC:
+                return statement.order_by(
+                    MqttMessageRow.payload_size.desc(),
+                    MqttMessageRow.topic.asc(),
+                )
+            case _:
+                raise ValueError(f"Unsupported message order: {order!r}")
