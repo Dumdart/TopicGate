@@ -12,7 +12,7 @@ from topicgate.core.interfaces.stored_observation_administrator import (
 )
 from topicgate.core.interfaces.stored_observation_reader import StoredObservationReader
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
-from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_cache_administration import (
     BrokerCacheUsage,
@@ -40,7 +40,7 @@ from topicgate.processors.observation_retention_processor import (
 
 
 class TopicMessageRepository(
-    TopicMessageStore,
+    CurrentTopicReader,
     StoredObservationReader,
     StoredObservationAdministrator,
     TopicMessageRecorder,

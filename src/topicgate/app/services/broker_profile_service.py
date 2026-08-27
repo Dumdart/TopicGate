@@ -10,7 +10,7 @@ from topicgate.core.models.mqtt_observation import (
     MqttObservation,
     ObservationSource,
 )
-from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
@@ -34,7 +34,7 @@ class BrokerProfileService:
         *,
         credential_store: CredentialStore,
         runtime_state: BrokerRuntimeState | None = None,
-        topic_messages: TopicMessageStore | None = None,
+        topic_messages: CurrentTopicReader | None = None,
     ) -> None:
         if isinstance(settings, DatabaseContext):
             self._db = settings
