@@ -23,6 +23,12 @@ from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
 from topicgate.core.models.topic_message import TopicMessage
+from topicgate.core.interfaces.stored_observation_administrator import (
+    StoredObservationAdministrator,
+)
+from topicgate.core.interfaces.stored_observation_reader import (
+    StoredObservationReader,
+)
 from topicgate.core.interfaces.topic_message_store import TopicMessageStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.topic_message_mapper import (
@@ -34,7 +40,11 @@ from topicgate.processors.observation_retention_processor import (
 )
 
 
-class TopicMessageRepository(TopicMessageStore):
+class TopicMessageRepository(
+    TopicMessageStore,
+    StoredObservationReader,
+    StoredObservationAdministrator,
+):
     """Persist the latest observed MQTT message for each broker topic."""
 
     _MAX_WRITE_BATCH = 100

@@ -64,6 +64,7 @@ class AppDependencies:
         self.observation_cache = ObservationCacheService(
             self.topic_messages,
             self.retention_policy,
+            administrator=self.topic_messages,
         )
         self.control_operations = ControlOperationService(
             self._db_context,
