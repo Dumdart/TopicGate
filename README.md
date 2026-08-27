@@ -22,6 +22,12 @@ TopicGate gives you a local, intentional view of MQTT data. Configure broker pro
 
 It is built for a practical boundary: broker credentials stay on your machine, observed state is persisted locally, and the MCP server starts in **read-only mode**. MQTT control—connecting, changing subscriptions, refreshing observations, or publishing—requires an explicit opt-in.
 
+## Demo
+
+See TopicGate connect to an MQTT broker, inspect live topic state, answer an agent query with provenance, and enforce the boundary between observation and authorized control.
+
+[Watch the TopicGate demo →](https://www.youtube.com/watch?v=_Qtc01kABkg)
+
 ## What it does
 
 | Desktop | MCP server |
