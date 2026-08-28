@@ -29,11 +29,11 @@ class TopicAPI(MCPApi):
         self,
         broker: UUID | str | None = None,
     ) -> tuple[str, ...]:
-        """List observed topic names using the legacy read contract.
+        """List current topic names from the unified repository-backed view.
 
         Side effects: None; this does not activate, connect, or refresh a broker.
         Required state: Omit broker only when an active profile exists; results are
-        limited to state already observed or restored during this process lifetime.
+        limited to state already observed or restored by TopicGate.
         Identifiers: broker accepts a UUID or unique case-insensitive name.
         Failures: Fails for no active profile or unknown or ambiguous profiles.
         """
@@ -46,7 +46,7 @@ class TopicAPI(MCPApi):
         broker_id: UUID | str,
         topic: str,
     ) -> TopicStateResult | None:
-        """Read one observed topic using the legacy read contract.
+        """Read one topic from the unified repository-backed current view.
 
         Side effects: None; this does not activate, connect, or refresh a broker.
         Required state: The profile must exist; an unobserved topic returns null.

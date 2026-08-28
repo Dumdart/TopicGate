@@ -5,24 +5,54 @@ from uuid import uuid4
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import (
     MqttObservation,
     ObservationSource,
 )
-from topicgate.core.models.observation_deletion_preview import (
-    ObservationDeletionEntry,
-)
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
 from topicgate.processors.observer_model_processor import ObserverModelProcessor
+
+
+class MemoryCurrentTopics:
+    def __init__(self) -> None:
+        self._current: dict[tuple[object, str], CurrentTopic] = {}
+
+    def record_message(self, message: TopicMessage) -> None:
+        self._current[(message.broker_id, message.topic)] = CurrentTopic(
+            message,
+            ObservationStatus.LIVE,
+        )
+
+    def get_current_topics(self, broker_id) -> tuple[CurrentTopic, ...]:
+        return tuple(
+            current
+            for (owner_id, _), current in self._current.items()
+            if owner_id == broker_id
+        )
+
+    def get_current_topic(self, broker_id, topic) -> CurrentTopic | None:
+        return self._current.get((broker_id, topic))
+
+    def remove_current_topics(self, broker_id, topics) -> None:
+        for topic in topics:
+            self._current.pop((broker_id, topic), None)
+
+    def remove_current_broker(self, broker_id) -> None:
+        for key in tuple(self._current):
+            if key[0] == broker_id:
+                self._current.pop(key)
 
 
 def build_repository(
@@ -32,6 +62,15 @@ def build_repository(
     broker_id=None,
     message_recorder=None,
 ) -> tuple[ObserverMqttRepository, MagicMock]:
+    broker_id = broker_id or uuid4()
+    current_topics = MemoryCurrentTopics()
+    if message_recorder is None:
+        message_recorder = current_topics
+    else:
+        message_recorder.record_message.side_effect = current_topics.record_message
+        message_recorder.remove_current_topics.side_effect = (
+            current_topics.remove_current_topics
+        )
     manager = MagicMock()
     manager.activate = AsyncMock()
     manager.deactivate = AsyncMock()
@@ -53,6 +92,7 @@ def build_repository(
             clock=clock,
             broker_id=broker_id,
             message_recorder=message_recorder,
+            current_topics=current_topics,
         )
 
     return repository, manager
@@ -75,14 +115,15 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
     assert repository.get_value("SmartHome/missing") is None
 
 
-def test_repository_updates_the_broker_profile_observer_model() -> None:
+def test_repository_keeps_topic_values_out_of_observer_metadata_model() -> None:
     profile_model = ObserverModel(root_stats=[])
     repository, _ = build_repository(profile_model)
     message = MqttMessage("SmartHome/door/status", b"open", qos=1, retain=False)
 
     repository.handle_message(None, None, message)
 
-    assert profile_model.topic_states[message.topic].payload == b"open"
+    assert profile_model.topic_states == {}
+    assert repository.get_state(message.topic).payload == b"open"
 
 
 def test_repository_truncates_before_updating_model_and_sink() -> None:
@@ -130,7 +171,7 @@ def test_repository_records_processed_topic_message() -> None:
     assert recorded.observation_id == observation.observation_id
 
 
-def test_exact_eviction_removes_only_matching_stored_observations() -> None:
+def test_repository_reads_current_values_instead_of_supplied_model_values() -> None:
     stored_id = uuid4()
     replacement_id = uuid4()
     received_at = datetime.now(timezone.utc)
@@ -159,26 +200,8 @@ def test_exact_eviction_removes_only_matching_stored_observations() -> None:
         topic_states={stored.topic: stored, live.topic: live},
     )
     repository, _ = build_repository(model)
-    entries = (
-        ObservationDeletionEntry(
-            uuid4(),
-            stored.topic,
-            stored_id,
-            received_at,
-            len(stored.payload),
-        ),
-        ObservationDeletionEntry(
-            uuid4(),
-            live.topic,
-            replacement_id,
-            received_at,
-            len(live.payload),
-        ),
-    )
-
-    assert repository.evict_stored_observations(entries) == 1
     assert repository.get_state(stored.topic) is None
-    assert repository.get_state(live.topic) is live
+    assert repository.get_state(live.topic) is None
 
 
 async def test_repository_updates_topic_state_before_publishing_message() -> None:

@@ -1,5 +1,4 @@
 from dataclasses import replace
-from typing import cast
 from uuid import UUID
 
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
@@ -7,11 +6,6 @@ from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.observer_model import ObserverModel
-from topicgate.core.models.mqtt_observation import (
-    MqttObservation,
-    ObservationSource,
-)
-from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
@@ -36,7 +30,7 @@ class BrokerProfileService:
         *,
         credential_store: CredentialStore,
         runtime_state: BrokerRuntimeState | None = None,
-        topic_messages: CurrentTopicReader | None = None,
+        topic_messages: TopicMessageRecorder | None = None,
     ) -> None:
         if isinstance(settings, DatabaseContext):
             self._db = settings
@@ -51,12 +45,7 @@ class BrokerProfileService:
         self.brokers = BrokerRepository(self._db)
         self.configs = BrokerConfigRepository(self._db)
         self.subscriptions = SubscriptionRepository(self._db)
-        self._topic_messages = topic_messages
-        self._topic_message_recorder = (
-            None
-            if topic_messages is None
-            else cast(TopicMessageRecorder, cast(object, topic_messages))
-        )
+        self._topic_message_recorder = topic_messages
         self._settings_id = supplied_settings.id if supplied_settings else None
 
         identities = self.brokers.list_profiles()
@@ -90,7 +79,7 @@ class BrokerProfileService:
         subscriptions = self.subscriptions.list_for_workspace(identity.workspace_id)
         model = self._runtime_state.get_model(identity.id)
         if model is None:
-            model = self._hydrate_observer_model(identity.id, subscriptions)
+            model = self._hydrate_observer_model(subscriptions)
         workspace = ObserverWorkspace(
             id=identity.workspace_id,
             profile_id=identity.id,
@@ -218,30 +207,11 @@ class BrokerProfileService:
         self._store_password(identity.id, config.password)
         self._runtime_state.set_config_id(identity.id, config.id)
 
-    def _hydrate_observer_model(self, broker_id: UUID, subscriptions) -> ObserverModel:
+    def _hydrate_observer_model(self, subscriptions) -> ObserverModel:
         model = ObserverModelProcessor.add_topics(
             ObserverModel(root_stats=[]),
             (item.topic_filter for item in subscriptions),
         )
-        if self._topic_messages is None:
-            return model
-        for current in self._topic_messages.get_current_topics(broker_id):
-            message = current.message
-            node = ObserverModelProcessor.find_or_create_node(model, message.topic)
-            state = MqttObservation(
-                name=node.segment,
-                topic=message.topic,
-                payload=message.payload,
-                qos=message.qos,
-                retain=message.retain,
-                recieved_at=message.received_at,
-                payload_size=message.payload_size,
-                message_count=message.message_count,
-                source=ObservationSource.STORED,
-                observation_id=message.observation_id,
-            )
-            node.state = state
-            model.topic_states[message.topic] = state
         return model
 
     def _store_password(self, profile_id: UUID, password: str) -> None:

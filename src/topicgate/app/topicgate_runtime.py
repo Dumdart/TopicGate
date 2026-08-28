@@ -1,4 +1,3 @@
-from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from contextlib import nullcontext
 from dataclasses import replace
@@ -36,6 +35,7 @@ from topicgate.core.models.observation_retention_policy import (
 from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.topic_message import TopicMessage
+from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class TopicGateRuntime(ServiceItem):
@@ -77,7 +77,7 @@ class TopicGateRuntime(ServiceItem):
         await self.active_repo.start()
 
     async def stop(self) -> None:
-        model = self.active_repo.get()
+        model = self.get_observer_model(self._active_broker_id)
         try:
             await self.active_repo.stop()
         finally:
@@ -90,7 +90,11 @@ class TopicGateRuntime(ServiceItem):
         )
 
     def list_topics(self, broker_id: UUID | None = None) -> tuple[str, ...]:
-        return self._repository_for(broker_id).get_all_topics()
+        selected_id = self._active_broker_id if broker_id is None else broker_id
+        return tuple(
+            current.message.topic
+            for current in self.get_current_topics(selected_id)
+        )
 
     def get_message(self, message_id: UUID) -> TopicMessage:
         return self._require_observation_query().get_message(message_id)
@@ -147,10 +151,21 @@ class TopicGateRuntime(ServiceItem):
         broker_id: UUID,
         topic: str,
     ) -> MqttObservation | None:
-        return self._mqtt_repositories[broker_id].get_state(topic)
+        current = self.get_current_topic(broker_id, topic)
+        return None if current is None else current.to_observation()
 
     def get_observer_model(self, broker_id: UUID) -> ObserverModel:
-        return self._mqtt_repositories[broker_id].get()
+        subscriptions = self.list_subscriptions(broker_id)
+        model = ObserverModelProcessor.add_topics(
+            ObserverModel(root_stats=[]),
+            (subscription.topic_filter for subscription in subscriptions),
+        )
+        for current in self.get_current_topics(broker_id):
+            state = current.to_observation()
+            node = ObserverModelProcessor.find_or_create_node(model, state.topic)
+            node.state = state
+            model.topic_states[state.topic] = state
+        return model
 
     def list_subscriptions(self, broker_id: UUID) -> tuple[Subscription, ...]:
         return tuple(self._mqtt_repositories[broker_id].subscriptions)
@@ -206,7 +221,6 @@ class TopicGateRuntime(ServiceItem):
                 preview,
                 self._subscriptions_by_broker(),
             )
-            self._reconcile_deleted_entries(result.enforcement.deleted_entries)
             return result
 
     def preview_clear_cache(
@@ -243,7 +257,6 @@ class TopicGateRuntime(ServiceItem):
             result = self._require_observation_cache().confirm_deletion_detailed(
                 preview
             )
-            self._reconcile_deleted_entries(result.deleted_entries)
             return result
 
     def confirm_cache_deletion(
@@ -378,7 +391,9 @@ class TopicGateRuntime(ServiceItem):
         profile.config = config
         self._brokers.update_profile(profile)
         if broker_id != previous_broker_id:
-            self._brokers.update_observer_model(previous_repo.get())
+            self._brokers.update_observer_model(
+                self.get_observer_model(previous_broker_id)
+            )
         self._brokers.select_active_profile(broker_id)
         if broker_id != previous_broker_id:
             self._active_broker_id = broker_id
@@ -461,9 +476,7 @@ class TopicGateRuntime(ServiceItem):
             self.list_subscriptions(broker_id),
         )
         if preview.entries:
-            result = cache.confirm_deletion_detailed(preview)
-            self._reconcile_deleted_entries(result.deleted_entries)
-            return result
+            return cache.confirm_deletion_detailed(preview)
         return None
 
     def _subscriptions_by_broker(
@@ -473,18 +486,6 @@ class TopicGateRuntime(ServiceItem):
             broker.id: self.list_subscriptions(broker.id)
             for broker in self.list_brokers()
         }
-
-    def _reconcile_deleted_entries(self, entries) -> int:
-        grouped = defaultdict(list)
-        for entry in entries:
-            grouped[entry.broker_id].append(entry)
-        removed = 0
-        for broker_id, broker_entries in grouped.items():
-            repository = self._repository_for(broker_id)
-            evict = getattr(repository, "evict_stored_observations", None)
-            if evict is not None:
-                removed += evict(tuple(broker_entries))
-        return removed
 
     def _require_active_broker(self, broker_id: UUID) -> None:
         if broker_id != self.active_broker.id:

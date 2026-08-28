@@ -30,6 +30,10 @@ from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.observer_limits import (
+    MAX_OBSERVED_TOPICS,
+    MAX_RETAINED_PAYLOAD_BYTES,
+)
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.topic_message_mapper import (
     TopicMessageMapper,
@@ -169,6 +173,7 @@ class TopicMessageRepository(
 
     def record_message(self, entry: TopicMessage) -> None:
         """Record a canonical, already-processed topic update."""
+        entry = self._prepare_message(entry)
         self._set_current(entry, ObservationStatus.LIVE)
         self._enqueue(entry)
 
@@ -188,11 +193,13 @@ class TopicMessageRepository(
                 self._current.pop(key)
 
     def create_message(self, message: TopicMessage) -> TopicMessage:
+        message = self._prepare_message(message)
         self._set_current(message, ObservationStatus.CACHED)
         self._enqueue(message)
         return message
 
     def update_message(self, message: TopicMessage) -> TopicMessage:
+        message = self._prepare_message(message)
         self._set_current(message, ObservationStatus.CACHED)
         self._enqueue(message)
         return message
@@ -392,12 +399,6 @@ class TopicMessageRepository(
                         else None
                     )
                     for message in latest_writes.values():
-                        if policy is not None:
-                            message = (
-                                ObservationRetentionProcessor.truncate_topic_message(
-                                    message, policy
-                                )
-                            )
                         row = TopicMessageMapper.to_row(message)
                         session.merge(row)
                     deleted = (
@@ -425,12 +426,11 @@ class TopicMessageRepository(
                 TopicMessageMapper.to_dto(row)
                 for row in session.scalars(select(MqttMessageRow)).all()
             )
-        with self._current_lock:
-            for message in messages:
-                self._current[(message.broker_id, message.topic)] = CurrentTopic(
-                    message,
-                    ObservationStatus.CACHED,
-                )
+        for message in sorted(
+            messages,
+            key=lambda item: (item.received_at, item.topic, item.broker_id),
+        ):
+            self._set_current(message, ObservationStatus.CACHED)
 
     def _set_current(
         self,
@@ -439,9 +439,48 @@ class TopicMessageRepository(
     ) -> None:
         if self._closed:
             raise RuntimeError("Topic message repository is closed.")
+        if len(message.payload) > MAX_RETAINED_PAYLOAD_BYTES:
+            raise ValueError(
+                "A current topic payload cannot exceed "
+                f"{MAX_RETAINED_PAYLOAD_BYTES:,} bytes."
+            )
         key = (message.broker_id, message.topic)
         with self._current_lock:
+            self._make_current_capacity(message)
             self._current[key] = CurrentTopic(message, status)
+
+    def _make_current_capacity(self, message: TopicMessage) -> None:
+        key = (message.broker_id, message.topic)
+        candidates = {
+            current_key: current
+            for current_key, current in self._current.items()
+            if current_key[0] == message.broker_id and current_key != key
+        }
+        retained_bytes = sum(
+            len(current.message.payload) for current in candidates.values()
+        )
+        while (
+            len(candidates) >= MAX_OBSERVED_TOPICS
+            or retained_bytes + len(message.payload) > MAX_RETAINED_PAYLOAD_BYTES
+        ):
+            oldest_key, oldest = min(
+                candidates.items(),
+                key=lambda item: (
+                    item[1].message.received_at,
+                    item[1].message.topic,
+                ),
+            )
+            retained_bytes -= len(oldest.message.payload)
+            candidates.pop(oldest_key)
+            self._current.pop(oldest_key, None)
+
+    def _prepare_message(self, message: TopicMessage) -> TopicMessage:
+        if self._policy_provider is None:
+            return message
+        return ObservationRetentionProcessor.truncate_topic_message(
+            message,
+            self._policy_provider(),
+        )
 
     def _remove_cached_current(self, message: TopicMessage) -> None:
         key = (message.broker_id, message.topic)

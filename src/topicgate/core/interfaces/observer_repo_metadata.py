@@ -1,13 +1,13 @@
-import datetime
-from typing import AsyncIterator, Protocol
+from collections.abc import AsyncIterator
+from datetime import datetime
+from typing import Protocol
 
 from topicgate.core.config.mqtt_config import MqttConfig
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
-from datetime import datetime
+
 
 class ObserverRepoMetadata(Protocol):
-    """Application-facing access to an MQTT observer metadata."""
+    """Connection and subscription state owned by an MQTT observer."""
 
     @property
     def connection_status(self) -> object: ...

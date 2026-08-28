@@ -204,6 +204,35 @@ def test_record_message_updates_current_map_and_queues_latest_state(
         database.dispose()
 
 
+def test_policy_transformation_is_shared_by_current_and_persisted_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'canonical.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    policy = ObservationRetentionPolicy(max_payload_bytes_per_topic=4)
+    repository = TopicMessageRepository(database, lambda: policy)
+    message = replace(
+        _message(broker_id, "home/value", datetime.now(timezone.utc)),
+        payload=b"123456",
+        payload_size=6,
+    )
+
+    try:
+        repository.record_message(message)
+
+        current = repository.get_current_topic(broker_id, message.topic)
+        assert current is not None
+        assert current.message.payload == b"1234"
+        assert current.message.payload_size == 6
+        assert repository.get_message(message.observation_id) == current.message
+    finally:
+        repository.close()
+        database.dispose()
+
+
 def test_current_topic_read_is_atomic_and_memory_only_while_write_is_queued(
     tmp_path,
     credential_store,

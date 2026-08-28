@@ -97,10 +97,7 @@ class AppDependencies:
             current_topics=self.topic_messages,
             control_operations=self.control_operations,
         )
-        self.snapshot_service = BrokerSnapshotService(
-            self.runtime,
-            current_topics=self.topic_messages,
-        )
+        self.snapshot_service = BrokerSnapshotService(self.runtime)
         self.mcp_setup = McpSetupService(
             self.runtime,
             self.snapshot_service,
@@ -126,4 +123,5 @@ class AppDependencies:
             retention_policy=self.retention_policy.get,
             broker_id=profile.id,
             message_recorder=self.topic_messages,
+            current_topics=self.topic_messages,
         )
