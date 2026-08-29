@@ -15,16 +15,19 @@ class TopicAPI(MCPApi):
     def __init__(
         self,
         runtime: TopicGateRuntime,
-        resolver: BrokerResolver | None = None,
+        resolver: BrokerResolver,
     ):
         self._runtime = runtime
-        self._resolver = resolver or BrokerResolver(runtime)
+        self._resolver = resolver
 
     def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.list_topics)
         mcp.add_tool(self.get_topic_state)
 
-    @tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+    @tool(
+        annotations={"readOnlyHint": True, "openWorldHint": True},
+        meta={"legacy": True},
+    )
     def list_topics(
         self,
         broker: UUID | str | None = None,
@@ -40,7 +43,10 @@ class TopicAPI(MCPApi):
         resolved = self._resolver.resolve_or_active(broker)
         return self._runtime.list_topics(resolved.id)
 
-    @tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+    @tool(
+        annotations={"readOnlyHint": True, "openWorldHint": True},
+        meta={"legacy": True},
+    )
     def get_topic_state(
         self,
         broker_id: UUID | str,

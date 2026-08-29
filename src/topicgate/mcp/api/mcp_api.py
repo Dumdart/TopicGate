@@ -6,8 +6,6 @@ class MCPApi(ABC):
     @abstractmethod
     def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         """Register a FastMCP instance with the MCP API."""
-
-
 class McpApiContainer:
     def __init__(self, apis: list[MCPApi], *, control_enabled: bool = False):
         self.apis = apis

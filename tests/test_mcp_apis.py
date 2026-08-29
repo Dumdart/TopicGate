@@ -7,6 +7,8 @@ from uuid import uuid4
 import pytest
 from fastmcp import Client, FastMCP
 
+from topicgate.app.services.broker_inspection_service import BrokerInspectionService
+from topicgate.app.services.broker_resolver import BrokerResolver
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.subscription import Subscription
@@ -45,17 +47,35 @@ def mcp_runtime() -> MagicMock:
     return runtime
 
 
+def resolver(runtime: MagicMock) -> BrokerResolver:
+    return BrokerResolver(runtime)
+
+
+def broker_api(runtime: MagicMock) -> BrokerAPI:
+    selected_resolver = resolver(runtime)
+    return BrokerAPI(
+        runtime,
+        selected_resolver,
+        BrokerInspectionService(runtime, MagicMock(), selected_resolver),
+    )
+
+
 async def test_non_broker_apis_register_described_tools() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
+        selected_resolver = resolver(runtime)
         mcp = FastMCP("test")
         McpApiContainer(
             [
-                BrokerAPI(runtime),
-                ConnectionAPI(runtime),
-                PublishAPI(runtime),
-                SubscriptionAPI(runtime),
-                TopicAPI(runtime),
+                BrokerAPI(
+                    runtime,
+                    selected_resolver,
+                    BrokerInspectionService(runtime, MagicMock(), selected_resolver),
+                ),
+                ConnectionAPI(runtime, selected_resolver),
+                PublishAPI(runtime, selected_resolver),
+                SubscriptionAPI(runtime, selected_resolver),
+                TopicAPI(runtime, selected_resolver),
             ],
             control_enabled=True,
         ).register(mcp)
@@ -69,6 +89,7 @@ async def test_non_broker_apis_register_described_tools() -> None:
             "connect",
             "disconnect",
             "get_connection_status",
+            "inspect_broker",
             "get_topic_state",
             "list_brokers",
             "list_subscriptions",
@@ -92,6 +113,7 @@ async def test_read_only_server_hides_every_control_capability() -> None:
     runtime = mcp_runtime()
     dependencies = SimpleNamespace(
         runtime=runtime,
+        broker_resolver=resolver(runtime),
         snapshot_service=MagicMock(),
         service_items=(),
     )
@@ -109,6 +131,7 @@ async def test_read_only_server_hides_every_control_capability() -> None:
         "get_broker_snapshot",
         "get_connection_status",
         "get_topic_state",
+        "inspect_broker",
         "list_brokers",
         "list_subscriptions",
         "list_topics",
@@ -122,13 +145,32 @@ def test_mcp_mode_defaults_to_read_only_and_requires_explicit_control() -> None:
     assert parse_mode(["--mode", "control"]) is McpMode.CONTROL
 
 
+async def test_legacy_inspection_tools_expose_legacy_metadata() -> None:
+    runtime = mcp_runtime()
+    selected_resolver = resolver(runtime)
+    mcp = FastMCP("test")
+    McpApiContainer(
+        [
+            TopicAPI(runtime, selected_resolver),
+            SnapshotAPI(MagicMock()),
+        ]
+    ).register(mcp)
+
+    async with Client(mcp) as client:
+        tools = {item.name: item for item in await client.list_tools()}
+
+    assert tools["get_broker_snapshot"].meta["legacy"] is True
+    assert tools["get_topic_state"].meta["legacy"] is True
+    assert tools["list_topics"].meta["legacy"] is True
+
+
 async def test_subscription_api_maps_flat_arguments_to_domain_models() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
         broker_id = runtime.active_broker.id
         original = Subscription("home/#", qos=1, id=7)
         runtime.list_subscriptions.return_value = (original,)
-        api = SubscriptionAPI(runtime)
+        api = SubscriptionAPI(runtime, resolver(runtime))
 
         await api.add_subscription(broker_id, "devices/+", qos=2)
         await api.update_subscription(
@@ -163,7 +205,7 @@ async def test_remove_subscription_rejects_an_unknown_filter() -> None:
         runtime = mcp_runtime()
 
         with pytest.raises(ValueError, match="Unknown subscription filter"):
-            await SubscriptionAPI(runtime).remove_subscription(
+            await SubscriptionAPI(runtime, resolver(runtime)).remove_subscription(
                 runtime.active_broker.id,
                 "missing/#",
             )
@@ -177,7 +219,7 @@ def test_topic_api_returns_text_and_binary_safe_payload_views() -> None:
     runtime = mcp_runtime()
     broker_id = runtime.active_broker.id
     received_at = datetime.now(timezone.utc)
-    api = TopicAPI(runtime)
+    api = TopicAPI(runtime, resolver(runtime))
 
     runtime.get_topic_state.return_value = TopicState(
         "status",
@@ -214,7 +256,7 @@ async def test_connection_api_reports_status_and_delegates_commands() -> None:
         runtime = mcp_runtime()
         runtime.connection_status = ConnectionStatus.CONNECTED
         runtime.get_connection_status.return_value = ConnectionStatus.CONNECTED
-        api = ConnectionAPI(runtime)
+        api = ConnectionAPI(runtime, resolver(runtime))
 
         result = api.get_connection_status()
         await api.connect()
@@ -235,7 +277,7 @@ async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
     async def scenario() -> None:
         runtime = mcp_runtime()
         broker_id = runtime.active_broker.id
-        api = PublishAPI(runtime)
+        api = PublishAPI(runtime, resolver(runtime))
 
         await api.publish(broker_id, "home/set", "p\u00e5", "utf-8")
         await api.publish(broker_id, "camera/set", "/wA=", "base64")
@@ -268,7 +310,7 @@ async def test_publish_api_supports_utf8_and_base64_payloads() -> None:
 async def test_publish_tool_requires_explicit_inputs_and_safety_annotations() -> None:
     runtime = mcp_runtime()
     mcp = FastMCP("test")
-    PublishAPI(runtime).register(mcp, control_enabled=True)
+    PublishAPI(runtime, resolver(runtime)).register(mcp, control_enabled=True)
 
     async with Client(mcp) as client:
         tools = await client.list_tools()
@@ -292,14 +334,22 @@ async def test_broker_scoped_apis_accept_profile_names() -> None:
     runtime.list_topics.return_value = ("home/status",)
     runtime.list_subscriptions.return_value = (Subscription("home/#"),)
 
-    assert TopicAPI(runtime).list_topics(" primary ") == ("home/status",)
-    assert TopicAPI(runtime).get_topic_state("PRIMARY", "home/status") is None
-    status = ConnectionAPI(runtime).get_connection_status("Primary")
-    subscription_api = SubscriptionAPI(runtime)
+    selected_resolver = resolver(runtime)
+    assert TopicAPI(runtime, selected_resolver).list_topics(" primary ") == (
+        "home/status",
+    )
+    assert (
+        TopicAPI(runtime, selected_resolver).get_topic_state(
+            "PRIMARY", "home/status"
+        )
+        is None
+    )
+    status = ConnectionAPI(runtime, selected_resolver).get_connection_status("Primary")
+    subscription_api = SubscriptionAPI(runtime, selected_resolver)
     subscriptions = subscription_api.list_subscriptions("Primary")
     await subscription_api.add_subscription("Primary", "devices/#")
-    await BrokerAPI(runtime).activate_broker("Primary")
-    await PublishAPI(runtime).publish(
+    await broker_api(runtime).activate_broker("Primary")
+    await PublishAPI(runtime, selected_resolver).publish(
         "Primary",
         "home/set",
         "on",
@@ -322,12 +372,13 @@ async def test_broker_scoped_apis_accept_profile_names() -> None:
 
 async def test_legacy_mcp_call_shapes_remain_supported() -> None:
     runtime = mcp_runtime()
+    selected_resolver = resolver(runtime)
     mcp = FastMCP("test")
     McpApiContainer(
         [
-            ConnectionAPI(runtime),
-            SubscriptionAPI(runtime),
-            TopicAPI(runtime),
+            ConnectionAPI(runtime, selected_resolver),
+            SubscriptionAPI(runtime, selected_resolver),
+            TopicAPI(runtime, selected_resolver),
         ]
     ).register(mcp)
 

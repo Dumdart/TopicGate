@@ -7,6 +7,7 @@ import sys
 from fastmcp import FastMCP
 
 from topicgate.app.app_dependencies import AppDependencies
+from topicgate.app.services.broker_inspection_service import BrokerInspectionService
 from topicgate.app.services.service_container import ServiceContainer
 from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
@@ -22,9 +23,13 @@ from topicgate.mcp.middleware import ErrorHandlingMiddleware, LoggingMiddleware
 
 logger = logging.getLogger(__name__)
 
-_SNAPSHOT_INSTRUCTIONS = """Use get_broker_snapshot as the primary read-only MQTT
-state tool. It returns TopicGate's latest observed state: the last values TopicGate
-received and retained in memory or persistence. It is not authoritative broker
+_SNAPSHOT_INSTRUCTIONS = """Use inspect_broker as the primary read-only broker
+inspection tool. It combines profile identity, connection health, subscriptions,
+cache usage, and, when requested, a bounded snapshot. get_broker_snapshot,
+list_topics, and get_topic_state remain available as legacy compatibility tools.
+
+Snapshots return TopicGate's latest observed state: the last values TopicGate
+received and retained in memory or persistence. They are not authoritative broker
 history or proof that a value is still current; received_at is when TopicGate saw
 the message.
 
@@ -81,14 +86,20 @@ class Server:
         self.services = ServiceContainer(self.dependencies)
 
         runtime = self.dependencies.runtime
+        self.resolver = self.dependencies.broker_resolver
+        self.inspection_service = BrokerInspectionService(
+            runtime,
+            self.dependencies.snapshot_service,
+            self.resolver,
+        )
 
         self.mcp_container = McpApiContainer(
             [
-                BrokerAPI(runtime),
-                ConnectionAPI(runtime),
-                PublishAPI(runtime),
-                SubscriptionAPI(runtime),
-                TopicAPI(runtime),
+                BrokerAPI(runtime, self.resolver, self.inspection_service),
+                ConnectionAPI(runtime, self.resolver),
+                PublishAPI(runtime, self.resolver),
+                SubscriptionAPI(runtime, self.resolver),
+                TopicAPI(runtime, self.resolver),
                 SnapshotAPI(self.dependencies.snapshot_service),
                 DashboardAPI(runtime, self.dependencies.snapshot_service),
             ],

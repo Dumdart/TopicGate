@@ -11,7 +11,7 @@ Requires: TopicGate ≥ 1.0.0 (`pip install topicgate`).
 
 ## MCP server not available
 
-If the `topicgate` MCP server is not connected or `get_broker_snapshot` cannot be
+If the `topicgate` MCP server is not connected or `inspect_broker` cannot be
 found, stop and tell the user:
 
 > The TopicGate MCP server is not active. To fix this:
@@ -31,20 +31,23 @@ Do not attempt to call any other tool as a substitute.
 
 ## Calling the tool
 
-Tool: `get_broker_snapshot`
+Preferred tool: `inspect_broker`
 
 | Parameter | Required | Description |
 |---|---|---|
 | `broker` | yes | Broker UUID or unique case-insensitive profile name |
-| `topic_filter` | no | MQTT wildcard filter, default `#` (all topics) |
-| `max_age_seconds` | no | Omit values older than this; omitting returns all cached values |
-| `limit` | no | Max number of topic results returned |
+| `include_snapshot` | yes | Set to `true` to include observed topic values |
+| `snapshot_limit` | no | Max number of topic results returned |
 | `payload_limit_bytes` | no | Truncate individual payloads above this size |
 
-Call `get_broker_snapshot` directly with the user-supplied UUID or broker name. This
-is the normal one-call path. Only call `list_brokers` when the tool reports an
+Call `inspect_broker` with `include_snapshot=true` and the user-supplied UUID or
+broker name. This is the normal one-call path. Only call `list_brokers` when it reports an
 unknown or ambiguous name, then ask the user to disambiguate before retrying with
 the UUID.
+
+Use the legacy `get_broker_snapshot` tool only when the request requires
+`topic_filter` or `max_age_seconds`, which `inspect_broker` does not expose. Map
+`snapshot_limit` to its `limit` parameter.
 
 ## Standard answer format
 

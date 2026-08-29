@@ -20,16 +20,12 @@ Do not attempt to call any other tool as a substitute.
 
 ## Workflow
 
-1. **Discover brokers** — call `list_brokers` to get all saved profiles with their
-   UUIDs, names, host, port, and active flag. Never expose passwords.
-2. **Check connection** — call `get_connection_status` for the broker of interest
-   (omit `broker` to use the active profile). Report the connection state, dropped
-   message count, and topic update interval.
-3. **List subscriptions** — call `list_subscriptions` with the broker UUID or name.
-   Report each filter, QoS, retain-as-published, and retain-handling setting.
-4. **Snapshot values** — call `get_broker_snapshot` with the broker UUID or name.
-   Inspect and report `freshness`, `completeness.is_complete`,
-   `completeness.limitations`, result count, and any payload truncation.
+1. For one known broker, call `inspect_broker` with `include_snapshot=true`.
+2. Report its identity, connection state, subscriptions, cache summary, and snapshot.
+   Inspect `freshness`, `completeness.is_complete`, `completeness.limitations`,
+   result count, and any payload truncation.
+3. For an overview of every configured profile, call `list_brokers`, then call
+   `inspect_broker` for each returned UUID.
 
 If a broker name is ambiguous or unknown at any step, fall back to the UUID returned
 by `list_brokers`.
@@ -38,10 +34,8 @@ by `list_brokers`.
 
 | Tool | Mode | Purpose |
 |---|---|---|
-| `list_brokers` | read-only | Discover profiles |
-| `get_connection_status` | read-only | Connection health |
-| `list_subscriptions` | read-only | Active filters |
-| `get_broker_snapshot` | read-only | Latest observed values |
+| `inspect_broker` | read-only | Identity, connection health, subscriptions, cache usage, and optional latest values |
+| `list_brokers` | read-only | Discover profiles when inspecting all brokers or resolving ambiguity |
 
 All tools are passive and read-only. None of them activate, connect, or wait for a
 broker.
