@@ -31,6 +31,14 @@ services:
 
         chmod 644 /mosquitto/data/passwords
 
+        echo "Mosquitto broker profile:"
+        echo "  Name: Zigbee2MQTT Demo"
+        echo "  Host: localhost"
+        echo "  Port: ${MQTT_PORT:-1883}"
+        echo "  Username: $${MQTT_USERNAME}"
+        echo "  Password: $${MQTT_PASSWORD}"
+        echo "  TLS: false"
+
         exec mosquitto -c /mosquitto/config/mosquitto.conf
 
 volumes:
