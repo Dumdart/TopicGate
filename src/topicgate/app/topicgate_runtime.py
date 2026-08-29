@@ -135,7 +135,7 @@ class TopicGateRuntime(ServiceItem):
     @property
     def active_broker(self) -> BrokerSummary:
         return self.get_broker()
-        
+
     @property
     def mqtt_config(self) -> MqttConfig:
         return self.active_broker.config
