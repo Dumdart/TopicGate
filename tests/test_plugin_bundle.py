@@ -135,6 +135,7 @@ async def test_cached_plugin_bundle_exposes_read_only_tools(
         "get_broker_snapshot",
         "get_connection_status",
         "get_topic_state",
+        "inspect_broker",
         "list_brokers",
         "list_subscriptions",
         "list_topics",

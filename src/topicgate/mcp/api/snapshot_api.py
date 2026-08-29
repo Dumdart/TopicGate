@@ -22,7 +22,10 @@ class SnapshotAPI(MCPApi):
         if control_enabled:
             mcp.add_tool(self.observe_broker_snapshot)
 
-    @tool(annotations={"readOnlyHint": True, "openWorldHint": True})
+    @tool(
+        annotations={"readOnlyHint": True, "openWorldHint": True},
+        meta={"legacy": True},
+    )
     async def get_broker_snapshot(
         self,
         broker: UUID | str,

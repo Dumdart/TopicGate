@@ -58,6 +58,7 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
     )
     assert isinstance(dependencies.snapshot_service, BrokerSnapshotService)
     assert dependencies.snapshot_service._runtime is dependencies.runtime
+    assert dependencies.snapshot_service._resolver is dependencies.broker_resolver
     assert dependencies.runtime._observation_query is dependencies.observation_query
 
 

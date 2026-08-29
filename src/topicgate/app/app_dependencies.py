@@ -8,6 +8,7 @@ from topicgate.app.services.observation_retention_policy_service import (
     ObservationRetentionPolicyService,
 )
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
+from topicgate.app.services.broker_resolver import BrokerResolver
 from topicgate.app.services.control_operation_service import ControlOperationService
 from topicgate.app.services.mcp_setup_service import McpSetupService
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
@@ -97,7 +98,11 @@ class AppDependencies:
             current_topics=self.topic_messages,
             control_operations=self.control_operations,
         )
-        self.snapshot_service = BrokerSnapshotService(self.runtime)
+        self.broker_resolver = BrokerResolver(self.runtime)
+        self.snapshot_service = BrokerSnapshotService(
+            self.runtime,
+            resolver=self.broker_resolver,
+        )
         self.mcp_setup = McpSetupService(
             self.runtime,
             self.snapshot_service,

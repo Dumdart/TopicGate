@@ -16,7 +16,7 @@ class SubscriptionAPI(MCPApi):
         resolver: BrokerResolver,
     ):
         self._runtime = runtime
-        self._resolver = resolver or BrokerResolver(runtime)
+        self._resolver = resolver
 
     def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.list_subscriptions)
