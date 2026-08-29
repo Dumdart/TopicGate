@@ -11,10 +11,11 @@ expected skill path and the key assertions to check.
 
 **Expected skill:** `get-mcp-snapshot`
 **Assertions:**
-- Calls `get_broker_snapshot` directly with the supplied unique broker name.
+- Calls `inspect_broker` with `include_snapshot=true` and the supplied unique broker name.
 - Uses `list_brokers` only if the direct call reports ambiguity or no match.
 - Reports freshness, completeness, and a topic table (topic, value, age, notes).
 - Does not call `observe_broker_snapshot` or any mutating tool.
+- Uses legacy `get_broker_snapshot` only when topic filtering or a maximum age is requested.
 
 ---
 
@@ -95,7 +96,7 @@ expected skill path and the key assertions to check.
 
 **Expected skill:** `get-mcp-snapshot`
 **Assertions:**
-- Passes `max_age_seconds=5` to the tool.
+- Uses legacy `get_broker_snapshot` because `max_age_seconds=5` is requested.
 - Detects `completeness.is_complete = false` and reports each limitation.
 - Does not summarize away the partial result.
 
@@ -107,8 +108,8 @@ expected skill path and the key assertions to check.
 
 **Expected skill:** `inspect-mqtt-state`
 **Assertions:**
-- Calls `list_brokers`, `get_connection_status`, `list_subscriptions`, and
-  `get_broker_snapshot` in sequence.
+- Calls `list_brokers`, then `inspect_broker` with `include_snapshot=true` for each
+  configured broker.
 - Reports each result section (profiles, connection, subscriptions, values).
 
 ---
@@ -175,7 +176,7 @@ expected skill path and the key assertions to check.
 
 **Expected skill:** `inspect-mqtt-state` → Desktop redirect
 **Assertions:**
-- Calls `get_connection_status`; reports a connection error.
+- Calls `inspect_broker`; reports the connection error from its connection state.
 - If credentials are suspected, directs the user to TopicGate Desktop.
 - Does not attempt to set or read passwords through MCP.
 

@@ -28,7 +28,8 @@ Use only when the user explicitly intends for TopicGate to:
 - Wait for fresh traffic or retained messages
 - Persist the observations
 
-For passive reads of already-cached state, use `get_broker_snapshot` instead.
+For passive reads of already-cached state, use `inspect_broker` with
+`include_snapshot=true` instead.
 
 ## Tool
 
