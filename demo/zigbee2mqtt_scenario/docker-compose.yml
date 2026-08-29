@@ -1,0 +1,38 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+
+    environment:
+      MQTT_USERNAME: "${MQTT_USERNAME:-topicgate}"
+      MQTT_PASSWORD: "${MQTT_PASSWORD:-topicgate}"
+
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+
+    command:
+      - /bin/sh
+      - -c
+      - |
+        rm -f /mosquitto/data/passwords
+
+        mosquitto_passwd \
+          -b \
+          -c \
+          /mosquitto/data/passwords \
+          "$${MQTT_USERNAME}" \
+          "$${MQTT_PASSWORD}"
+
+        chmod 644 /mosquitto/data/passwords
+
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:
