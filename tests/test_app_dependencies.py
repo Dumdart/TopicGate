@@ -14,7 +14,6 @@ def test_app_dependencies_uses_os_credentials_for_broker_profiles(
     profile = MagicMock()
     profile.config = MqttConfig("broker", 1883, "observer", "entered-secret")
     profile.workspace.subscriptions = ()
-    profile.workspace.model = MagicMock()
     broker_profiles = MagicMock()
     broker_profiles.get_profile.return_value = profile
     broker_profiles.get_all_profiles.return_value = (profile,)

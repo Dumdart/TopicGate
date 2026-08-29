@@ -11,9 +11,9 @@ from topicgate.app.models.broker_snapshot import SnapshotLimitation
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.current_topic import CurrentTopic
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.mqtt_observation import ObservationSource
 from topicgate.core.models.observation_status import ObservationStatus
-from topicgate.core.models.observer_model import ObserverModel, TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.mcp.api.dashboard_api import DashboardAPI
@@ -58,13 +58,8 @@ def dashboard_runtime() -> MagicMock:
         False,
         datetime(2026, 8, 11, 10, 29, tzinfo=timezone.utc),
     )
-    runtime.get_observer_model.return_value = ObserverModel(
-        root_stats=[],
-        topic_states={
-            topic_state.topic: topic_state,
-            unrelated_state.topic: unrelated_state,
-        },
-    )
+    topic_states = (topic_state, unrelated_state)
+    runtime.test_topic_state = topic_state
     runtime.get_current_topics.side_effect = lambda _broker_id: tuple(
         CurrentTopic(
             TopicMessage(
@@ -84,7 +79,7 @@ def dashboard_runtime() -> MagicMock:
                 else ObservationStatus.LIVE
             ),
         )
-        for state in runtime.get_observer_model.return_value.topic_states.values()
+        for state in topic_states
     )
     runtime.get_connection_status.side_effect = lambda broker_id: (
         ConnectionStatus.CONNECTED
@@ -267,7 +262,6 @@ async def test_reconnect_observe_uses_default_wait_and_preserves_selection() -> 
     active = runtime.active_broker
     api = DashboardAPI(runtime)
     observed_snapshot = api._snapshot_service.build_current(active.id)
-    runtime.get_observer_model.reset_mock()
     api._snapshot_service.observe = AsyncMock(return_value=observed_snapshot)
 
     state = await api._reconnect_observe_dashboard_broker(
@@ -276,7 +270,6 @@ async def test_reconnect_observe_uses_default_wait_and_preserves_selection() -> 
     )
 
     api._snapshot_service.observe.assert_awaited_once_with(active.id)
-    assert runtime.get_observer_model.call_count == 0
     assert state["selection"]["path"] == "sensors/kitchen/temperature"
 
 
@@ -386,9 +379,7 @@ def test_snapshot_keeps_payload_representations_for_selected_topic() -> None:
 
 def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:
     runtime = dashboard_runtime()
-    state = runtime.get_observer_model.return_value.topic_states[
-        "sensors/kitchen/temperature"
-    ]
+    state = runtime.test_topic_state
     state.payload_size = 20
     state.source = ObservationSource.STORED
     captured_at = state.received_at.replace(minute=31)
@@ -435,10 +426,7 @@ def test_dashboard_uses_shared_truncation_freshness_and_provenance() -> None:
 def test_empty_broker_has_an_empty_tree_and_selection() -> None:
     runtime = dashboard_runtime()
     runtime.list_subscriptions.return_value = ()
-    runtime.get_observer_model.return_value = ObserverModel(
-        root_stats=[],
-        topic_states={},
-    )
+    runtime.get_current_topics.side_effect = lambda _broker_id: ()
     api = DashboardAPI(runtime)
 
     snapshot = api._snapshot()

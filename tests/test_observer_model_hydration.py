@@ -38,11 +38,8 @@ def test_profile_models_do_not_duplicate_repository_current_state(
             topic_messages=messages,
         )
 
-        first_model = restarted.get_profile(first.id).workspace.model
-        second_model = restarted.get_profile(second.id).workspace.model
-
-        assert first_model.topic_states == {}
-        assert second_model.topic_states == {}
+        assert restarted.get_profile(first.id).workspace.subscriptions == ()
+        assert restarted.get_profile(second.id).workspace.subscriptions == ()
         assert messages.get_current_topic(first.id, first_message.topic).message == (
             first_message
         )
@@ -54,7 +51,7 @@ def test_profile_models_do_not_duplicate_repository_current_state(
         database.dispose()
 
 
-def test_in_memory_observer_model_takes_precedence_over_hydration(
+def test_runtime_state_does_not_duplicate_current_topic_values(
     tmp_path: Path,
     credential_store,
 ) -> None:
@@ -63,7 +60,6 @@ def test_in_memory_observer_model_takes_precedence_over_hydration(
     profile = initial.get_profile()
     messages = TopicMessageRepository(database)
     runtime_state = BrokerRuntimeState()
-    runtime_state.set_model(profile.id, profile.workspace.model)
     messages.update_message(_message(profile.id, "cached/topic", b"cached", 1))
 
     try:
@@ -74,7 +70,8 @@ def test_in_memory_observer_model_takes_precedence_over_hydration(
             topic_messages=messages,
         )
 
-        assert restarted.get_profile(profile.id).workspace.model.topic_states == {}
+        assert restarted.get_profile(profile.id).workspace.subscriptions == ()
+        assert messages.get_current_topic(profile.id, "cached/topic") is not None
     finally:
         messages.close()
         database.dispose()

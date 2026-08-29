@@ -119,7 +119,6 @@ class AppDependencies:
         return ObserverMqttRepository(
             profile.config,
             list(profile.workspace.subscriptions),
-            profile.workspace.model,
             retention_policy=self.retention_policy.get,
             broker_id=profile.id,
             message_recorder=self.topic_messages,

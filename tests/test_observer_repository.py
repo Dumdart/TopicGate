@@ -11,7 +11,6 @@ from topicgate.core.models.mqtt_observation import (
     MqttObservation,
     ObservationSource,
 )
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
@@ -22,7 +21,6 @@ from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.repository.observer_mqtt_repository import (
     ObserverMqttRepository,
 )
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class MemoryCurrentTopics:
@@ -56,7 +54,6 @@ class MemoryCurrentTopics:
 
 
 def build_repository(
-    model: ObserverModel | None = None,
     *,
     clock=None,
     broker_id=None,
@@ -88,7 +85,6 @@ def build_repository(
         repository = ObserverMqttRepository(
             MqttConfig(host="broker", port=1883, username="", password=""),
             ["SmartHome/#"],
-            model,
             clock=clock,
             broker_id=broker_id,
             message_recorder=message_recorder,
@@ -115,14 +111,12 @@ def test_repository_returns_state_and_value_by_topic_path() -> None:
     assert repository.get_value("SmartHome/missing") is None
 
 
-def test_repository_keeps_topic_values_out_of_observer_metadata_model() -> None:
-    profile_model = ObserverModel(root_stats=[])
-    repository, _ = build_repository(profile_model)
+def test_repository_reads_topic_values_from_current_topic_repository() -> None:
+    repository, _ = build_repository()
     message = MqttMessage("SmartHome/door/status", b"open", qos=1, retain=False)
 
     repository.handle_message(None, None, message)
 
-    assert profile_model.topic_states == {}
     assert repository.get_state(message.topic).payload == b"open"
 
 
@@ -195,11 +189,7 @@ def test_repository_reads_current_values_instead_of_supplied_model_values() -> N
         source=ObservationSource.LIVE,
         observation_id=replacement_id,
     )
-    model = ObserverModel(
-        root_stats=[],
-        topic_states={stored.topic: stored, live.topic: live},
-    )
-    repository, _ = build_repository(model)
+    repository, _ = build_repository()
     assert repository.get_state(stored.topic) is None
     assert repository.get_state(live.topic) is None
 
@@ -283,9 +273,7 @@ async def test_removing_subscription_clears_uncovered_retained_state() -> None:
 
         assert repository.get_state("devices/untrusted") is None
         assert repository.get_value("sensors/temperature") == b"21"
-        assert ObserverModelProcessor.find_node(
-            repository.get(), remaining.topic_filter
-        ) is not None
+        assert repository.subscriptions == (remaining,)
 
     await scenario()
 

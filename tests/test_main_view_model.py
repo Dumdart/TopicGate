@@ -10,11 +10,7 @@ from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.current_topic import CurrentTopic
-from topicgate.core.models.observer_model import (
-    ObserverModel,
-    TopicNode,
-    TopicState,
-)
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.observation_status import ObservationStatus
@@ -236,9 +232,6 @@ class FakeObserverRepository:
     async def stop(self) -> None:
         self.connection_status = "disconnected"
 
-    def get(self) -> ObserverModel:
-        return ObserverModel(root_stats=[], topic_states=dict(self._states))
-
     def get_state(self, topic: str) -> TopicState | None:
         return self._states.get(topic)
 
@@ -279,12 +272,9 @@ class FakeObserverRepository:
     async def update_broker(
         self,
         new_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         self.broker_configurations.append(new_config)
-        if model is not None:
-            self._states = model.topic_states
         if subscriptions is not None:
             self.subscriptions = subscriptions
 
@@ -362,16 +352,12 @@ class FakeBrokerRepository:
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
         self._profiles[workspace.profile_id].workspace = workspace
 
-    def update_observer_model(self, model: ObserverModel) -> None:
-        self.get_profile().workspace.model = model
-
     @staticmethod
     def _profile(name: str, mqtt: MqttConfig) -> BrokerProfile:
         profile_id = uuid4()
         workspace = ObserverWorkspace(
             id=uuid4(),
             profile_id=profile_id,
-            model=ObserverModel(root_stats=[]),
         )
         return BrokerProfile(profile_id, name, mqtt, workspace.id, workspace)
 
@@ -394,7 +380,7 @@ class FakeCurrentTopicReader:
             return ()
         return tuple(
             self._current_topic(broker_id, state)
-            for state in repository.get().topic_states.values()
+            for state in repository._states.values()
         )
 
     def get_current_topic(
@@ -764,24 +750,8 @@ async def test_switching_broker_profile_replaces_the_visible_workspace_tree() ->
             MqttConfig("default", 1883, "", "")
         )
         default_profile, local_profile = broker_repository.get_all_profiles()
-        default_profile.workspace.model = ObserverModel(
-            root_stats=[
-                TopicNode(
-                    "home",
-                    children={"status": TopicNode("status")},
-                )
-            ]
-        )
         default_profile.workspace.subscriptions = (Subscription("home/status"),)
         repository.subscriptions = default_profile.workspace.subscriptions
-        local_profile.workspace.model = ObserverModel(
-            root_stats=[
-                TopicNode(
-                    "bridge",
-                    children={"connected": TopicNode("connected")},
-                )
-            ]
-        )
         local_profile.workspace.subscriptions = (
             Subscription("bridge/connected"),
         )
@@ -850,7 +820,6 @@ async def test_failed_mqtt_configuration_is_not_stored() -> None:
         async def update_broker(
             self,
             new_config: MqttConfig,
-            model: ObserverModel | None = None,
             subscriptions: tuple[Subscription, ...] | None = None,
         ) -> None:
             raise ConnectionError("broker unavailable")
@@ -927,7 +896,7 @@ async def test_removing_subscription_hides_its_cached_topic_and_clears_selection
     await scenario()
 
 
-async def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
+async def test_removing_subscription_hides_cached_configured_topic() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         subscription = Subscription("SmartHome/kitchen/status")
@@ -935,20 +904,7 @@ async def test_removing_subscription_hides_cached_topic_from_observer_model() ->
         broker_repository = FakeBrokerRepository(
             MqttConfig("default", 1883, "", "")
         )
-        profile = broker_repository.get_profile()
-        profile.workspace.model = ObserverModel(
-            root_stats=[
-                TopicNode(
-                    segment="SmartHome",
-                    children={
-                        "kitchen": TopicNode(
-                            segment="kitchen",
-                            children={"status": TopicNode(segment="status")},
-                        )
-                    },
-                )
-            ]
-        )
+        broker_repository.get_profile().workspace.subscriptions = (subscription,)
         view_model = MainViewModel(
             runtime_for(repository, broker_repository),
             subscription.topic_filter,

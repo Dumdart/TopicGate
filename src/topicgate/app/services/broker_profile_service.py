@@ -5,7 +5,6 @@ from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
@@ -17,7 +16,6 @@ from topicgate.infrastructure.repository.broker_repository import BrokerReposito
 from topicgate.infrastructure.repository.subscription_repository import (
     SubscriptionRepository,
 )
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class BrokerProfileService:
@@ -77,13 +75,9 @@ class BrokerProfileService:
             id=self._runtime_state.get_config_id(identity.id, config.id),
         )
         subscriptions = self.subscriptions.list_for_workspace(identity.workspace_id)
-        model = self._runtime_state.get_model(identity.id)
-        if model is None:
-            model = self._hydrate_observer_model(subscriptions)
         workspace = ObserverWorkspace(
             id=identity.workspace_id,
             profile_id=identity.id,
-            model=model,
             subscriptions=subscriptions,
         )
         return BrokerProfile(
@@ -162,13 +156,6 @@ class BrokerProfileService:
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
         self.replace_subscriptions(workspace.id, workspace.subscriptions)
 
-    def update_observer_model(self, model: ObserverModel) -> None:
-        self._runtime_state.set_model(self.brokers.get_profile().id, model)
-        self.save()
-
-    def get_observer_model(self) -> ObserverModel:
-        return self.get_profile().workspace.model
-
     def get_observer_workspace(self) -> ObserverWorkspace:
         return self.get_profile().workspace
 
@@ -206,13 +193,6 @@ class BrokerProfileService:
             )
         self._store_password(identity.id, config.password)
         self._runtime_state.set_config_id(identity.id, config.id)
-
-    def _hydrate_observer_model(self, subscriptions) -> ObserverModel:
-        model = ObserverModelProcessor.add_topics(
-            ObserverModel(root_stats=[]),
-            (item.topic_filter for item in subscriptions),
-        )
-        return model
 
     def _store_password(self, profile_id: UUID, password: str) -> None:
         if password:

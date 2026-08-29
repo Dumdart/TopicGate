@@ -3,18 +3,16 @@ from uuid import uuid4
 
 from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
-from topicgate.core.models.observer_model import TopicState
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.app.services.broker_profile_service import BrokerProfileService
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 from topicgate.infrastructure.repository.topic_message_repository import (
     TopicMessageRepository,
 )
 
 
-def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
+def test_broker_repository_persists_profiles_and_workspace_subscriptions(
     credential_store,
 ) -> None:
     database = DatabaseContext("sqlite:///:memory:")
@@ -29,14 +27,6 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
     profile.workspace.subscriptions = (
         Subscription("home/+/status", qos=2),
         Subscription("home/#"),
-    )
-    profile.workspace.model.topic_states["runtime/value"] = TopicState(
-        name="value",
-        topic="runtime/value",
-        payload=b"42",
-        qos=1,
-        retain=False,
-        recieved_at=datetime.now(timezone.utc),
     )
     repository.update_profile(profile)
     repository.activate_profile(profile.id)
@@ -55,11 +45,6 @@ def test_broker_repository_persists_profiles_and_rebuilds_workspace_tree(
         id=persisted.config.id,
     )
     assert persisted.workspace.subscriptions == profile.workspace.subscriptions
-    assert ObserverModelProcessor.get_all_topics(persisted.workspace.model) == [
-        "home/+/status",
-        "home/#",
-    ]
-    assert persisted.workspace.model.topic_states == {}
     database.dispose()
 
 

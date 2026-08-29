@@ -3,7 +3,6 @@ from typing import Protocol
 
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.config.mqtt_config import MqttConfig
 
@@ -14,8 +13,6 @@ class ObserverStateReader(Protocol):
     connection_status: object
     dropped_message_count: int
     topic_update_interval: float
-
-    def get(self) -> ObserverModel: ...
 
     def get_state(self, topic: str) -> MqttObservation | None: ...
 
@@ -42,6 +39,5 @@ class ObserverStateReader(Protocol):
     async def update_broker(
         self,
         new_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None: ...

@@ -15,7 +15,7 @@ from topicgate.core.models.observation_cache_administration import (
     CacheUsageSummary,
     PersistedTopicSummary,
 )
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
@@ -30,7 +30,6 @@ def profile(name: str, host: str = "broker") -> BrokerProfile:
     workspace = ObserverWorkspace(
         id=uuid4(),
         profile_id=profile_id,
-        model=ObserverModel(root_stats=[]),
     )
     return BrokerProfile(
         profile_id,
@@ -75,7 +74,6 @@ def runtime_with(
     mqtt.update_subscription = AsyncMock()
     mqtt.remove_subscription = AsyncMock()
     mqtt.publish = AsyncMock()
-    mqtt.get.return_value = ObserverModel(root_stats=[])
     mqtt.subscriptions = ()
     mqtt.connection_status = "disconnected"
     mqtt.dropped_message_count = 0
@@ -107,9 +105,6 @@ async def test_runtime_owns_the_mqtt_lifecycle() -> None:
         await runtime.stop()
 
         mqtt.start.assert_awaited_once_with()
-        persisted = brokers.update_observer_model.call_args.args[0]
-        assert persisted.topic_states == {}
-        mqtt.get.assert_not_called()
         mqtt.stop.assert_awaited_once_with()
 
     await scenario()
@@ -220,7 +215,6 @@ async def test_runtime_preserves_topic_states_across_broker_switches() -> None:
         default_repo = ObserverMqttRepository(
             default.config,
             [],
-            default.workspace.model,
             broker_id=default.id,
             message_recorder=current_topics,
             current_topics=current_topics,
@@ -228,7 +222,6 @@ async def test_runtime_preserves_topic_states_across_broker_switches() -> None:
         selected_repo = ObserverMqttRepository(
             selected.config,
             [],
-            selected.workspace.model,
             broker_id=selected.id,
             message_recorder=current_topics,
             current_topics=current_topics,
@@ -519,14 +512,10 @@ def test_runtime_exposes_preview_and_confirmed_cache_deletion() -> None:
     cache.confirm_deletion.assert_called_once_with(preview)
 
 
-def test_runtime_projects_observer_model_values_from_current_repository() -> None:
+def test_runtime_reads_current_values_from_current_repository() -> None:
     active = profile("Default")
     observer = MagicMock()
     observer.subscriptions = (Subscription("home/#"),)
-    observer.get.return_value = ObserverModel(
-        root_stats=[],
-        topic_states={"wrong/topic": _state("wrong/topic")},
-    )
     current = _current(active.id, _state("home/status", b"canonical"))
     reader = _current_reader(current)
     brokers = MagicMock()
@@ -538,11 +527,10 @@ def test_runtime_projects_observer_model_values_from_current_repository() -> Non
         current_topics=reader,
     )
 
-    model = runtime.get_observer_model(active.id)
+    topics = runtime.get_current_topics(active.id)
 
-    assert tuple(model.topic_states) == ("home/status",)
-    assert model.topic_states["home/status"].payload == b"canonical"
-    observer.get.assert_not_called()
+    assert tuple(item.message.topic for item in topics) == ("home/status",)
+    assert topics[0].message.payload == b"canonical"
 
 
 async def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:

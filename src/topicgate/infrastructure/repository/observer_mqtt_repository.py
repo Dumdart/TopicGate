@@ -17,7 +17,6 @@ from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
 from topicgate.core.models.observation_status import ObservationStatus
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.mqtt_topics import mqtt_filter_matches, validate_topic_name
@@ -28,7 +27,6 @@ from topicgate.infrastructure.mqtt.callbacks.observer_repository_callbacks impor
 )
 from topicgate.infrastructure.mqtt.mqtt_gate import MqttGate
 from topicgate.processors.subscription_manager import SubscriptionManager
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 from topicgate.processors.observation_retention_processor import (
     ObservationRetentionProcessor,
 )
@@ -43,7 +41,6 @@ class ObserverMqttRepository:
         self,
         config: MqttConfig,
         topic_filters: list[str] | list[Subscription],
-        model: ObserverModel | None = None,
         retention_policy: Callable[[], ObservationRetentionPolicy] | None = None,
         observation_sink: Callable[[MqttObservation], None] | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -52,7 +49,6 @@ class ObserverMqttRepository:
         message_recorder: TopicMessageRecorder,
         current_topics: CurrentTopicReader,
     ) -> None:
-        self._state = model if model is not None else ObserverModel(root_stats=[])
         self._retention_policy = retention_policy or ObservationRetentionPolicy
         self._observation_sink = observation_sink
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -75,14 +71,6 @@ class ObserverMqttRepository:
         )
         self._subscription_manager = SubscriptionManager(
             self._mqtt_gate, self.handle_message
-        )
-        self._state.topic_states.clear()
-        ObserverModelProcessor.rebuild(
-            self._state,
-            (
-                subscription.topic_filter
-                for subscription in self._subscription_manager.subscriptions
-            ),
         )
 
     async def start(self) -> None:
@@ -146,7 +134,6 @@ class ObserverMqttRepository:
         async with self._lifecycle_lock:
             previous_gate = self._mqtt_gate
             previous_manager = self._subscription_manager
-            previous_model = self._state
             was_running = self._is_running
             active_subscriptions = list(
                 self.subscriptions if subscriptions is None else subscriptions
@@ -165,29 +152,18 @@ class ObserverMqttRepository:
             )
 
             try:
-                ObserverModelProcessor.rebuild(
-                    self._state,
-                    (
-                        subscription.topic_filter
-                        for subscription in active_subscriptions
-                    ),
-                )
                 await self._start()
             except Exception:
                 # Check that a failed broker change leaves the repository using
                 # the previous, known configuration rather than the failed one.
                 self._mqtt_gate = previous_gate
                 self._subscription_manager = previous_manager
-                self._state = previous_model
                 if was_running:
                     try:
                         await self._start()
                     except Exception:
                         pass
                 raise
-
-    def get(self) -> ObserverModel:
-        return ObserverModelProcessor.deep_copy(self._state)
 
     def get_value(self, topic: str) -> bytes | None:
         state = self.get_state(topic)
@@ -252,13 +228,6 @@ class ObserverMqttRepository:
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.add(subscription)
-            ObserverModelProcessor.rebuild(
-                self._state,
-                (
-                    item.topic_filter
-                    for item in self._subscription_manager.subscriptions
-                ),
-            )
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
@@ -337,7 +306,3 @@ class ObserverMqttRepository:
             ) and current.status is ObservationStatus.LIVE:
                 removed.append(topic)
         self._message_recorder.remove_current_topics(self._broker_id, removed)
-        ObserverModelProcessor.rebuild(
-            self._state,
-            (subscription.topic_filter for subscription in subscriptions),
-        )

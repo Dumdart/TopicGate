@@ -285,7 +285,6 @@ async def test_async_and_synchronous_snapshot_reads_share_one_result() -> None:
     asynchronous = await service.build(selected.id)
 
     assert synchronous == asynchronous
-    runtime.get_observer_model.assert_not_called()
     assert runtime.get_current_topics.call_count == 2
 
 

@@ -32,10 +32,8 @@ from topicgate.core.models.observation_cache_administration import (
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.topic_message import TopicMessage
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 
 
 class TopicGateRuntime(ServiceItem):
@@ -77,11 +75,7 @@ class TopicGateRuntime(ServiceItem):
         await self.active_repo.start()
 
     async def stop(self) -> None:
-        model = self.get_observer_model(self._active_broker_id)
-        try:
-            await self.active_repo.stop()
-        finally:
-            self._brokers.update_observer_model(model)
+        await self.active_repo.stop()
 
     def list_brokers(self) -> tuple[BrokerSummary, ...]:
         return tuple(
@@ -153,19 +147,6 @@ class TopicGateRuntime(ServiceItem):
     ) -> MqttObservation | None:
         current = self.get_current_topic(broker_id, topic)
         return None if current is None else current.to_observation()
-
-    def get_observer_model(self, broker_id: UUID) -> ObserverModel:
-        subscriptions = self.list_subscriptions(broker_id)
-        model = ObserverModelProcessor.add_topics(
-            ObserverModel(root_stats=[]),
-            (subscription.topic_filter for subscription in subscriptions),
-        )
-        for current in self.get_current_topics(broker_id):
-            state = current.to_observation()
-            node = ObserverModelProcessor.find_or_create_node(model, state.topic)
-            node.state = state
-            model.topic_states[state.topic] = state
-        return model
 
     def list_subscriptions(self, broker_id: UUID) -> tuple[Subscription, ...]:
         return tuple(self._mqtt_repositories[broker_id].subscriptions)
@@ -390,10 +371,6 @@ class TopicGateRuntime(ServiceItem):
         profile.name = normalized_name
         profile.config = config
         self._brokers.update_profile(profile)
-        if broker_id != previous_broker_id:
-            self._brokers.update_observer_model(
-                self.get_observer_model(previous_broker_id)
-            )
         self._brokers.select_active_profile(broker_id)
         if broker_id != previous_broker_id:
             self._active_broker_id = broker_id

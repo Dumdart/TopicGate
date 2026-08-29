@@ -38,7 +38,7 @@ from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.broker_profile import BrokerProfile
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.observation_retention_policy import (
@@ -560,9 +560,6 @@ class FakeGuiRepository:
             recieved_at=datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc),
         )
 
-    def get(self) -> ObserverModel:
-        return ObserverModel(root_stats=[], topic_states={self.state.topic: self.state})
-
     def get_state(self, topic: str) -> TopicState | None:
         return self.state if topic == self.state.topic else None
 
@@ -612,7 +609,6 @@ class FakeGuiRepository:
     async def update_broker(
         self,
         mqtt_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         self.broker_configurations.append(mqtt_config)
@@ -682,16 +678,12 @@ class FakeBrokerRepository:
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
         self._profiles[workspace.profile_id].workspace = workspace
 
-    def update_observer_model(self, model: ObserverModel) -> None:
-        self.get_profile().workspace.model = model
-
     @staticmethod
     def _profile(name: str, mqtt_config: MqttConfig) -> BrokerProfile:
         profile_id = uuid4()
         workspace = ObserverWorkspace(
             id=uuid4(),
             profile_id=profile_id,
-            model=ObserverModel(root_stats=[]),
         )
         return BrokerProfile(profile_id, name, mqtt_config, workspace.id, workspace)
 
@@ -1333,7 +1325,6 @@ async def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
         async def update_broker(
             self,
             mqtt_config: MqttConfig,
-            model: ObserverModel | None = None,
             subscriptions: tuple[Subscription, ...] | None = None,
         ) -> None:
             raise ConnectionError("broker unavailable")
