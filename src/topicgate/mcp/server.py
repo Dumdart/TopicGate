@@ -7,6 +7,7 @@ import sys
 from fastmcp import FastMCP
 
 from topicgate.app.app_dependencies import AppDependencies
+from topicgate.app.services.broker_resolver import BrokerResolver
 from topicgate.app.services.service_container import ServiceContainer
 from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
@@ -81,14 +82,15 @@ class Server:
         self.services = ServiceContainer(self.dependencies)
 
         runtime = self.dependencies.runtime
+        self.resolver = BrokerResolver(runtime)
 
         self.mcp_container = McpApiContainer(
             [
-                BrokerAPI(runtime),
-                ConnectionAPI(runtime),
-                PublishAPI(runtime),
-                SubscriptionAPI(runtime),
-                TopicAPI(runtime),
+                BrokerAPI(runtime, self.resolver),
+                ConnectionAPI(runtime, self.resolver),
+                PublishAPI(runtime, self.resolver),
+                SubscriptionAPI(runtime, self.resolver),
+                TopicAPI(runtime, self.resolver),
                 SnapshotAPI(self.dependencies.snapshot_service),
                 DashboardAPI(runtime, self.dependencies.snapshot_service),
             ],

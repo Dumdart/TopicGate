@@ -13,7 +13,7 @@ class SubscriptionAPI(MCPApi):
     def __init__(
         self,
         runtime: TopicGateRuntime,
-        resolver: BrokerResolver | None = None,
+        resolver: BrokerResolver,
     ):
         self._runtime = runtime
         self._resolver = resolver or BrokerResolver(runtime)

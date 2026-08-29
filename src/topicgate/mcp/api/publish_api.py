@@ -15,10 +15,10 @@ class PublishAPI(MCPApi):
     def __init__(
         self,
         runtime: TopicGateRuntime,
-        resolver: BrokerResolver | None = None,
+        resolver: BrokerResolver,
     ):
         self._runtime = runtime
-        self._resolver = resolver or BrokerResolver(runtime)
+        self._resolver = resolver
 
     def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         if control_enabled:

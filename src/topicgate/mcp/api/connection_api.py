@@ -13,10 +13,10 @@ class ConnectionAPI(MCPApi):
     def __init__(
         self,
         runtime: TopicGateRuntime,
-        resolver: BrokerResolver | None = None,
+        resolver: BrokerResolver,
     ):
         self._runtime = runtime
-        self._resolver = resolver or BrokerResolver(runtime)
+        self._resolver = resolver
 
     def register(self, mcp: FastMCP, *, control_enabled: bool = False) -> None:
         mcp.add_tool(self.get_connection_status)
