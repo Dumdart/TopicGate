@@ -13,11 +13,13 @@ from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.connection_status import ConnectionStatus
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.mqtt_observation import (
     MqttObservation,
     ObservationSource,
 )
-from topicgate.core.models.observer_model import ObserverModel
+from topicgate.core.models.observation_status import ObservationStatus
+from topicgate.core.models.topic_message import TopicMessage
 
 NOW = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
 
@@ -56,9 +58,26 @@ def snapshot_service(
     )
     runtime = MagicMock()
     runtime.list_brokers.return_value = (selected,)
-    runtime.get_observer_model.return_value = ObserverModel(
-        root_stats=[],
-        topic_states={state.topic: state for state in states},
+    runtime.get_current_topics.return_value = tuple(
+        CurrentTopic(
+            TopicMessage(
+                broker_id=selected.id,
+                topic=state.topic,
+                payload=state.payload,
+                qos=state.qos,
+                retain=state.retain,
+                received_at=state.received_at,
+                payload_size=state.payload_size or len(state.payload),
+                message_count=state.message_count,
+                observation_id=uuid4(),
+            ),
+            (
+                ObservationStatus.CACHED
+                if state.source is ObservationSource.STORED
+                else ObservationStatus.LIVE
+            ),
+        )
+        for state in states
     )
     runtime.get_connection_status.return_value = status
     runtime.get_dropped_message_count.return_value = dropped
@@ -260,12 +279,13 @@ async def test_snapshot_read_does_not_activate_or_wait() -> None:
 
 
 async def test_async_and_synchronous_snapshot_reads_share_one_result() -> None:
-    service, selected, _ = snapshot_service(observation("sensor/value", b"12"))
+    service, selected, runtime = snapshot_service(observation("sensor/value", b"12"))
 
     synchronous = service.build_current(selected.id)
     asynchronous = await service.build(selected.id)
 
     assert synchronous == asynchronous
+    assert runtime.get_current_topics.call_count == 2
 
 
 async def test_observe_activates_waits_and_reports_actual_duration() -> None:

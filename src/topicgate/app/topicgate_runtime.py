@@ -1,4 +1,3 @@
-from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from contextlib import nullcontext
 from dataclasses import replace
@@ -11,9 +10,11 @@ from topicgate.app.services.observation_query_service import ObservationQuerySer
 from topicgate.app.services.control_operation_service import ControlOperationService
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.interfaces.broker_profile_store import BrokerProfileStore
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.interfaces.observer_repository import ObserverRepository
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.models.broker_summary import BrokerSummary
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import MqttObservation
@@ -31,7 +32,6 @@ from topicgate.core.models.observation_cache_administration import (
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.topic_message import TopicMessage
 
@@ -50,6 +50,7 @@ class TopicGateRuntime(ServiceItem):
         observation_cache: ObservationCacheService | None = None,
         control_operations: ControlOperationService | None = None,
         observation_query: ObservationQueryService | None = None,
+        current_topics: CurrentTopicReader | None = None,
     ) -> None:
         self._brokers = broker_repository
         self._active_broker_id = (
@@ -61,6 +62,7 @@ class TopicGateRuntime(ServiceItem):
         self._mqtt_repository_factory = mqtt_repository_factory
         self._observation_cache = observation_cache
         self._observation_query = observation_query
+        self._current_topics = current_topics
         self._control_operations = control_operations
         if self._active_broker_id not in self._mqtt_repositories:
             raise ValueError("The active broker requires an MQTT repository.")
@@ -73,11 +75,7 @@ class TopicGateRuntime(ServiceItem):
         await self.active_repo.start()
 
     async def stop(self) -> None:
-        model = self.active_repo.get()
-        try:
-            await self.active_repo.stop()
-        finally:
-            self._brokers.update_observer_model(model)
+        await self.active_repo.stop()
 
     def list_brokers(self) -> tuple[BrokerSummary, ...]:
         return tuple(
@@ -86,17 +84,26 @@ class TopicGateRuntime(ServiceItem):
         )
 
     def list_topics(self, broker_id: UUID | None = None) -> tuple[str, ...]:
-        return self._repository_for(broker_id).get_all_topics()
+        selected_id = self._active_broker_id if broker_id is None else broker_id
+        return tuple(
+            current.message.topic
+            for current in self.get_current_topics(selected_id)
+        )
 
     def get_message(self, message_id: UUID) -> TopicMessage:
         return self._require_observation_query().get_message(message_id)
 
-    def get_broker_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
         self._get_broker_profile(broker_id)
-        return self._require_observation_query().get_broker_messages(broker_id)
+        return self._require_current_topics().get_current_topics(broker_id)
 
-    def get_latest_message(self, topic: str | None = None) -> TopicMessage:
-        return self._require_observation_query().get_latest_message(topic)
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        self._get_broker_profile(broker_id)
+        return self._require_current_topics().get_current_topic(broker_id, topic)
 
     def query_stored_observations(
         self, message_filter: MessageFilter
@@ -138,10 +145,8 @@ class TopicGateRuntime(ServiceItem):
         broker_id: UUID,
         topic: str,
     ) -> MqttObservation | None:
-        return self._mqtt_repositories[broker_id].get_state(topic)
-
-    def get_observer_model(self, broker_id: UUID) -> ObserverModel:
-        return self._mqtt_repositories[broker_id].get()
+        current = self.get_current_topic(broker_id, topic)
+        return None if current is None else current.to_observation()
 
     def list_subscriptions(self, broker_id: UUID) -> tuple[Subscription, ...]:
         return tuple(self._mqtt_repositories[broker_id].subscriptions)
@@ -197,7 +202,6 @@ class TopicGateRuntime(ServiceItem):
                 preview,
                 self._subscriptions_by_broker(),
             )
-            self._reconcile_deleted_entries(result.enforcement.deleted_entries)
             return result
 
     def preview_clear_cache(
@@ -234,7 +238,6 @@ class TopicGateRuntime(ServiceItem):
             result = self._require_observation_cache().confirm_deletion_detailed(
                 preview
             )
-            self._reconcile_deleted_entries(result.deleted_entries)
             return result
 
     def confirm_cache_deletion(
@@ -368,8 +371,6 @@ class TopicGateRuntime(ServiceItem):
         profile.name = normalized_name
         profile.config = config
         self._brokers.update_profile(profile)
-        if broker_id != previous_broker_id:
-            self._brokers.update_observer_model(previous_repo.get())
         self._brokers.select_active_profile(broker_id)
         if broker_id != previous_broker_id:
             self._active_broker_id = broker_id
@@ -452,9 +453,7 @@ class TopicGateRuntime(ServiceItem):
             self.list_subscriptions(broker_id),
         )
         if preview.entries:
-            result = cache.confirm_deletion_detailed(preview)
-            self._reconcile_deleted_entries(result.deleted_entries)
-            return result
+            return cache.confirm_deletion_detailed(preview)
         return None
 
     def _subscriptions_by_broker(
@@ -464,18 +463,6 @@ class TopicGateRuntime(ServiceItem):
             broker.id: self.list_subscriptions(broker.id)
             for broker in self.list_brokers()
         }
-
-    def _reconcile_deleted_entries(self, entries) -> int:
-        grouped = defaultdict(list)
-        for entry in entries:
-            grouped[entry.broker_id].append(entry)
-        removed = 0
-        for broker_id, broker_entries in grouped.items():
-            repository = self._repository_for(broker_id)
-            evict = getattr(repository, "evict_stored_observations", None)
-            if evict is not None:
-                removed += evict(tuple(broker_entries))
-        return removed
 
     def _require_active_broker(self, broker_id: UUID) -> None:
         if broker_id != self.active_broker.id:
@@ -497,6 +484,11 @@ class TopicGateRuntime(ServiceItem):
         if self._observation_query is None:
             raise RuntimeError("Observation query operations are unavailable.")
         return self._observation_query
+
+    def _require_current_topics(self) -> CurrentTopicReader:
+        if self._current_topics is None:
+            raise RuntimeError("Current topic reads are unavailable.")
+        return self._current_topics
 
     def _validated_profile_name(self, name: str, broker_id: UUID) -> str:
         normalized_name = name.strip()

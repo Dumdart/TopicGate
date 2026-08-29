@@ -34,9 +34,11 @@ from PySide6.QtWidgets import (
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.models.mqtt_message import MqttMessage
+from topicgate.core.models.current_topic import CurrentTopic
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.broker_profile import BrokerProfile
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.observation_retention_policy import (
@@ -558,9 +560,6 @@ class FakeGuiRepository:
             recieved_at=datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc),
         )
 
-    def get(self) -> ObserverModel:
-        return ObserverModel(root_stats=[], topic_states={self.state.topic: self.state})
-
     def get_state(self, topic: str) -> TopicState | None:
         return self.state if topic == self.state.topic else None
 
@@ -610,7 +609,6 @@ class FakeGuiRepository:
     async def update_broker(
         self,
         mqtt_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         self.broker_configurations.append(mqtt_config)
@@ -680,22 +678,65 @@ class FakeBrokerRepository:
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
         self._profiles[workspace.profile_id].workspace = workspace
 
-    def update_observer_model(self, model: ObserverModel) -> None:
-        self.get_profile().workspace.model = model
-
     @staticmethod
     def _profile(name: str, mqtt_config: MqttConfig) -> BrokerProfile:
         profile_id = uuid4()
         workspace = ObserverWorkspace(
             id=uuid4(),
             profile_id=profile_id,
-            model=ObserverModel(root_stats=[]),
         )
         return BrokerProfile(profile_id, name, mqtt_config, workspace.id, workspace)
 
 
 class FakeTopicGateRuntime(TopicGateRuntime):
     """Runtime test double backed by in-memory repositories."""
+
+
+class FakeCurrentTopicReader:
+    def __init__(
+        self,
+        repositories: dict[UUID, FakeGuiRepository],
+    ) -> None:
+        self._repositories = repositories
+        self._observation_ids: dict[tuple[UUID, str], UUID] = {}
+
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
+        repository = self._repositories.get(broker_id)
+        if repository is None:
+            return ()
+        state = repository.state
+        return (self._current_topic(broker_id, state),)
+
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        repository = self._repositories.get(broker_id)
+        state = None if repository is None else repository.get_state(topic)
+        if state is None:
+            return None
+        return self._current_topic(broker_id, state)
+
+    def _current_topic(self, broker_id: UUID, state: TopicState) -> CurrentTopic:
+        observation_id = self._observation_ids.setdefault(
+            (broker_id, state.topic),
+            uuid4(),
+        )
+        return CurrentTopic(
+            TopicMessage(
+                broker_id=broker_id,
+                topic=state.topic,
+                payload=state.payload,
+                qos=state.qos,
+                retain=state.retain,
+                received_at=state.received_at,
+                payload_size=state.payload_size or len(state.payload),
+                message_count=state.message_count,
+                observation_id=observation_id,
+            ),
+            ObservationStatus.LIVE,
+        )
 
 
 def runtime_for(
@@ -712,6 +753,7 @@ def runtime_for(
         repositories,
         brokers.get_profile().id,
         lambda _profile: repository,
+        current_topics=FakeCurrentTopicReader(repositories),
     )
 
 
@@ -1283,7 +1325,6 @@ async def test_failed_broker_update_keeps_dialog_open_and_shows_error() -> None:
         async def update_broker(
             self,
             mqtt_config: MqttConfig,
-            model: ObserverModel | None = None,
             subscriptions: tuple[Subscription, ...] | None = None,
         ) -> None:
             raise ConnectionError("broker unavailable")

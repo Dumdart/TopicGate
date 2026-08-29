@@ -1,18 +1,24 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from threading import Event
 from uuid import uuid4
 
 import pytest
 
 from topicgate.app.services.broker_profile_service import BrokerProfileService
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.repository.topic_message_repository import (
     TopicMessageRepository,
+)
+from topicgate.infrastructure.database.mappers.topic_message_mapper import (
+    TopicMessageMapper,
 )
 
 
@@ -167,6 +173,276 @@ def test_queued_writes_are_flushed_in_order(tmp_path, credential_store) -> None:
         database.dispose()
 
 
+def test_record_message_updates_current_map_and_queues_latest_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'recorded.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    repository = TopicMessageRepository(database)
+    message = _message(broker_id, "home/temperature", datetime.now(timezone.utc))
+    updated = replace(
+        message,
+        payload=b"22.0",
+        payload_size=4,
+        message_count=2,
+        observation_id=uuid4(),
+    )
+
+    try:
+        repository.record_message(message)
+        repository.record_message(updated)
+
+        assert repository.get_current_topics(broker_id) == (
+            CurrentTopic(updated, ObservationStatus.LIVE),
+        )
+        assert repository.get_message(updated.observation_id) == updated
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_policy_transformation_is_shared_by_current_and_persisted_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'canonical.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    policy = ObservationRetentionPolicy(max_payload_bytes_per_topic=4)
+    repository = TopicMessageRepository(database, lambda: policy)
+    message = replace(
+        _message(broker_id, "home/value", datetime.now(timezone.utc)),
+        payload=b"123456",
+        payload_size=6,
+    )
+
+    try:
+        repository.record_message(message)
+
+        current = repository.get_current_topic(broker_id, message.topic)
+        assert current is not None
+        assert current.message.payload == b"1234"
+        assert current.message.payload_size == 6
+        assert repository.get_message(message.observation_id) == current.message
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_current_topic_read_is_atomic_and_memory_only_while_write_is_queued(
+    tmp_path,
+    credential_store,
+    monkeypatch,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'memory-only.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    repository = TopicMessageRepository(database)
+    message = _message(broker_id, "queued/topic", datetime.now(timezone.utc))
+    writer_entered = Event()
+    release_writer = Event()
+    original = TopicMessageMapper.to_row
+
+    def blocked_to_row(entry):
+        writer_entered.set()
+        assert release_writer.wait(timeout=5)
+        return original(entry)
+
+    monkeypatch.setattr(TopicMessageMapper, "to_row", blocked_to_row)
+    try:
+        repository.record_message(message)
+        assert writer_entered.wait(timeout=5)
+
+        assert repository.get_current_topic(
+            broker_id, message.topic
+        ) == CurrentTopic(message, ObservationStatus.LIVE)
+    finally:
+        release_writer.set()
+        repository.close()
+        database.dispose()
+
+
+def test_live_message_replaces_hydrated_cached_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'live-replaces.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    cached = _message(broker_id, "shared/topic", datetime.now(timezone.utc))
+    writer = TopicMessageRepository(database)
+    writer.update_message(cached)
+    writer.close()
+    repository = TopicMessageRepository(database)
+    live = replace(cached, observation_id=uuid4(), payload=b"live")
+
+    try:
+        repository.record_message(live)
+
+        assert repository.get_current_topic(
+            broker_id, cached.topic
+        ) == CurrentTopic(live, ObservationStatus.LIVE)
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_persisted_deletion_keeps_matching_live_current_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'delete-live.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    repository = TopicMessageRepository(database)
+    message = _message(broker_id, "live/topic", datetime.now(timezone.utc))
+
+    try:
+        repository.update_message(message)
+        preview = repository.preview_deletion(broker_id)
+        repository.record_message(message)
+
+        assert repository.delete_previewed(preview) == 1
+        assert repository.get_current_topic(
+            broker_id, message.topic
+        ) == CurrentTopic(message, ObservationStatus.LIVE)
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_explicit_topic_and_broker_current_state_eviction(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'eviction.db'}")
+    profiles = BrokerProfileService(database, credential_store=credential_store)
+    first_broker = profiles.get_profile().id
+    second_broker = profiles.create_profile(
+        "Second", profiles.get_profile().config
+    ).id
+    repository = TopicMessageRepository(database)
+    now = datetime.now(timezone.utc)
+    first = _message(first_broker, "first", now)
+    kept = _message(first_broker, "kept", now)
+    second = _message(second_broker, "second", now)
+
+    try:
+        for message in (first, kept, second):
+            repository.record_message(message)
+
+        repository.remove_current_topics(first_broker, (first.topic,))
+        assert _current_messages(repository, first_broker) == (kept,)
+
+        repository.remove_current_broker(first_broker)
+        assert repository.get_current_topics(first_broker) == ()
+        assert _current_messages(repository, second_broker) == (second,)
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_retention_removes_cached_but_not_live_current_state(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'retention-state.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    policy = ObservationRetentionPolicy(
+        max_entries_per_broker=1,
+        max_entries_total=1,
+    )
+    repository = TopicMessageRepository(database, lambda: policy)
+    now = datetime.now(timezone.utc)
+    cached = _message(broker_id, "cached", now)
+    live = _message(broker_id, "live", now + timedelta(seconds=1))
+
+    try:
+        repository.update_message(cached)
+        repository.flush()
+        repository.record_message(live)
+        repository.flush()
+
+        assert repository.get_current_topics(broker_id) == (
+            CurrentTopic(live, ObservationStatus.LIVE),
+        )
+
+        older_live = replace(
+            cached,
+            topic="older-live",
+            observation_id=uuid4(),
+        )
+        repository.record_message(older_live)
+        repository.flush()
+        assert repository.get_current_topic(
+            broker_id, older_live.topic
+        ) == CurrentTopic(older_live, ObservationStatus.LIVE)
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_writer_failure_preserves_current_state(
+    tmp_path,
+    credential_store,
+    monkeypatch,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'writer-failure.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    repository = TopicMessageRepository(database)
+    message = _message(broker_id, "failed/write", datetime.now(timezone.utc))
+
+    def fail_to_row(_entry):
+        raise OSError("write failed")
+
+    monkeypatch.setattr(TopicMessageMapper, "to_row", fail_to_row)
+    try:
+        repository.record_message(message)
+        with pytest.raises(RuntimeError, match="queued topic message write failed"):
+            repository.flush()
+
+        assert repository.get_current_topic(
+            broker_id, message.topic
+        ) == CurrentTopic(message, ObservationStatus.LIVE)
+    finally:
+        repository.close()
+        database.dispose()
+
+
+def test_repository_hydrates_persisted_messages_as_cached(
+    tmp_path,
+    credential_store,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'hydrated-current.db'}")
+    broker_id = BrokerProfileService(
+        database, credential_store=credential_store
+    ).get_profile().id
+    message = _message(broker_id, "cached/topic", datetime.now(timezone.utc))
+    writer = TopicMessageRepository(database)
+    writer.update_message(message)
+    writer.close()
+
+    repository = TopicMessageRepository(database)
+    try:
+        assert repository.get_current_topics(broker_id) == (
+            CurrentTopic(message, ObservationStatus.CACHED),
+        )
+    finally:
+        repository.close()
+        database.dispose()
+
+
 def test_get_messages_is_scoped_to_each_broker(
     tmp_path,
     credential_store,
@@ -220,8 +496,8 @@ def test_get_latest_messages_is_scoped_to_broker(
         repository.update_message(first)
         repository.update_message(second)
 
-        assert repository.get_latest_messages(first_broker) == (first,)
-        assert repository.get_latest_messages(second_broker) == (second,)
+        assert _current_messages(repository, first_broker) == (first,)
+        assert _current_messages(repository, second_broker) == (second,)
     finally:
         repository.close()
         database.dispose()
@@ -259,8 +535,9 @@ def test_repository_truncates_payload_and_evicts_oldest_excess_entries(
         repository.update_message(
             _message(broker_id, "newest", received_at + timedelta(seconds=2))
         )
+        repository.flush()
 
-        stored = repository.get_latest_messages(broker_id)
+        stored = _current_messages(repository, broker_id)
 
         assert tuple(message.topic for message in stored) == ("middle", "newest")
         assert sum(len(message.payload) for message in stored) == 8
@@ -288,8 +565,9 @@ def test_repository_automatically_deletes_expired_entries(
                 datetime.now(timezone.utc) - timedelta(minutes=2),
             )
         )
+        repository.flush()
 
-        assert repository.get_latest_messages(broker_id) == ()
+        assert repository.get_current_topics(broker_id) == ()
     finally:
         repository.close()
         database.dispose()
@@ -318,7 +596,7 @@ def test_confirmed_deletion_does_not_remove_a_newer_observation(
         repository.update_message(replacement)
 
         assert repository.delete_previewed(preview) == 0
-        assert repository.get_latest_messages(broker_id) == (replacement,)
+        assert _current_messages(repository, broker_id) == (replacement,)
     finally:
         repository.close()
         database.dispose()
@@ -396,9 +674,10 @@ def test_per_broker_payload_limit_evicts_oldest_entry(
         repository.update_message(
             _message(broker_id, "new", received_at + timedelta(seconds=1))
         )
+        repository.flush()
 
         assert tuple(
-            message.topic for message in repository.get_latest_messages(broker_id)
+            message.topic for message in _current_messages(repository, broker_id)
         ) == ("new",)
     finally:
         repository.close()
@@ -457,4 +736,13 @@ def _message(broker_id, topic: str, received_at: datetime) -> TopicMessage:
         payload_size=len(payload),
         message_count=1,
         observation_id=uuid4(),
+    )
+
+
+def _current_messages(
+    repository: TopicMessageRepository,
+    broker_id,
+) -> tuple[TopicMessage, ...]:
+    return tuple(
+        current.message for current in repository.get_current_topics(broker_id)
     )

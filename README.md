@@ -11,7 +11,6 @@
   <a href="#get-started">Get started</a> ·
   <a href="#connect-an-agent">Connect an agent</a> ·
   <a href="#how-observations-work">Understand observations</a> ·
-  <a href="docs/desktop-workflow.md">Desktop workflow</a>
 </p>
 
 <p align="center">

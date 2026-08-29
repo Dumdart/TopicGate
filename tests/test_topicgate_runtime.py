@@ -7,6 +7,7 @@ from topicgate.app.services.observation_query_service import ObservationQuerySer
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.message_filter import MessageFilter
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.observation_cache_administration import (
@@ -14,7 +15,8 @@ from topicgate.core.models.observation_cache_administration import (
     CacheUsageSummary,
     PersistedTopicSummary,
 )
-from topicgate.core.models.observer_model import ObserverModel, TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.core.models.topic_message import TopicMessage
@@ -28,7 +30,6 @@ def profile(name: str, host: str = "broker") -> BrokerProfile:
     workspace = ObserverWorkspace(
         id=uuid4(),
         profile_id=profile_id,
-        model=ObserverModel(root_stats=[]),
     )
     return BrokerProfile(
         profile_id,
@@ -43,6 +44,7 @@ def runtime_with(
     profiles: tuple[BrokerProfile, ...],
     observation_cache=None,
     observation_query=None,
+    current_topics=None,
 ) -> tuple[TopicGateRuntime, MagicMock, MagicMock]:
     brokers = MagicMock()
     active_id = profiles[0].id
@@ -72,12 +74,14 @@ def runtime_with(
     mqtt.update_subscription = AsyncMock()
     mqtt.remove_subscription = AsyncMock()
     mqtt.publish = AsyncMock()
-    mqtt.get.return_value = ObserverModel(root_stats=[])
     mqtt.subscriptions = ()
     mqtt.connection_status = "disconnected"
     mqtt.dropped_message_count = 0
     mqtt.topic_update_interval = 0.1
     repositories = {item.id: mqtt for item in profiles}
+    current_topics = current_topics or MagicMock()
+    current_topics.get_current_topics.return_value = ()
+    current_topics.get_current_topic.return_value = None
     return (
         TopicGateRuntime(
             brokers,
@@ -86,6 +90,7 @@ def runtime_with(
             lambda _profile: mqtt,
             observation_cache,
             observation_query=observation_query,
+            current_topics=current_topics,
         ),
         brokers,
         mqtt,
@@ -100,7 +105,6 @@ async def test_runtime_owns_the_mqtt_lifecycle() -> None:
         await runtime.stop()
 
         mqtt.start.assert_awaited_once_with()
-        brokers.update_observer_model.assert_called_once_with(mqtt.get.return_value)
         mqtt.stop.assert_awaited_once_with()
 
     await scenario()
@@ -207,15 +211,20 @@ async def test_runtime_preserves_topic_states_across_broker_switches() -> None:
         default = profile("Default")
         selected = profile("Local", "local")
         _, brokers, _ = runtime_with((default, selected))
+        current_topics = MemoryCurrentTopics()
         default_repo = ObserverMqttRepository(
             default.config,
             [],
-            default.workspace.model,
+            broker_id=default.id,
+            message_recorder=current_topics,
+            current_topics=current_topics,
         )
         selected_repo = ObserverMqttRepository(
             selected.config,
             [],
-            selected.workspace.model,
+            broker_id=selected.id,
+            message_recorder=current_topics,
+            current_topics=current_topics,
         )
         default_repo.handle_message(
             None,
@@ -240,6 +249,7 @@ async def test_runtime_preserves_topic_states_across_broker_switches() -> None:
                 selected.id: selected_repo,
             },
             default.id,
+            current_topics=current_topics,
         )
 
         await runtime.activate_broker(selected.id)
@@ -356,10 +366,16 @@ async def test_runtime_exposes_topic_queries_connection_commands_and_publish() -
             retain=False,
             recieved_at=datetime.now(timezone.utc),
         )
-        runtime, _, mqtt = runtime_with((active,))
-        mqtt.get_state.return_value = state
+        current_topics = _current_reader(_current(active.id, state))
+        runtime, _, mqtt = runtime_with(
+            (active,),
+            current_topics=current_topics,
+        )
 
-        assert runtime.get_topic_state(active.id, "home/status") is state
+        projected = runtime.get_topic_state(active.id, "home/status")
+        assert projected is not None
+        assert projected.payload == state.payload
+        mqtt.get_state.assert_not_called()
         await runtime.connect()
         await runtime.reconnect()
         await runtime.disconnect()
@@ -383,8 +399,6 @@ def test_runtime_delegates_stored_observation_queries() -> None:
     persisted_topics = (MagicMock(spec=PersistedTopicSummary),)
     usage = CacheUsageSummary((BrokerCacheUsage(active.id, 1, 2, None, None),))
     query.get_message.return_value = message
-    query.get_broker_messages.return_value = (message,)
-    query.get_latest_message.return_value = message
     query.query_stored_observations.return_value = (message,)
     query.get_cache_usage.return_value = usage
     query.get_persisted_topics.return_value = persisted_topics
@@ -396,15 +410,11 @@ def test_runtime_delegates_stored_observation_queries() -> None:
     )
 
     assert runtime.get_message(message_id) is message
-    assert runtime.get_broker_messages(active.id) == (message,)
-    assert runtime.get_latest_message("home/status") is message
     assert runtime.query_stored_observations(message_filter) == (message,)
     assert runtime.get_cache_usage() == usage
     assert runtime.list_persisted_topics(active.id) == persisted_topics
 
     query.get_message.assert_called_once_with(message_id)
-    query.get_broker_messages.assert_called_once_with(active.id)
-    query.get_latest_message.assert_called_once_with("home/status")
     query.query_stored_observations.assert_called_once_with(message_filter)
     query.get_cache_usage.assert_called_once_with()
     query.get_persisted_topics.assert_called_once_with(active.id, ())
@@ -458,11 +468,15 @@ def test_runtime_exposes_broker_specific_snapshot_inputs() -> None:
         2026, 8, 16, tzinfo=timezone.utc
     )
     second_repo = MagicMock()
-    second_repo.get_all_topics.return_value = ("second/topic",)
+    current_topics = _current_reader(
+        _current(first.id, _state("first/topic")),
+        _current(second.id, _state("second/topic")),
+    )
     runtime = TopicGateRuntime(
         brokers,
         {first.id: first_repo, second.id: second_repo},
         first.id,
+        current_topics=current_topics,
     )
 
     assert runtime.list_topics(first.id) == ("first/topic",)
@@ -496,6 +510,27 @@ def test_runtime_exposes_preview_and_confirmed_cache_deletion() -> None:
         runtime.list_subscriptions(active.id),
     )
     cache.confirm_deletion.assert_called_once_with(preview)
+
+
+def test_runtime_reads_current_values_from_current_repository() -> None:
+    active = profile("Default")
+    observer = MagicMock()
+    observer.subscriptions = (Subscription("home/#"),)
+    current = _current(active.id, _state("home/status", b"canonical"))
+    reader = _current_reader(current)
+    brokers = MagicMock()
+    brokers.get_profile.return_value = active
+    runtime = TopicGateRuntime(
+        brokers,
+        {active.id: observer},
+        active.id,
+        current_topics=reader,
+    )
+
+    topics = runtime.get_current_topics(active.id)
+
+    assert tuple(item.message.topic for item in topics) == ("home/status",)
+    assert topics[0].message.payload == b"canonical"
 
 
 async def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
@@ -533,3 +568,80 @@ async def test_runtime_flushes_observations_before_deleting_a_broker() -> None:
 
     cache.flush_pending_writes.assert_called_once_with()
     brokers.delete_profile.assert_called_once_with(removable.id)
+
+
+def _state(topic: str, payload: bytes = b"value") -> TopicState:
+    return TopicState(
+        name=topic.rsplit("/", 1)[-1],
+        topic=topic,
+        payload=payload,
+        qos=1,
+        retain=False,
+        recieved_at=datetime.now(timezone.utc),
+    )
+
+
+def _current(broker_id, state: TopicState) -> CurrentTopic:
+    return CurrentTopic(
+        TopicMessage(
+            broker_id=broker_id,
+            topic=state.topic,
+            payload=state.payload,
+            qos=state.qos,
+            retain=state.retain,
+            received_at=state.received_at,
+            payload_size=state.payload_size or len(state.payload),
+            message_count=state.message_count,
+            observation_id=state.observation_id or uuid4(),
+        ),
+        ObservationStatus.LIVE,
+    )
+
+
+def _current_reader(*topics: CurrentTopic) -> MagicMock:
+    reader = MagicMock()
+    reader.get_current_topics.side_effect = lambda broker_id: tuple(
+        current
+        for current in topics
+        if current.message.broker_id == broker_id
+    )
+    reader.get_current_topic.side_effect = lambda broker_id, topic: next(
+        (
+            current
+            for current in topics
+            if current.message.broker_id == broker_id
+            and current.message.topic == topic
+        ),
+        None,
+    )
+    return reader
+
+
+class MemoryCurrentTopics:
+    def __init__(self) -> None:
+        self._current: dict[tuple[object, str], CurrentTopic] = {}
+
+    def record_message(self, message: TopicMessage) -> None:
+        self._current[(message.broker_id, message.topic)] = CurrentTopic(
+            message,
+            ObservationStatus.LIVE,
+        )
+
+    def get_current_topics(self, broker_id) -> tuple[CurrentTopic, ...]:
+        return tuple(
+            current
+            for (owner_id, _), current in self._current.items()
+            if owner_id == broker_id
+        )
+
+    def get_current_topic(self, broker_id, topic) -> CurrentTopic | None:
+        return self._current.get((broker_id, topic))
+
+    def remove_current_topics(self, broker_id, topics) -> None:
+        for topic in topics:
+            self._current.pop((broker_id, topic), None)
+
+    def remove_current_broker(self, broker_id) -> None:
+        for key in tuple(self._current):
+            if key[0] == broker_id:
+                self._current.pop(key)

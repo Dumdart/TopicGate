@@ -5,7 +5,6 @@ from uuid import UUID, uuid4
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.core.config.mqtt_config import MqttConfig
-from topicgate.core.models.mqtt_observation import ObservationSource
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.repository.topic_message_repository import (
@@ -13,7 +12,7 @@ from topicgate.infrastructure.repository.topic_message_repository import (
 )
 
 
-def test_profile_hydrates_only_its_persisted_topic_states(
+def test_profile_models_do_not_duplicate_repository_current_state(
     tmp_path: Path,
     credential_store,
 ) -> None:
@@ -39,31 +38,20 @@ def test_profile_hydrates_only_its_persisted_topic_states(
             topic_messages=messages,
         )
 
-        first_model = restarted.get_profile(first.id).workspace.model
-        second_model = restarted.get_profile(second.id).workspace.model
-
-        assert set(first_model.topic_states) == {first_message.topic}
-        assert first_model.topic_states[first_message.topic].payload == b"21.5"
-        assert first_model.topic_states[first_message.topic].message_count == 7
-        assert first_model.topic_states[first_message.topic].recieved_at == (
-            first_message.received_at
+        assert restarted.get_profile(first.id).workspace.subscriptions == ()
+        assert restarted.get_profile(second.id).workspace.subscriptions == ()
+        assert messages.get_current_topic(first.id, first_message.topic).message == (
+            first_message
         )
-        assert (
-            first_model.topic_states[first_message.topic].source
-            is ObservationSource.STORED
+        assert messages.get_current_topic(second.id, second_message.topic).message == (
+            second_message
         )
-        assert (
-            first_model.topic_states[first_message.topic].observation_id
-            == first_message.observation_id
-        )
-        assert second_model.topic_states[second_message.topic].payload == b"18.0"
-        assert second_model.topic_states[second_message.topic].message_count == 3
     finally:
         messages.close()
         database.dispose()
 
 
-def test_in_memory_observer_model_takes_precedence_over_hydration(
+def test_runtime_state_does_not_duplicate_current_topic_values(
     tmp_path: Path,
     credential_store,
 ) -> None:
@@ -72,7 +60,6 @@ def test_in_memory_observer_model_takes_precedence_over_hydration(
     profile = initial.get_profile()
     messages = TopicMessageRepository(database)
     runtime_state = BrokerRuntimeState()
-    runtime_state.set_model(profile.id, profile.workspace.model)
     messages.update_message(_message(profile.id, "cached/topic", b"cached", 1))
 
     try:
@@ -83,7 +70,8 @@ def test_in_memory_observer_model_takes_precedence_over_hydration(
             topic_messages=messages,
         )
 
-        assert restarted.get_profile(profile.id).workspace.model.topic_states == {}
+        assert restarted.get_profile(profile.id).workspace.subscriptions == ()
+        assert messages.get_current_topic(profile.id, "cached/topic") is not None
     finally:
         messages.close()
         database.dispose()

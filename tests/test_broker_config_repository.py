@@ -2,7 +2,6 @@ from unittest.mock import MagicMock
 
 from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
-from topicgate.core.models.observer_model import ObserverModel
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 
 def test_broker_repository_returns_initial_settings(credential_store) -> None:
@@ -55,25 +54,17 @@ def test_broker_repository_updates_mqtt_settings_and_saves(
     repository.save.assert_called_once_with()
 
 
-def test_broker_repository_links_observer_model_to_active_profile(
+def test_broker_repository_links_workspace_to_active_profile(
     credential_store,
 ) -> None:
     repository = BrokerProfileService(
         AppConfig(MqttConfig("broker", 1883, "", "")),
         credential_store=credential_store,
     )
-    replacement = ObserverModel(root_stats=[])
-    repository.save = MagicMock()
-
-    repository.update_observer_model(replacement)
-
     profile = repository.get_profile()
     workspace = repository.get_observer_workspace()
-    assert repository.get_observer_model() is replacement
-    assert workspace.model is replacement
     assert workspace.profile_id == profile.id
     assert profile.workspace_id == workspace.id
-    repository.save.assert_called_once_with()
 
 
 def test_broker_repository_provides_two_empty_independent_profiles(
@@ -91,7 +82,6 @@ def test_broker_repository_provides_two_empty_independent_profiles(
         "Local MQTT",
     ]
     assert local_profile.config == MqttConfig("localhost", 1883, "", "")
-    assert default_profile.workspace.model is not local_profile.workspace.model
     assert default_profile.workspace.subscriptions == ()
     assert local_profile.workspace.subscriptions == ()
 
@@ -112,7 +102,6 @@ def test_broker_repository_creates_updates_and_deletes_profiles(
 
     assert profile.name == "Remote"
     assert profile.workspace.profile_id == profile.id
-    assert profile.workspace.model == ObserverModel(root_stats=[])
     assert profile.workspace.subscriptions == ()
     assert credential_store.get_password(profile.id) == "secret"
 

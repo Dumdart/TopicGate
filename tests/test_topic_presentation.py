@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from topicgate.core.models.observer_model import TopicState
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.subscription import Subscription
 from topicgate.presentation.topic_presentation import (
     build_topic_tree,

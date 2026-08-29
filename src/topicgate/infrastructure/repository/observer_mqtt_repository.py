@@ -1,35 +1,32 @@
 import asyncio
-from collections.abc import AsyncIterator, Callable, Collection
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID, uuid4
 
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
+from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.connection_status import ConnectionStatus
+from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.mqtt_observation import (
     MqttObservation,
-    ObservationSource,
-)
-from topicgate.core.models.observation_deletion_preview import (
-    ObservationDeletionEntry,
 )
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
-from topicgate.core.models.observer_model import ObserverModel
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.subscription import Subscription
-from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.models.topic_message import TopicMessage
+from topicgate.core.mqtt_topics import mqtt_filter_matches, validate_topic_name
 from topicgate.core.observer_limits import TOPIC_TREE_REFRESH_INTERVAL_SECONDS
 from topicgate.core.payload_limits import MAX_PENDING_MESSAGE_NOTIFICATIONS
 from topicgate.infrastructure.mqtt.callbacks.observer_repository_callbacks import (
     ObserverRepositoryCallbacks,
 )
 from topicgate.infrastructure.mqtt.mqtt_gate import MqttGate
-from topicgate.processors.observer_model_mqtt_message_processor import (
-    ObserverModelMqttMessageProcessor,
-)
 from topicgate.processors.subscription_manager import SubscriptionManager
-from topicgate.processors.observer_model_processor import ObserverModelProcessor
 from topicgate.processors.observation_retention_processor import (
     ObservationRetentionProcessor,
 )
@@ -44,16 +41,20 @@ class ObserverMqttRepository:
         self,
         config: MqttConfig,
         topic_filters: list[str] | list[Subscription],
-        model: ObserverModel | None = None,
         retention_policy: Callable[[], ObservationRetentionPolicy] | None = None,
         observation_sink: Callable[[MqttObservation], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        *,
+        broker_id: UUID,
+        message_recorder: TopicMessageRecorder,
+        current_topics: CurrentTopicReader,
     ) -> None:
-        self._state = model if model is not None else ObserverModel(root_stats=[])
-        self._message_processor = ObserverModelMqttMessageProcessor()
         self._retention_policy = retention_policy or ObservationRetentionPolicy
         self._observation_sink = observation_sink
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._broker_id = broker_id
+        self._message_recorder = message_recorder
+        self._current_topics = current_topics
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
             maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
         )
@@ -70,13 +71,6 @@ class ObserverMqttRepository:
         )
         self._subscription_manager = SubscriptionManager(
             self._mqtt_gate, self.handle_message
-        )
-        ObserverModelProcessor.rebuild(
-            self._state,
-            (
-                subscription.topic_filter
-                for subscription in self._subscription_manager.subscriptions
-            ),
         )
 
     async def start(self) -> None:
@@ -134,14 +128,12 @@ class ObserverMqttRepository:
     async def update_broker(
         self,
         new_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         """Replace the MQTT connection with one configured for a new broker."""
         async with self._lifecycle_lock:
             previous_gate = self._mqtt_gate
             previous_manager = self._subscription_manager
-            previous_model = self._state
             was_running = self._is_running
             active_subscriptions = list(
                 self.subscriptions if subscriptions is None else subscriptions
@@ -158,24 +150,14 @@ class ObserverMqttRepository:
             self._subscription_manager = SubscriptionManager(
                 self._mqtt_gate, self.handle_message
             )
-            if model is not None:
-                self._state = model
 
             try:
-                ObserverModelProcessor.rebuild(
-                    self._state,
-                    (
-                        subscription.topic_filter
-                        for subscription in active_subscriptions
-                    ),
-                )
                 await self._start()
             except Exception:
                 # Check that a failed broker change leaves the repository using
                 # the previous, known configuration rather than the failed one.
                 self._mqtt_gate = previous_gate
                 self._subscription_manager = previous_manager
-                self._state = previous_model
                 if was_running:
                     try:
                         await self._start()
@@ -183,29 +165,47 @@ class ObserverMqttRepository:
                         pass
                 raise
 
-    def get(self) -> ObserverModel:
-        return ObserverModelProcessor.deep_copy(self._state)
-
     def get_value(self, topic: str) -> bytes | None:
         state = self.get_state(topic)
         return state.payload if state is not None else None
 
     def get_state(self, topic: str) -> MqttObservation | None:
-        return self._state.topic_states.get(topic)
+        current = self._current_topics.get_current_topic(self._broker_id, topic)
+        return None if current is None else current.to_observation()
 
     def get_all_topics(self) -> tuple[str, ...]:
-        return tuple(ObserverModelProcessor.get_all_topics(self._state))
+        return tuple(
+            current.message.topic
+            for current in self._current_topics.get_current_topics(self._broker_id)
+        )
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
+        validate_topic_name(msg.topic)
         msg = ObservationRetentionProcessor.truncate_mqtt_message(
             msg,
             self._retention_policy(),
         )
-        if not self._message_processor.process(self._state, msg):
-            self._dropped_message_count += 1
-            return
+        previous = self._current_topics.get_current_topic(
+            self._broker_id,
+            msg.topic,
+        )
+        entry = TopicMessage(
+            broker_id=self._broker_id,
+            topic=msg.topic,
+            payload=msg.payload,
+            qos=msg.qos,
+            retain=msg.retain,
+            received_at=self._clock(),
+            payload_size=msg.payload_size,
+            message_count=(
+                1 if previous is None else previous.message.message_count + 1
+            ),
+            observation_id=uuid4(),
+        )
+        self._message_recorder.record_message(entry)
+        observation = CurrentTopic(entry, ObservationStatus.LIVE).to_observation()
         if self._observation_sink is not None:
-            self._observation_sink(self._state.topic_states[msg.topic])
+            self._observation_sink(observation)
         if self.message_queue.full():
             self.message_queue.get_nowait()
             self._dropped_message_count += 1
@@ -221,25 +221,6 @@ class ObserverMqttRepository:
             messages.append(self.message_queue.get_nowait())
         return tuple(messages)
 
-    def evict_stored_observations(
-        self,
-        entries: Collection[ObservationDeletionEntry],
-    ) -> int:
-        identifiers = {entry.observation_id for entry in entries}
-        removed = 0
-        for topic, state in tuple(self._state.topic_states.items()):
-            if (
-                state.source == ObservationSource.STORED
-                and state.observation_id in identifiers
-            ):
-                ObserverModelProcessor.remove_topic(self._state, topic)
-                removed += 1
-        ObserverModelProcessor.rebuild(
-            self._state,
-            (item.topic_filter for item in self.subscriptions),
-        )
-        return removed
-
     @property
     def subscriptions(self) -> tuple[Subscription, ...]:
         return self._subscription_manager.subscriptions
@@ -247,13 +228,6 @@ class ObserverMqttRepository:
     async def add_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
             await self._subscription_manager.add(subscription)
-            ObserverModelProcessor.rebuild(
-                self._state,
-                (
-                    item.topic_filter
-                    for item in self._subscription_manager.subscriptions
-                ),
-            )
 
     async def remove_subscription(self, subscription: Subscription) -> None:
         async with self._lifecycle_lock:
@@ -323,13 +297,12 @@ class ObserverMqttRepository:
 
     def _prune_unsubscribed_topics(self) -> None:
         subscriptions = self.subscriptions
-        for topic, state in tuple(self._state.topic_states.items()):
+        removed: list[str] = []
+        for current in self._current_topics.get_current_topics(self._broker_id):
+            topic = current.message.topic
             if not any(
                 mqtt_filter_matches(subscription.topic_filter, topic)
                 for subscription in subscriptions
-            ) and state.source != ObservationSource.STORED:
-                ObserverModelProcessor.remove_topic(self._state, topic)
-        ObserverModelProcessor.rebuild(
-            self._state,
-            (subscription.topic_filter for subscription in subscriptions),
-        )
+            ) and current.status is ObservationStatus.LIVE:
+                removed.append(topic)
+        self._message_recorder.remove_current_topics(self._broker_id, removed)

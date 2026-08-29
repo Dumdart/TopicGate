@@ -9,13 +9,11 @@ import pytest
 from topicgate.core.models.mqtt_message import MqttMessage
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.broker_profile import BrokerProfile
-from topicgate.core.models.observer_model import (
-    ObserverModel,
-    TopicNode,
-    TopicState,
-)
+from topicgate.core.models.current_topic import CurrentTopic
+from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.observation_cache_administration import (
     BrokerCacheUsage,
@@ -234,9 +232,6 @@ class FakeObserverRepository:
     async def stop(self) -> None:
         self.connection_status = "disconnected"
 
-    def get(self) -> ObserverModel:
-        return ObserverModel(root_stats=[], topic_states=dict(self._states))
-
     def get_state(self, topic: str) -> TopicState | None:
         return self._states.get(topic)
 
@@ -277,12 +272,9 @@ class FakeObserverRepository:
     async def update_broker(
         self,
         new_config: MqttConfig,
-        model: ObserverModel | None = None,
         subscriptions: tuple[Subscription, ...] | None = None,
     ) -> None:
         self.broker_configurations.append(new_config)
-        if model is not None:
-            self._states = model.topic_states
         if subscriptions is not None:
             self.subscriptions = subscriptions
 
@@ -360,22 +352,67 @@ class FakeBrokerRepository:
     def update_observer_workspace(self, workspace: ObserverWorkspace) -> None:
         self._profiles[workspace.profile_id].workspace = workspace
 
-    def update_observer_model(self, model: ObserverModel) -> None:
-        self.get_profile().workspace.model = model
-
     @staticmethod
     def _profile(name: str, mqtt: MqttConfig) -> BrokerProfile:
         profile_id = uuid4()
         workspace = ObserverWorkspace(
             id=uuid4(),
             profile_id=profile_id,
-            model=ObserverModel(root_stats=[]),
         )
         return BrokerProfile(profile_id, name, mqtt, workspace.id, workspace)
 
 
 class FakeTopicGateRuntime(TopicGateRuntime):
     """Runtime test double backed by in-memory repositories."""
+
+
+class FakeCurrentTopicReader:
+    def __init__(
+        self,
+        repositories: dict[UUID, FakeObserverRepository],
+    ) -> None:
+        self._repositories = repositories
+        self._observation_ids: dict[tuple[UUID, str], UUID] = {}
+
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
+        repository = self._repositories.get(broker_id)
+        if repository is None:
+            return ()
+        return tuple(
+            self._current_topic(broker_id, state)
+            for state in repository._states.values()
+        )
+
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        repository = self._repositories.get(broker_id)
+        state = None if repository is None else repository.get_state(topic)
+        if state is None:
+            return None
+        return self._current_topic(broker_id, state)
+
+    def _current_topic(self, broker_id: UUID, state: TopicState) -> CurrentTopic:
+        observation_id = self._observation_ids.setdefault(
+            (broker_id, state.topic),
+            uuid4(),
+        )
+        return CurrentTopic(
+            TopicMessage(
+                broker_id=broker_id,
+                topic=state.topic,
+                payload=state.payload,
+                qos=state.qos,
+                retain=state.retain,
+                received_at=state.received_at,
+                payload_size=state.payload_size or len(state.payload),
+                message_count=state.message_count,
+                observation_id=observation_id,
+            ),
+            ObservationStatus.LIVE,
+        )
 
 
 def runtime_for(
@@ -387,11 +424,13 @@ def runtime_for(
     )
     profiles = brokers.get_all_profiles()
     repositories = {profile.id: repository for profile in profiles}
+    active_broker_id = brokers.get_profile().id
     return FakeTopicGateRuntime(
         brokers,
         repositories,
-        brokers.get_profile().id,
+        active_broker_id,
         lambda _profile: repository,
+        current_topics=FakeCurrentTopicReader(repositories),
     )
 
 
@@ -629,13 +668,15 @@ async def test_switching_broker_profile_moves_live_message_observation() -> None
         selected_profile.workspace.subscriptions = (Subscription("#"),)
         default_repo = FakeObserverRepository()
         selected_repo = FakeObserverRepository()
+        repositories = {
+            default_profile.id: default_repo,
+            selected_profile.id: selected_repo,
+        }
         runtime = FakeTopicGateRuntime(
             brokers,
-            {
-                default_profile.id: default_repo,
-                selected_profile.id: selected_repo,
-            },
+            repositories,
             default_profile.id,
+            current_topics=FakeCurrentTopicReader(repositories),
         )
         view_model = MainViewModel(runtime)
         await view_model.start()
@@ -709,24 +750,8 @@ async def test_switching_broker_profile_replaces_the_visible_workspace_tree() ->
             MqttConfig("default", 1883, "", "")
         )
         default_profile, local_profile = broker_repository.get_all_profiles()
-        default_profile.workspace.model = ObserverModel(
-            root_stats=[
-                TopicNode(
-                    "home",
-                    children={"status": TopicNode("status")},
-                )
-            ]
-        )
         default_profile.workspace.subscriptions = (Subscription("home/status"),)
         repository.subscriptions = default_profile.workspace.subscriptions
-        local_profile.workspace.model = ObserverModel(
-            root_stats=[
-                TopicNode(
-                    "bridge",
-                    children={"connected": TopicNode("connected")},
-                )
-            ]
-        )
         local_profile.workspace.subscriptions = (
             Subscription("bridge/connected"),
         )
@@ -795,7 +820,6 @@ async def test_failed_mqtt_configuration_is_not_stored() -> None:
         async def update_broker(
             self,
             new_config: MqttConfig,
-            model: ObserverModel | None = None,
             subscriptions: tuple[Subscription, ...] | None = None,
         ) -> None:
             raise ConnectionError("broker unavailable")
@@ -872,7 +896,7 @@ async def test_removing_subscription_hides_its_cached_topic_and_clears_selection
     await scenario()
 
 
-async def test_removing_subscription_hides_cached_topic_from_observer_model() -> None:
+async def test_removing_subscription_hides_cached_configured_topic() -> None:
     async def scenario() -> None:
         repository = FakeObserverRepository()
         subscription = Subscription("SmartHome/kitchen/status")
@@ -880,20 +904,7 @@ async def test_removing_subscription_hides_cached_topic_from_observer_model() ->
         broker_repository = FakeBrokerRepository(
             MqttConfig("default", 1883, "", "")
         )
-        profile = broker_repository.get_profile()
-        profile.workspace.model = ObserverModel(
-            root_stats=[
-                TopicNode(
-                    segment="SmartHome",
-                    children={
-                        "kitchen": TopicNode(
-                            segment="kitchen",
-                            children={"status": TopicNode(segment="status")},
-                        )
-                    },
-                )
-            ]
-        )
+        broker_repository.get_profile().workspace.subscriptions = (subscription,)
         view_model = MainViewModel(
             runtime_for(repository, broker_repository),
             subscription.topic_filter,

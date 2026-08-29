@@ -2,7 +2,7 @@ from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
 from queue import Empty, Queue
 from threading import Lock, Thread
-from typing import Literal, Tuple
+from typing import Tuple
 from uuid import UUID
 
 from sqlalchemy import Select, delete, func, select
@@ -11,7 +11,8 @@ from topicgate.core.interfaces.stored_observation_administrator import (
     StoredObservationAdministrator,
 )
 from topicgate.core.interfaces.stored_observation_reader import StoredObservationReader
-from topicgate.core.interfaces.topic_message_store import TopicMessageStore
+from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
+from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
 from topicgate.core.models.message_filter import MessageFilter, OrderType
 from topicgate.core.models.observation_cache_administration import (
     BrokerCacheUsage,
@@ -25,8 +26,14 @@ from topicgate.core.models.observation_deletion_preview import (
 from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
+from topicgate.core.models.current_topic import CurrentTopic
+from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.observer_limits import (
+    MAX_OBSERVED_TOPICS,
+    MAX_RETAINED_PAYLOAD_BYTES,
+)
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.database.mappers.topic_message_mapper import (
     TopicMessageMapper,
@@ -38,7 +45,10 @@ from topicgate.processors.observation_retention_processor import (
 
 
 class TopicMessageRepository(
-    TopicMessageStore, StoredObservationReader, StoredObservationAdministrator
+    CurrentTopicReader,
+    StoredObservationReader,
+    StoredObservationAdministrator,
+    TopicMessageRecorder,
 ):
     """Persist the latest observed MQTT message for each broker topic."""
 
@@ -51,14 +61,16 @@ class TopicMessageRepository(
     ) -> None:
         self._db = db
         self._policy_provider = policy_provider
-        self._write_queue: Queue[
-            tuple[Literal["create", "update"], TopicMessage] | None
-        ] = Queue()
+        self._current: dict[tuple[UUID, str], CurrentTopic] = {}
+        self._current_lock = Lock()
+        self._write_queue: Queue[TopicMessage | None] = Queue()
+
         self._error_lock = Lock()
         self._write_error: BaseException | None = None
         self._closed = False
         if self._policy_provider is not None:
             self._enforce_retention(self._policy_provider())
+        self._hydrate_current()
         self._writer = Thread(
             target=self._process_writes,
             name="topic-message-writer",
@@ -107,9 +119,24 @@ class TopicMessageRepository(
                 for row in session.scalars(statement).all()
             )
 
-    def get_latest_messages(self, broker_id: UUID) -> tuple[TopicMessage, ...]:
-        """Return the latest stored state for each topic owned by a broker."""
-        return self.get_messages(broker_id)
+    def get_current_topics(self, broker_id: UUID) -> tuple[CurrentTopic, ...]:
+        """Return memory-only atomic current states for one broker."""
+        with self._current_lock:
+            return tuple(
+                current
+                for (owner_id, _), current in sorted(
+                    self._current.items(), key=lambda item: item[0][1]
+                )
+                if owner_id == broker_id
+            )
+
+    def get_current_topic(
+        self,
+        broker_id: UUID,
+        topic: str,
+    ) -> CurrentTopic | None:
+        with self._current_lock:
+            return self._current.get((broker_id, topic))
 
     def search_message(self, message_filter: MessageFilter) -> tuple[TopicMessage, ...]:
         if message_filter.limit < 0:
@@ -144,12 +171,37 @@ class TopicMessageRepository(
             for row in list(matching_rows)[: message_filter.limit]
         )
 
+    def record_message(self, entry: TopicMessage) -> None:
+        """Record a canonical, already-processed topic update."""
+        entry = self._prepare_message(entry)
+        self._set_current(entry, ObservationStatus.LIVE)
+        self._enqueue(entry)
+
+    def remove_current_topics(
+        self,
+        broker_id: UUID,
+        topics: Collection[str],
+    ) -> None:
+        with self._current_lock:
+            for topic in topics:
+                self._current.pop((broker_id, topic), None)
+
+    def remove_current_broker(self, broker_id: UUID) -> None:
+        with self._current_lock:
+            keys = tuple(key for key in self._current if key[0] == broker_id)
+            for key in keys:
+                self._current.pop(key)
+
     def create_message(self, message: TopicMessage) -> TopicMessage:
-        self._enqueue("create", message)
+        message = self._prepare_message(message)
+        self._set_current(message, ObservationStatus.CACHED)
+        self._enqueue(message)
         return message
 
     def update_message(self, message: TopicMessage) -> TopicMessage:
-        self._enqueue("update", message)
+        message = self._prepare_message(message)
+        self._set_current(message, ObservationStatus.CACHED)
+        self._enqueue(message)
         return message
 
     def delete_message(self, message_id: UUID) -> TopicMessage:
@@ -165,6 +217,7 @@ class TopicMessageRepository(
             message = TopicMessageMapper.to_dto(row)
             session.delete(row)
             session.commit()
+            self._remove_cached_current(message)
             return message
 
     def preview_deletion(
@@ -266,6 +319,8 @@ class TopicMessageRepository(
                     deleted.append(entry)
                 else:
                     skipped.append(entry)
+        for entry in deleted:
+            self._remove_cached_current_entry(entry)
         return ObservationDeletionResult(
             preview.entries,
             tuple(deleted),
@@ -286,7 +341,8 @@ class TopicMessageRepository(
         """Apply the current automatic retention policy immediately."""
         self.flush()
         if self._policy_provider is not None:
-            self._enforce_retention(self._policy_provider())
+            deleted = self._enforce_retention(self._policy_provider())
+            self._remove_cached_entries(deleted)
 
     def flush(self) -> None:
         """Wait until all queued writes have completed."""
@@ -308,14 +364,10 @@ class TopicMessageRepository(
             self._write_queue.put(None)
             self._writer.join()
 
-    def _enqueue(
-        self,
-        operation: Literal["create", "update"],
-        message: TopicMessage,
-    ) -> None:
+    def _enqueue(self, message: TopicMessage) -> None:
         if self._closed:
             raise RuntimeError("Topic message repository is closed.")
-        self._write_queue.put_nowait((operation, message))
+        self._write_queue.put_nowait(message)
 
     def _process_writes(self) -> None:
         while True:
@@ -338,8 +390,7 @@ class TopicMessageRepository(
                     batch.append(queued)
 
                 latest_writes = {
-                    (message.broker_id, message.topic): (operation, message)
-                    for operation, message in batch
+                    (message.broker_id, message.topic): message for message in batch
                 }
                 with self._db.session() as session:
                     policy = (
@@ -347,21 +398,17 @@ class TopicMessageRepository(
                         if self._policy_provider is not None
                         else None
                     )
-                    for operation, message in latest_writes.values():
-                        if policy is not None:
-                            message = (
-                                ObservationRetentionProcessor.truncate_topic_message(
-                                    message, policy
-                                )
-                            )
+                    for message in latest_writes.values():
                         row = TopicMessageMapper.to_row(message)
-                        if operation == "create":
-                            session.add(row)
-                        else:
-                            session.merge(row)
-                    if policy is not None:
+                        session.merge(row)
+                    deleted = (
                         self._enforce_retention_in_session(session, policy)
+                        if policy is not None
+                        else ()
+                    )
                     session.commit()
+                if policy is not None:
+                    self._remove_cached_entries(deleted)
             except BaseException as error:
                 # Check the failure on the caller's next consistency barrier.
                 with self._error_lock:
@@ -373,21 +420,125 @@ class TopicMessageRepository(
             if stop_after_batch:
                 return
 
-    def _enforce_retention(self, policy: ObservationRetentionPolicy) -> None:
+    def _hydrate_current(self) -> None:
+        with self._db.session() as session:
+            messages = tuple(
+                TopicMessageMapper.to_dto(row)
+                for row in session.scalars(select(MqttMessageRow)).all()
+            )
+        for message in sorted(
+            messages,
+            key=lambda item: (item.received_at, item.topic, item.broker_id),
+        ):
+            self._set_current(message, ObservationStatus.CACHED)
+
+    def _set_current(
+        self,
+        message: TopicMessage,
+        status: ObservationStatus,
+    ) -> None:
+        if self._closed:
+            raise RuntimeError("Topic message repository is closed.")
+        if len(message.payload) > MAX_RETAINED_PAYLOAD_BYTES:
+            raise ValueError(
+                "A current topic payload cannot exceed "
+                f"{MAX_RETAINED_PAYLOAD_BYTES:,} bytes."
+            )
+        key = (message.broker_id, message.topic)
+        with self._current_lock:
+            self._make_current_capacity(message)
+            self._current[key] = CurrentTopic(message, status)
+
+    def _make_current_capacity(self, message: TopicMessage) -> None:
+        key = (message.broker_id, message.topic)
+        candidates = {
+            current_key: current
+            for current_key, current in self._current.items()
+            if current_key[0] == message.broker_id and current_key != key
+        }
+        retained_bytes = sum(
+            len(current.message.payload) for current in candidates.values()
+        )
+        while (
+            len(candidates) >= MAX_OBSERVED_TOPICS
+            or retained_bytes + len(message.payload) > MAX_RETAINED_PAYLOAD_BYTES
+        ):
+            oldest_key, oldest = min(
+                candidates.items(),
+                key=lambda item: (
+                    item[1].message.received_at,
+                    item[1].message.topic,
+                ),
+            )
+            retained_bytes -= len(oldest.message.payload)
+            candidates.pop(oldest_key)
+            self._current.pop(oldest_key, None)
+
+    def _prepare_message(self, message: TopicMessage) -> TopicMessage:
+        if self._policy_provider is None:
+            return message
+        return ObservationRetentionProcessor.truncate_topic_message(
+            message,
+            self._policy_provider(),
+        )
+
+    def _remove_cached_current(self, message: TopicMessage) -> None:
+        key = (message.broker_id, message.topic)
+        with self._current_lock:
+            current = self._current.get(key)
+            if (
+                current is None
+                or current.status is not ObservationStatus.CACHED
+                or current.message.observation_id != message.observation_id
+            ):
+                return
+            self._current.pop(key)
+
+    def _remove_cached_current_entry(self, entry: ObservationDeletionEntry) -> None:
+        key = (entry.broker_id, entry.topic)
+        with self._current_lock:
+            current = self._current.get(key)
+            if (
+                current is None
+                or current.status is not ObservationStatus.CACHED
+                or current.message.observation_id != entry.observation_id
+            ):
+                return
+            self._current.pop(key)
+
+    def _remove_cached_entries(
+        self,
+        entries: Collection[ObservationDeletionEntry],
+    ) -> None:
+        for entry in entries:
+            self._remove_cached_current_entry(entry)
+
+    def _enforce_retention(
+        self,
+        policy: ObservationRetentionPolicy,
+    ) -> tuple[ObservationDeletionEntry, ...]:
         with self._db.transaction() as session:
-            self._enforce_retention_in_session(session, policy)
+            return self._enforce_retention_in_session(session, policy)
 
     @classmethod
-    def _enforce_retention_in_session(cls, session, policy) -> None:
+    def _enforce_retention_in_session(
+        cls,
+        session,
+        policy,
+    ) -> tuple[ObservationDeletionEntry, ...]:
+        removed: list[ObservationDeletionEntry] = []
         if policy.auto_remove_expired and policy.max_age_seconds is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(
                 seconds=policy.max_age_seconds
             )
-            session.execute(
-                delete(MqttMessageRow).where(MqttMessageRow.received_at < cutoff)
-            )
+            expired = session.scalars(
+                select(MqttMessageRow).where(MqttMessageRow.received_at < cutoff)
+            ).all()
+            removed.extend(cls._deletion_entry(row) for row in expired)
+            for row in expired:
+                session.delete(row)
         if not policy.auto_remove_excess:
-            return
+            return tuple(removed)
 
         broker_ids = session.scalars(
             select(MqttMessageRow.broker_id)
@@ -400,12 +551,12 @@ class TopicMessageRepository(
                 .where(MqttMessageRow.broker_id == broker_id)
                 .order_by(MqttMessageRow.received_at, MqttMessageRow.topic)
             ).all()
-            cls._evict_oldest(
+            removed.extend(cls._evict_oldest(
                 session,
                 rows,
                 policy.max_entries_per_broker,
                 policy.max_payload_bytes_per_broker,
-            )
+            ))
 
         rows = session.scalars(
             select(MqttMessageRow).order_by(
@@ -414,24 +565,33 @@ class TopicMessageRepository(
                 MqttMessageRow.topic,
             )
         ).all()
-        cls._evict_oldest(
+        removed.extend(cls._evict_oldest(
             session,
             rows,
             policy.max_entries_total,
             policy.max_persisted_payload_database_bytes_total,
-        )
+        ))
+        return tuple({entry.observation_id: entry for entry in removed}.values())
 
     @staticmethod
-    def _evict_oldest(session, rows, max_entries: int, max_bytes: int) -> None:
+    def _evict_oldest(
+        session,
+        rows,
+        max_entries: int,
+        max_bytes: int,
+    ) -> tuple[ObservationDeletionEntry, ...]:
         stored_bytes = sum(len(row.payload) for row in rows)
         excess_entries = max(0, len(rows) - max_entries)
         index = 0
+        removed: list[ObservationDeletionEntry] = []
         while excess_entries > 0 or stored_bytes > max_bytes:
             row = rows[index]
             index += 1
             stored_bytes -= len(row.payload)
             excess_entries = max(0, excess_entries - 1)
+            removed.append(TopicMessageRepository._deletion_entry(row))
             session.delete(row)
+        return tuple(removed)
 
     @staticmethod
     def _resolve_filter_order(
