@@ -842,6 +842,37 @@ def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
     application.processEvents()
 
 
+def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    repository.subscriptions = (Subscription("home/+/temperature"),)
+    view_model = MainViewModel(
+        runtime_for(repository),
+        repository.subscriptions[0].topic_filter,
+    )
+    pane = TopicDetailsPane()
+    notice = pane.findChild(QLabel, "subscriptionFilterNotice")
+    decoded = pane.findChild(QPlainTextEdit, "decodedPayload")
+    raw = pane.findChild(QPlainTextEdit, "rawPayload")
+
+    pane.render(view_model)
+
+    assert "Subscription filter: home/+/temperature" in notice.text()
+    assert "concrete topic paths" in notice.text()
+    assert decoded.isHidden()
+    assert raw.isHidden()
+
+    view_model.select_topic("home/kitchen/temperature")
+    pane.render(view_model)
+
+    assert notice.isHidden()
+    assert not decoded.isHidden()
+    assert not raw.isHidden()
+    assert decoded.toPlainText() == "21.5"
+    pane.deleteLater()
+    application.processEvents()
+
+
 def test_connection_controls_bundle_actions_and_request_signals() -> None:
     application = QApplication.instance() or QApplication([])
     controls = ConnectionControls()

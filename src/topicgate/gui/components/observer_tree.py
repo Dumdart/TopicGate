@@ -238,13 +238,16 @@ class ObserverTreePane(WorkspacePane):
         append(nodes)
         self.render(paths, selected_topic, subscriptions)
 
-        def add_badges(items: tuple[TopicTreeNode, ...]) -> None:
+        def apply_node_presentation(items: tuple[TopicTreeNode, ...]) -> None:
             for node in items:
+                item = self._items[node.path]
+                item.setSelectable(node.selectable)
+                item.setData(node.path if node.selectable else None, TOPIC_ROLE)
                 if node.badges:
                     self._set_badges(node)
-                add_badges(node.children)
+                apply_node_presentation(node.children)
 
-        add_badges(nodes)
+        apply_node_presentation(nodes)
 
     def select_topic(self, topic: str) -> None:
         item = self._items.get(topic)

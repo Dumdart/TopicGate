@@ -14,7 +14,10 @@ from topicgate.app.models.broker_snapshot import (
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.subscription import Subscription
-from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.mqtt_topics import (
+    mqtt_filter_has_wildcards,
+    mqtt_filter_matches,
+)
 from topicgate.core.payload_limits import (
     MAX_FORMATTED_JSON_CHARACTERS,
     MAX_RENDERED_PAYLOAD_BYTES,
@@ -86,6 +89,7 @@ class TopicTreeNode:
     is_subscription: bool
     is_observed: bool
     children: tuple["TopicTreeNode", ...]
+    is_wildcard_filter: bool = False
     badges: tuple[TopicStateBadge, ...] = ()
 
 
@@ -176,6 +180,19 @@ def build_topic_tree(
             path = node["path"]
             is_subscription = path in subscription_paths
             is_observed = path in observed_paths
+            is_wildcard_filter = (
+                is_subscription and mqtt_filter_has_wildcards(path)
+            )
+            badges = (
+                topic_state_badges(states_by_topic[path])
+                if path in states_by_topic
+                else ()
+            )
+            if is_wildcard_filter:
+                badges = (
+                    TopicStateBadge("filter", "Filter", "info"),
+                    *badges,
+                )
             result.append(
                 TopicTreeNode(
                     label=segment or "/",
@@ -184,11 +201,8 @@ def build_topic_tree(
                     is_subscription=is_subscription,
                     is_observed=is_observed,
                     children=convert(node["children"]),
-                    badges=(
-                        topic_state_badges(states_by_topic[path])
-                        if path in states_by_topic
-                        else ()
-                    ),
+                    is_wildcard_filter=is_wildcard_filter,
+                    badges=badges,
                 )
             )
         return tuple(result)

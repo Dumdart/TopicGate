@@ -32,7 +32,10 @@ from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
 from topicgate.core.models.topic_message import TopicMessage
-from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.mqtt_topics import (
+    mqtt_filter_has_wildcards,
+    mqtt_filter_matches,
+)
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.presentation.snapshot_presentation import (
     BrokerSnapshotHealth,
@@ -336,6 +339,18 @@ class MainViewModel(QObject):
     @property
     def selected_subscription(self) -> Subscription | None:
         return matching_subscription(self.subscriptions, self._topic)
+
+    @property
+    def selected_wildcard_subscription(self) -> Subscription | None:
+        return next(
+            (
+                item
+                for item in self.subscriptions
+                if item.topic_filter == self._topic
+                and mqtt_filter_has_wildcards(item.topic_filter)
+            ),
+            None,
+        )
 
     async def start(self) -> None:
         """Load the current value and listen for messages and connection changes."""

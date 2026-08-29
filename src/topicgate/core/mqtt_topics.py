@@ -27,6 +27,11 @@ def validate_topic_name(topic: str) -> list[str]:
     return segments
 
 
+def mqtt_filter_has_wildcards(topic_filter: str) -> bool:
+    """Return whether an MQTT topic filter contains wildcard levels."""
+    return "+" in topic_filter or "#" in topic_filter
+
+
 def mqtt_filter_matches(topic_filter: str, topic: str) -> bool:
     """Return whether an MQTT topic matches a valid wildcard filter."""
     filter_segments = topic_filter.split("/")

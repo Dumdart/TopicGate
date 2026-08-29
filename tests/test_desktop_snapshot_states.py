@@ -2,7 +2,8 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QLabel, QTreeView
 
 from topicgate.gui.components.observer_tree import ObserverTreePane
 from topicgate.gui.components.snapshot_panel import SnapshotPanel
@@ -52,6 +53,45 @@ def test_observer_tree_visually_distinguishes_all_snapshot_states() -> None:
     assert labels.count("Cached") == 1
     assert labels.count("Stale") == 1
     assert labels.count("Stored") == 2
+    pane.deleteLater()
+    application.processEvents()
+
+
+def test_observer_tree_respects_topic_node_selectability() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = ObserverTreePane()
+    nodes = (
+        TopicTreeNode(
+            label="home",
+            path="home",
+            selectable=False,
+            is_subscription=False,
+            is_observed=False,
+            children=(
+                TopicTreeNode(
+                    label="#",
+                    path="home/#",
+                    selectable=True,
+                    is_subscription=True,
+                    is_observed=False,
+                    children=(),
+                    is_wildcard_filter=True,
+                    badges=(TopicStateBadge("filter", "Filter", "info"),),
+                ),
+            ),
+        ),
+    )
+
+    pane.render_tree(nodes, "")
+
+    tree = pane.findChild(QTreeView, "observerTree")
+    root = tree.model().index(0, 0)
+    wildcard = tree.model().index(0, 0, root)
+    assert not root.flags() & Qt.ItemFlag.ItemIsSelectable
+    assert wildcard.flags() & Qt.ItemFlag.ItemIsSelectable
+    assert [
+        item.text() for item in pane.findChildren(QLabel, "topicStateBadge")
+    ] == ["Filter"]
     pane.deleteLater()
     application.processEvents()
 

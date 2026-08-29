@@ -23,6 +23,11 @@ def test_visible_paths_and_tree_merge_only_matching_observed_topics() -> None:
     assert paths == ("$SYS/+/load", "$SYS/node/load", "home/#", "home/kitchen/temp")
     tree = build_topic_tree(paths, subscriptions, ("home/kitchen/temp",))
     assert [node.path for node in tree] == ["$SYS", "home"]
+    assert tree[1].selectable is False
+    wildcard = next(node for node in tree[1].children if node.label == "#")
+    assert wildcard.selectable is True
+    assert wildcard.is_wildcard_filter is True
+    assert [badge.label for badge in wildcard.badges] == ["Filter"]
     kitchen = next(node for node in tree[1].children if node.label == "kitchen")
     assert kitchen.children[0].is_observed is True
 

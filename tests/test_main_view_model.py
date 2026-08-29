@@ -524,6 +524,11 @@ def test_discovered_topic_updates_details_and_only_matching_filter_is_editable()
 
     assert view_model.decoded_payload == "open"
     assert view_model.selected_subscription == repository.subscriptions[0]
+    assert view_model.selected_wildcard_subscription is None
+
+    view_model.select_topic("SmartHome/+/status")
+
+    assert view_model.selected_wildcard_subscription == repository.subscriptions[0]
 
     view_model.select_topic("Other/device/value")
 
