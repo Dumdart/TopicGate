@@ -1022,6 +1022,61 @@ async def test_subscription_trash_button_runs_the_removal_workflow() -> None:
     await scenario()
 
 
+async def test_removing_exact_subscription_keeps_overlapping_observed_topic() -> None:
+    async def scenario() -> None:
+        application = QApplication.instance() or QApplication([])
+        repository = FakeGuiRepository()
+        wildcard = Subscription("home/+/temperature")
+        exact = Subscription(repository.state.topic)
+        repository.subscriptions = (wildcard, exact)
+        view_model = MainViewModel(
+            runtime_for(repository), repository.state.topic
+        )
+        window = MainWindow(view_model)
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        application.processEvents()
+        exact_button = next(
+            button
+            for button in window.findChildren(
+                QToolButton, "removeSubscriptionButton"
+            )
+            if button.toolTip() == f"Remove subscription {exact.topic_filter}"
+        )
+
+        assert [
+            label.text()
+            for label in window.findChildren(QLabel, "topicStateBadge")
+        ].count("Filter 1") == 1
+
+        exact_button.click()
+        await asyncio.sleep(0)
+        application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        application.processEvents()
+
+        assert repository.subscriptions == (wildcard,)
+        assert view_model.topic_paths == [
+            wildcard.topic_filter,
+            repository.state.topic,
+        ]
+        assert [
+            button.toolTip()
+            for button in window.findChildren(
+                QToolButton, "removeSubscriptionButton"
+            )
+        ] == [f"Remove subscription {wildcard.topic_filter}"]
+        badges = [
+            label.text()
+            for label in window.findChildren(QLabel, "topicStateBadge")
+        ]
+        assert badges.count("Filter 1") == 1
+        assert badges.count("via Filter 1") == 1
+        assert badges.count("Live") == 1
+        window.close()
+        application.processEvents()
+
+    await scenario()
+
+
 def test_broker_settings_dialog_loads_current_configuration_and_validates_input() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()

@@ -74,6 +74,36 @@ def test_broker_repository_reads_changes_made_by_another_instance(
     database.dispose()
 
 
+def test_removed_subscription_stays_removed_after_repository_restart(
+    tmp_path,
+    credential_store,
+) -> None:
+    database_path = tmp_path / "subscription-removal.db"
+    database = DatabaseContext(f"sqlite:///{database_path}")
+    profiles = BrokerProfileService(database, credential_store=credential_store)
+    profile = profiles.get_profile()
+    wildcard = Subscription("home/#")
+    exact = Subscription("home/kitchen/temperature")
+    profiles.replace_subscriptions(
+        profile.workspace_id,
+        (wildcard, exact),
+    )
+    profiles.replace_subscriptions(profile.workspace_id, (wildcard,))
+    database.dispose()
+
+    restarted_database = DatabaseContext(f"sqlite:///{database_path}")
+    restarted_profiles = BrokerProfileService(
+        restarted_database,
+        credential_store=credential_store,
+    )
+    try:
+        assert restarted_profiles.get_profile(profile.id).workspace.subscriptions == (
+            wildcard,
+        )
+    finally:
+        restarted_database.dispose()
+
+
 def test_broker_repository_prefers_a_stored_password_to_supplied_settings(
     credential_store,
 ) -> None:

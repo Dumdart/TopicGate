@@ -158,7 +158,25 @@ def build_topic_tree(
     observed_topics: Iterable[str] = (),
     snapshot_states: Iterable[SnapshotTopicState] = (),
 ) -> tuple[TopicTreeNode, ...]:
+    subscriptions = tuple(subscriptions)
     subscription_paths = {item.topic_filter for item in subscriptions}
+    wildcard_filters = tuple(
+        sorted(
+            (
+                item
+                for item in subscriptions
+                if mqtt_filter_has_wildcards(item.topic_filter)
+            ),
+            key=lambda item: (
+                item.topic_filter.casefold(),
+                item.topic_filter,
+            ),
+        )
+    )
+    filter_labels = {
+        item.topic_filter: f"Filter {index}"
+        for index, item in enumerate(wildcard_filters, start=1)
+    }
     observed_paths = set(observed_topics)
     states_by_topic = {state.topic: state for state in snapshot_states}
     root: dict[str, dict] = {}
@@ -183,14 +201,32 @@ def build_topic_tree(
             is_wildcard_filter = (
                 is_subscription and mqtt_filter_has_wildcards(path)
             )
+            source_filter = (
+                matching_subscription(wildcard_filters, path)
+                if is_observed and not is_subscription
+                else None
+            )
             badges = (
                 topic_state_badges(states_by_topic[path])
                 if path in states_by_topic
                 else ()
             )
+            if source_filter is not None:
+                badges = (
+                    TopicStateBadge(
+                        "filter-reference",
+                        f"via {filter_labels[source_filter.topic_filter]}",
+                        "info",
+                    ),
+                    *badges,
+                )
             if is_wildcard_filter:
                 badges = (
-                    TopicStateBadge("filter", "Filter", "info"),
+                    TopicStateBadge(
+                        "filter",
+                        filter_labels[path],
+                        "info",
+                    ),
                     *badges,
                 )
             result.append(

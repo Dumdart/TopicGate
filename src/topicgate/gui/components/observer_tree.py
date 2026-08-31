@@ -405,6 +405,20 @@ class ObserverTreePane(WorkspacePane):
             label = QLabel(badge.label)
             label.setObjectName("topicStateBadge")
             label.setProperty("badgeKey", badge.key)
+            if badge.key == "filter-reference":
+                filter_label = badge.label.removeprefix("via ")
+                label.setToolTip(
+                    f"Observed through {filter_label}; "
+                    "not a configured subscription"
+                )
+                label.setAccessibleName(
+                    f"Topic observed through {filter_label}"
+                )
+            elif badge.key == "filter":
+                label.setToolTip(f"Wildcard subscription {badge.label}")
+                label.setAccessibleName(
+                    f"Wildcard subscription {badge.label}"
+                )
             background, foreground = colors[badge.tone]
             label.setStyleSheet(
                 f"background: {background}; color: {foreground}; "
