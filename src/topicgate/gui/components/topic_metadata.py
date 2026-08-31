@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFormLayout, QLabel, QWidget
+from PySide6.QtWidgets import QFormLayout, QLabel, QToolButton, QWidget
 
 from topicgate.presentation.topic_presentation import TopicDetail
 
@@ -9,8 +9,10 @@ class TopicMetadataPane(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        form = QFormLayout(self)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self._form = QFormLayout(self)
+        self._form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
         self.topic = self._label("topicPathLabel", "No topic selected")
         self.topic.setWordWrap(True)
         self.received = self._label("receivedAtLabel")
@@ -28,7 +30,7 @@ class TopicMetadataPane(QWidget):
         self.retained = self._label("retainedLabel")
         self.messages = self._label("messageCountLabel", "0")
         self.dropped = self._label("droppedMessageCountLabel", "0")
-        for title, widget in (
+        rows = (
             ("Topic path", self.topic),
             ("Last received", self.received),
             ("Age", self.age),
@@ -45,8 +47,30 @@ class TopicMetadataPane(QWidget):
             ("Retained", self.retained),
             ("Message count", self.messages),
             ("Dropped messages", self.dropped),
-        ):
-            form.addRow(title, widget)
+        )
+        for title, widget in rows:
+            self._form.addRow(title, widget)
+
+        self._detail_widgets = (
+            self.source,
+            self.encoding,
+            self.size,
+            self.original_size,
+            self.available_size,
+            self.rendered_size,
+            self.ingestion_truncation,
+            self.rendering_truncation,
+            self.qos,
+            self.dropped,
+        )
+        self._details_button = QToolButton()
+        self._details_button.setObjectName("topicMetadataDetailsButton")
+        self._details_button.setCheckable(True)
+        self._details_button.setText("Show details")
+        self._details_button.setAccessibleName("Show topic details")
+        self._details_button.toggled.connect(self._set_details_visible)
+        self._form.addRow(self._details_button)
+        self._set_details_visible(False)
 
     def render(self, detail: TopicDetail) -> None:
         self.topic.setText(detail.topic or "No topic selected")
@@ -69,6 +93,16 @@ class TopicMetadataPane(QWidget):
         self.retained.setText(detail.retain_label)
         self.messages.setText(str(detail.message_count))
         self.dropped.setText(str(detail.dropped_message_count))
+
+    def _set_details_visible(self, visible: bool) -> None:
+        for widget in self._detail_widgets:
+            self._form.setRowVisible(widget, visible)
+        self._details_button.setText(
+            "Hide details" if visible else "Show details"
+        )
+        self._details_button.setAccessibleName(
+            "Hide topic details" if visible else "Show topic details"
+        )
 
     @staticmethod
     def _label(name: str, text: str = "-") -> QLabel:

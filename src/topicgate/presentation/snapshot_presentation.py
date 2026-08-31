@@ -25,6 +25,7 @@ class TopicStateBadge:
     key: str
     label: str
     tone: str
+    target_path: str | None = None
 
 
 @dataclass(frozen=True)

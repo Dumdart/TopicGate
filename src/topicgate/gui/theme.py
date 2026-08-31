@@ -37,6 +37,7 @@ QTreeView { alternate-background-color: #fafbfc; }
 QTreeView::item { border-left: 3px solid transparent; padding: 3px 2px; }
 QTreeView::item:hover { color: #202124; background: #eef2f6; border-left-color: #9aa8b6; }
 QTreeView::item:selected { color: #202124; background: #dce9f7; border-left-color: #405d7a; }
+QTreeView#observerTree::item { border-left: 0; }
 QSplitter::handle:horizontal { background: #e4e7eb; border-left: 1px solid #c8ced6; border-right: 1px solid #c8ced6; width: 8px; }
 QSplitter::handle:vertical { background: #e4e7eb; border-top: 1px solid #c8ced6; border-bottom: 1px solid #c8ced6; height: 8px; }
 QDockWidget { border-top: 1px solid #c8ced6; }

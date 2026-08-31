@@ -403,29 +403,56 @@ class ObserverTreePane(WorkspacePane):
             "filter": ("#ede9fe", "#5b21b6"),
         }
         for badge in node.badges:
-            label = QLabel(badge.label)
-            label.setObjectName("topicStateBadge")
-            label.setProperty("badgeKey", badge.key)
+            badge_widget: QLabel | QToolButton
+            target_path = badge.target_path
+            if target_path is not None:
+                button = QToolButton()
+                button.setObjectName("topicFilterBadgeButton")
+                button.setText(badge.label)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setProperty("targetPath", target_path)
+                button.clicked.connect(
+                    lambda _checked=False, path=target_path: (
+                        self.topic_selected.emit(path)
+                    )
+                )
+                badge_widget = button
+            else:
+                badge_widget = QLabel(badge.label)
+                badge_widget.setObjectName("topicStateBadge")
+            badge_widget.setProperty("badgeKey", badge.key)
             if badge.key == "filter-reference":
                 filter_label = f"Filter {badge.label.removeprefix('F')}"
-                label.setToolTip(
-                    f"Observed through {filter_label}; "
-                    "not a configured subscription"
+                badge_widget.setToolTip(
+                    f"Go to {filter_label} ({target_path})"
                 )
-                label.setAccessibleName(
-                    f"Topic observed through {filter_label}"
+                badge_widget.setAccessibleName(
+                    f"Go to {filter_label}, {target_path}"
                 )
             elif badge.key == "filter":
-                label.setToolTip(f"Wildcard subscription {badge.label}")
-                label.setAccessibleName(
-                    f"Wildcard subscription {badge.label}"
+                badge_widget.setToolTip(
+                    f"Go to {badge.label} ({target_path})"
+                )
+                badge_widget.setAccessibleName(
+                    f"Go to {badge.label}, {target_path}"
                 )
             background, foreground = colors[badge.tone]
-            label.setStyleSheet(
-                f"background: {background}; color: {foreground}; "
-                "border-radius: 5px; padding: 1px 4px; font-size: 10px;"
-            )
-            layout.addWidget(label)
+            if target_path is not None:
+                badge_widget.setStyleSheet(
+                    "QToolButton {"
+                    f" background: {background}; color: {foreground};"
+                    " border: 0; border-radius: 5px; padding: 1px 4px;"
+                    " font-size: 10px;"
+                    "}"
+                    "QToolButton:hover { background: #ddd6fe; }"
+                    "QToolButton:pressed { background: #c4b5fd; }"
+                )
+            else:
+                badge_widget.setStyleSheet(
+                    f"background: {background}; color: {foreground}; "
+                    "border-radius: 5px; padding: 1px 4px; font-size: 10px;"
+                )
+            layout.addWidget(badge_widget)
         layout.addStretch(1)
         state_index = item.index().siblingAtColumn(2)
         self._tree.setIndexWidget(self._proxy.mapFromSource(state_index), widget)

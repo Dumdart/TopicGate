@@ -71,6 +71,7 @@ from topicgate.presentation.snapshot_presentation import (
     BrokerSnapshotHealth,
     SnapshotQuery,
 )
+from topicgate.presentation.topic_presentation import build_topic_tree
 
 
 def test_snapshot_panel_applies_clears_and_renders_health() -> None:
@@ -842,6 +843,30 @@ def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
     application.processEvents()
 
 
+def test_topic_metadata_hides_diagnostics_until_details_are_requested() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    pane = TopicDetailsPane()
+    pane.render(MainViewModel(runtime_for(repository), repository.state.topic))
+    details = pane.findChild(QToolButton, "topicMetadataDetailsButton")
+    source = pane.findChild(QLabel, "observationSourceLabel")
+    state = pane.findChild(QLabel, "topicStateStatusLabel")
+    messages = pane.findChild(QLabel, "messageCountLabel")
+
+    assert details.text() == "Show details"
+    assert source.isHidden()
+    assert not state.isHidden()
+    assert not messages.isHidden()
+
+    details.click()
+
+    assert details.text() == "Hide details"
+    assert not source.isHidden()
+
+    pane.deleteLater()
+    application.processEvents()
+
+
 def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
@@ -860,8 +885,7 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
 
     pane.render(view_model)
 
-    assert "Subscription filter: home/+/temperature" in notice.text()
-    assert "concrete topic paths" in notice.text()
+    assert notice.text() == "Filter: home/+/temperature"
     assert decoded.isHidden()
     assert raw.isHidden()
     assert topics.rowCount() == 1
@@ -990,6 +1014,33 @@ def test_observer_tree_adds_trash_buttons_only_to_subscription_filters() -> None
 
     assert requested == [subscription]
     pane.deleteLater()
+
+
+def test_observer_tree_filter_badges_route_to_the_wildcard_filter() -> None:
+    application = QApplication.instance() or QApplication([])
+    pane = ObserverTreePane()
+    subscription = Subscription("home/+/temperature")
+    nodes = build_topic_tree(
+        (subscription.topic_filter, "home/kitchen/temperature"),
+        (subscription,),
+        ("home/kitchen/temperature",),
+    )
+    selected: list[str] = []
+    pane.topic_selected.connect(selected.append)
+
+    pane.render_tree(nodes, "home/kitchen/temperature", (subscription,))
+
+    buttons = pane.findChildren(QToolButton, "topicFilterBadgeButton")
+    reference = next(button for button in buttons if button.text() == "F1")
+    assert reference.property("targetPath") == subscription.topic_filter
+    assert "QToolButton:hover" in reference.styleSheet()
+    assert "QTreeView#observerTree::item { border-left: 0; }" in LIGHT_THEME
+    selected.clear()
+
+    reference.click()
+
+    assert selected == [subscription.topic_filter]
+    pane.deleteLater()
     application.processEvents()
 
 
@@ -1056,8 +1107,11 @@ async def test_removing_exact_subscription_keeps_overlapping_observed_topic() ->
         )
 
         assert [
-            label.text()
-            for label in window.findChildren(QLabel, "topicStateBadge")
+            button.text()
+            for button in window.findChildren(
+                QToolButton,
+                "topicFilterBadgeButton",
+            )
         ].count("Filter 1") == 1
 
         exact_button.click()
@@ -1076,13 +1130,36 @@ async def test_removing_exact_subscription_keeps_overlapping_observed_topic() ->
                 QToolButton, "removeSubscriptionButton"
             )
         ] == [f"Remove subscription {wildcard.topic_filter}"]
-        badges = [
+        filter_badges = [
+            button.text()
+            for button in window.findChildren(
+                QToolButton,
+                "topicFilterBadgeButton",
+            )
+        ]
+        state_badges = [
             label.text()
             for label in window.findChildren(QLabel, "topicStateBadge")
         ]
-        assert badges.count("Filter 1") == 1
-        assert badges.count("F1") == 1
-        assert badges.count("Live") == 1
+        assert filter_badges.count("Filter 1") == 1
+        assert filter_badges.count("F1") == 1
+        assert state_badges.count("Live") == 1
+        reference = next(
+            button
+            for button in window.findChildren(
+                QToolButton,
+                "topicFilterBadgeButton",
+            )
+            if button.text() == "F1"
+        )
+
+        reference.click()
+        application.processEvents()
+
+        assert view_model.topic == wildcard.topic_filter
+        summary = window.findChild(QTableWidget, "filterMatchingTopics")
+        assert not summary.isHidden()
+        assert summary.rowCount() == 1
         window.close()
         application.processEvents()
 

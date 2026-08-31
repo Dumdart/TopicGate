@@ -44,10 +44,10 @@ class TopicDetailsPane(WorkspacePane):
                 ("retained", "filterRetainedCount"),
             )
         }
-        filter_form.addRow("Matching topics", self._filter_labels["topics"])
-        filter_form.addRow("Messages observed", self._filter_labels["messages"])
-        filter_form.addRow("Current states", self._filter_labels["states"])
-        filter_form.addRow("Retained topics", self._filter_labels["retained"])
+        filter_form.addRow("Topics", self._filter_labels["topics"])
+        filter_form.addRow("Messages", self._filter_labels["messages"])
+        filter_form.addRow("States", self._filter_labels["states"])
+        filter_form.addRow("Retained", self._filter_labels["retained"])
         filter_layout.addLayout(filter_form)
 
         self._filter_topics = QTableWidget(0, 2)
@@ -119,16 +119,24 @@ class TopicDetailsPane(WorkspacePane):
             widget.setVisible(not showing_filter)
         if summary is not None:
             self._filter_notice.setText(
-                f"Subscription filter: {summary.topic_filter}\n"
-                "Aggregate statistics for matching concrete topic paths."
+                f"Filter: {summary.topic_filter}"
             )
             self._filter_labels["topics"].setText(
                 str(summary.matching_topic_count)
             )
             self._filter_labels["messages"].setText(str(summary.message_count))
+            state_counts = (
+                ("Live", summary.live_count),
+                ("Cached", summary.cached_count),
+                ("Stale", summary.stale_count),
+            )
             self._filter_labels["states"].setText(
-                f"Live {summary.live_count} · Cached {summary.cached_count} · "
-                f"Stale {summary.stale_count}"
+                " · ".join(
+                    f"{label} {count}"
+                    for label, count in state_counts
+                    if count
+                )
+                or "None"
             )
             self._filter_labels["retained"].setText(str(summary.retained_count))
             self._filter_topics.setRowCount(len(summary.topics))

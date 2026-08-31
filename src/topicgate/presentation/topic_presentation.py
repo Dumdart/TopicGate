@@ -237,6 +237,7 @@ def build_topic_tree(
                             "Filter ", "F"
                         ),
                         "filter",
+                        source_filter.topic_filter,
                     ),
                     *badges,
                 )
@@ -246,6 +247,7 @@ def build_topic_tree(
                         "filter",
                         filter_labels[path],
                         "filter",
+                        path,
                     ),
                     *badges,
                 )
