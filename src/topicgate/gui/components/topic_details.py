@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPlainTextEdit,
+    QTabBar,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -13,16 +14,18 @@ from PySide6.QtWidgets import (
 )
 
 from topicgate.gui.main_view_model import MainViewModel
+from topicgate.gui.components.publish_pane import PublishPane
 from topicgate.gui.components.workspace_pane import WorkspacePane
 from topicgate.gui.components.topic_metadata import TopicMetadataPane
 from topicgate.paths import asset_path
 
 
 class TopicDetailsPane(WorkspacePane):
-    """Read-only details and statistics for the selected live topic."""
+    """Inspect received payloads or publish a message for the selected topic."""
 
     topic_selected = Signal(str)
-    editing_changed = Signal(bool)
+    publish_requested = Signal(str, str, str)
+    subscription_editing_changed = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__("Details / Stats")
@@ -34,12 +37,27 @@ class TopicDetailsPane(WorkspacePane):
         self._edit_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self._edit_button.setText("Edit")
+        self._edit_button.setText("Edit subscription")
         self._edit_button.setCheckable(True)
-        self._edit_button.setAccessibleName("Edit topic settings and publish")
-        self._edit_button.setToolTip("Show subscription settings and publishing")
-        self._edit_button.toggled.connect(self._toggle_editing)
+        self._edit_button.setAccessibleName("Edit subscription")
+        self._edit_button.setToolTip("Show subscription settings")
+        self._edit_button.toggled.connect(self._toggle_subscription_editing)
         self.header_layout.addWidget(self._edit_button)
+
+        self._mode_tabs = QTabBar()
+        self._mode_tabs.setObjectName("topicDetailsMode")
+        self._mode_tabs.setAccessibleName("Topic details mode")
+        self._mode_tabs.setDrawBase(False)
+        self._mode_tabs.setExpanding(True)
+        self._mode_tabs.addTab("Payload")
+        self._mode_tabs.addTab("Publish")
+        self._mode_tabs.currentChanged.connect(self._set_mode)
+        self.content_layout.addWidget(self._mode_tabs)
+
+        self._payload_content = QWidget()
+        self._payload_content.setObjectName("topicPayloadContent")
+        payload_layout = QVBoxLayout(self._payload_content)
+        payload_layout.setContentsMargins(0, 0, 0, 0)
 
         self._filter_summary = QWidget()
         self._filter_summary.setObjectName("subscriptionFilterSummary")
@@ -99,34 +117,51 @@ class TopicDetailsPane(WorkspacePane):
         self._filter_scope.setWordWrap(True)
         filter_layout.addWidget(self._filter_scope)
         self._filter_summary.setHidden(True)
-        self.content_layout.addWidget(self._filter_summary, 1)
+        payload_layout.addWidget(self._filter_summary, 1)
 
         self._metadata = TopicMetadataPane()
         self._metadata.advanced_changed.connect(self._set_advanced_visible)
-        self.content_layout.addWidget(self._metadata)
+        payload_layout.addWidget(self._metadata)
 
         self._decoded_label = self._section_label("Decoded payload")
-        self.content_layout.addWidget(self._decoded_label)
+        payload_layout.addWidget(self._decoded_label)
         self._decoded_payload = QPlainTextEdit()
         self._decoded_payload.setObjectName("decodedPayload")
         self._decoded_payload.setReadOnly(True)
         self._decoded_payload.setPlaceholderText(
             "Select a topic to inspect its payload"
         )
-        self.content_layout.addWidget(self._decoded_payload, 3)
+        payload_layout.addWidget(self._decoded_payload, 3)
 
         self._raw_label = self._section_label("Raw payload (hex)")
-        self.content_layout.addWidget(self._raw_label)
+        payload_layout.addWidget(self._raw_label)
         self._raw_payload = QPlainTextEdit()
         self._raw_payload.setObjectName("rawPayload")
         self._raw_payload.setReadOnly(True)
         self._raw_payload.setMaximumHeight(110)
-        self.content_layout.addWidget(self._raw_payload, 1)
+        payload_layout.addWidget(self._raw_payload, 1)
+
+        self._publish_pane = PublishPane()
+        self._publish_pane.publish_requested.connect(self.publish_requested)
+        self.content_layout.addWidget(self._payload_content, 1)
+        self.content_layout.addWidget(self._publish_pane, 1)
         self._showing_filter = False
         self._advanced_visible = False
+        self._publish_mode = False
+        self._publish_pane.setHidden(True)
         self._update_raw_visibility()
 
     def render(self, view_model: MainViewModel) -> None:
+        subscription = view_model.selected_subscription
+        self._edit_button.setEnabled(subscription is not None)
+        if subscription is None and self._edit_button.isChecked():
+            self._edit_button.setChecked(False)
+
+        self._publish_pane.render(
+            view_model.topic,
+            view_model.connection_status == "connected",
+            view_model.is_busy("publish"),
+        )
         summary = view_model.selected_wildcard_filter_summary
         showing_filter = summary is not None
         self._showing_filter = showing_filter
@@ -186,18 +221,27 @@ class TopicDetailsPane(WorkspacePane):
         self._update_raw_visibility()
 
     def _update_raw_visibility(self) -> None:
-        visible = self._advanced_visible and not self._showing_filter
+        visible = (
+            self._advanced_visible
+            and not self._showing_filter
+            and not self._publish_mode
+        )
         self._raw_label.setVisible(visible)
         self._raw_payload.setVisible(visible)
 
-    def _toggle_editing(self, editing: bool) -> None:
-        self._edit_button.setText("Done" if editing else "Edit")
+    def _set_mode(self, index: int) -> None:
+        self._publish_mode = index == 1
+        self._payload_content.setVisible(not self._publish_mode)
+        self._publish_pane.setVisible(self._publish_mode)
+        self._update_raw_visibility()
+
+    def _toggle_subscription_editing(self, editing: bool) -> None:
         self._edit_button.setToolTip(
-            "Hide subscription settings and publishing"
+            "Hide subscription settings"
             if editing
-            else "Show subscription settings and publishing"
+            else "Show subscription settings"
         )
-        self.editing_changed.emit(editing)
+        self.subscription_editing_changed.emit(editing)
 
     def _select_filter_topic(self, row: int, _column: int) -> None:
         item = self._filter_topics.item(row, 0)

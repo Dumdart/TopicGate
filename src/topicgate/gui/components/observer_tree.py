@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from PySide6.QtCore import QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
@@ -8,7 +6,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMenu,
     QScrollArea,
     QStyle,
     QToolButton,
@@ -16,7 +13,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
 from topicgate.gui.components.snapshot_panel import SnapshotPanel
@@ -31,10 +27,6 @@ class ObserverTreePane(WorkspacePane):
     topic_selected = Signal(str)
     add_filter_requested = Signal()
     remove_filter_requested = Signal(object)
-    broker_profile_selected = Signal(object)
-    add_broker_profile_requested = Signal()
-    edit_broker_profile_requested = Signal(object)
-    delete_broker_profile_requested = Signal()
     snapshot_apply_requested = Signal(object)
     snapshot_reset_requested = Signal()
     reconnect_observe_requested = Signal(object)
@@ -58,15 +50,6 @@ class ObserverTreePane(WorkspacePane):
         add_button.clicked.connect(self.add_filter_requested)
         controls.addWidget(add_button)
 
-        self._broker_profile_button = QToolButton()
-        self._broker_profile_button.setObjectName("brokerProfileButton")
-        self._broker_profile_button.setMinimumWidth(126)
-        self._broker_profile_button.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
-        self._broker_profile_menu = QMenu(self._broker_profile_button)
-        self._broker_profile_button.setMenu(self._broker_profile_menu)
-        controls.addWidget(self._broker_profile_button)
         self.content_layout.addLayout(controls)
 
         self._model = QStandardItemModel(self)
@@ -267,57 +250,10 @@ class ObserverTreePane(WorkspacePane):
     def focus_search(self) -> None:
         self._search_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
-    def render_broker_profiles(
-        self,
-        profiles: tuple[BrokerSummary, ...],
-        active_profile_id: UUID,
-    ) -> None:
-        """Render a quick-switch menu for the available broker profiles."""
-        self._broker_profile_menu.clear()
-        active_profile = next(
-            profile for profile in profiles if profile.id == active_profile_id
-        )
-        self._broker_profile_button.setText(active_profile.name)
-        self._broker_profile_button.setToolTip(
-            f"Switch broker profile (current: {active_profile.name})"
-        )
-        self._broker_profile_button.setAccessibleName("Switch broker profile")
-        for profile in profiles:
-            action = self._broker_profile_menu.addAction(profile.name)
-            action.setCheckable(True)
-            action.setChecked(profile.id == active_profile_id)
-            action.setEnabled(profile.id != active_profile_id)
-            action.triggered.connect(
-                lambda _checked=False, profile_id=profile.id: (
-                    self.broker_profile_selected.emit(profile_id)
-                )
-            )
-        self._broker_profile_menu.addSeparator()
-        add_action = self._broker_profile_menu.addAction("Add profile...")
-        add_action.setObjectName("addBrokerProfileAction")
-        add_action.triggered.connect(self.add_broker_profile_requested.emit)
-        edit_menu = self._broker_profile_menu.addMenu("Edit profile...")
-        edit_menu.menuAction().setObjectName("editBrokerProfileAction")
-        for profile in profiles:
-            edit_action = edit_menu.addAction(profile.name)
-            edit_action.triggered.connect(
-                lambda _checked=False, profile_id=profile.id: (
-                    self.edit_broker_profile_requested.emit(profile_id)
-                )
-            )
-        delete_action = self._broker_profile_menu.addAction(
-            "Delete current profile..."
-        )
-        delete_action.setObjectName("deleteBrokerProfileAction")
-        delete_action.setEnabled(len(profiles) > 1)
-        delete_action.triggered.connect(self.delete_broker_profile_requested.emit)
-
-    def set_profile_switching(self, switching: bool) -> None:
-        """Prevent duplicate profile switches while the broker reconnects."""
-        self._broker_profile_button.setEnabled(not switching)
+    def set_connection_busy(self, busy: bool) -> None:
         action = str(self._empty_state_action.property("action") or "")
         if action in {"connect", "observe"}:
-            self._empty_state_action.setEnabled(not switching)
+            self._empty_state_action.setEnabled(not busy)
 
     def _add_topic(self, topic: str) -> None:
         parent = self._model.invisibleRootItem()
