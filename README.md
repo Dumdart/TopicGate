@@ -27,6 +27,9 @@ See TopicGate connect to an MQTT broker, inspect live topic state, answer an age
 
 [Watch the TopicGate demo →](https://www.youtube.com/watch?v=_Qtc01kABkg)
 
+For repeatable local screenshots, regression checks, and outreach demos without
+physical hardware, use the [Zigbee2MQTT scenario](demo/zigbee2mqtt_scenario/README.md).
+
 ## What it does
 
 | Desktop | MCP server |
