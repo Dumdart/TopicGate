@@ -45,10 +45,12 @@ from topicgate.presentation.snapshot_presentation import (
 from topicgate.presentation.topic_presentation import (
     TopicDetail,
     TopicTreeNode,
+    WildcardFilterSummary,
     build_topic_tree,
     collect_visible_topic_paths,
     matching_subscription,
     topic_detail,
+    wildcard_filter_summary,
 )
 from topicgate.presentation.retention_presentation import (
     RETENTION_PRESETS,
@@ -351,6 +353,13 @@ class MainViewModel(QObject):
             ),
             None,
         )
+
+    @property
+    def selected_wildcard_filter_summary(self) -> WildcardFilterSummary | None:
+        subscription = self.selected_wildcard_subscription
+        if subscription is None:
+            return None
+        return wildcard_filter_summary(subscription, self._snapshot.topics)
 
     async def start(self) -> None:
         """Load the current value and listen for messages and connection changes."""

@@ -30,9 +30,8 @@ def test_visible_paths_and_tree_merge_only_matching_observed_topics() -> None:
     assert [badge.label for badge in wildcard.badges] == ["Filter 2"]
     kitchen = next(node for node in tree[1].children if node.label == "kitchen")
     assert kitchen.children[0].is_observed is True
-    assert [badge.label for badge in kitchen.children[0].badges] == [
-        "via Filter 2"
-    ]
+    assert [badge.label for badge in kitchen.children[0].badges] == ["F2"]
+    assert kitchen.children[0].badges[0].tone == "filter"
 
 
 def test_exact_subscription_is_not_tagged_with_a_filter_reference() -> None:
@@ -69,9 +68,7 @@ def test_observed_topic_links_to_the_most_specific_wildcard_filter() -> None:
         node for node in tree[0].children if node.label == "kitchen"
     )
 
-    assert [badge.label for badge in kitchen.children[0].badges] == [
-        "via Filter 2"
-    ]
+    assert [badge.label for badge in kitchen.children[0].badges] == ["F2"]
 
 
 def test_matching_subscription_prefers_exact_then_specific_filter() -> None:

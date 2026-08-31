@@ -93,6 +93,7 @@ class MainWindow(QMainWindow):
             lambda: self._run_async(self._view_model.disconnect_from_broker())
         )
         self._observer_tree.topic_selected.connect(self._view_model.select_topic)
+        self._topic_details.topic_selected.connect(self._view_model.select_topic)
         self._observer_tree.add_filter_requested.connect(
             self._show_add_filter_dialog
         )

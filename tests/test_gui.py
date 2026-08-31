@@ -854,6 +854,9 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
     notice = pane.findChild(QLabel, "subscriptionFilterNotice")
     decoded = pane.findChild(QPlainTextEdit, "decodedPayload")
     raw = pane.findChild(QPlainTextEdit, "rawPayload")
+    topics = pane.findChild(QTableWidget, "filterMatchingTopics")
+    selected: list[str] = []
+    pane.topic_selected.connect(selected.append)
 
     pane.render(view_model)
 
@@ -861,6 +864,15 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
     assert "concrete topic paths" in notice.text()
     assert decoded.isHidden()
     assert raw.isHidden()
+    assert topics.rowCount() == 1
+    assert topics.columnCount() == 2
+    assert topics.item(0, 0).text() == "home/kitchen/temperature"
+    assert topics.horizontalHeaderItem(0).text() == "Topic"
+    assert topics.horizontalHeaderItem(1).text() == "Last received"
+
+    topics.cellClicked.emit(0, 0)
+
+    assert selected == ["home/kitchen/temperature"]
 
     view_model.select_topic("home/kitchen/temperature")
     pane.render(view_model)
@@ -1069,7 +1081,7 @@ async def test_removing_exact_subscription_keeps_overlapping_observed_topic() ->
             for label in window.findChildren(QLabel, "topicStateBadge")
         ]
         assert badges.count("Filter 1") == 1
-        assert badges.count("via Filter 1") == 1
+        assert badges.count("F1") == 1
         assert badges.count("Live") == 1
         window.close()
         application.processEvents()

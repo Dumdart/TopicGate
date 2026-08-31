@@ -82,6 +82,24 @@ class SubscriptionDetail:
 
 
 @dataclass(frozen=True)
+class WildcardFilterTopicSummary:
+    topic: str
+    received_at: str
+
+
+@dataclass(frozen=True)
+class WildcardFilterSummary:
+    topic_filter: str
+    matching_topic_count: int
+    message_count: int
+    live_count: int
+    cached_count: int
+    stale_count: int
+    retained_count: int
+    topics: tuple[WildcardFilterTopicSummary, ...]
+
+
+@dataclass(frozen=True)
 class TopicTreeNode:
     label: str
     path: str
@@ -215,8 +233,10 @@ def build_topic_tree(
                 badges = (
                     TopicStateBadge(
                         "filter-reference",
-                        f"via {filter_labels[source_filter.topic_filter]}",
-                        "info",
+                        filter_labels[source_filter.topic_filter].replace(
+                            "Filter ", "F"
+                        ),
+                        "filter",
                     ),
                     *badges,
                 )
@@ -225,7 +245,7 @@ def build_topic_tree(
                     TopicStateBadge(
                         "filter",
                         filter_labels[path],
-                        "info",
+                        "filter",
                     ),
                     *badges,
                 )
@@ -489,6 +509,38 @@ def subscription_detail(subscription: Subscription | None) -> SubscriptionDetail
             1: "Only for a new subscription",
             2: "Do not send retained messages",
         }[subscription.retain_handling],
+    )
+
+
+def wildcard_filter_summary(
+    subscription: Subscription,
+    snapshot_states: Iterable[SnapshotTopicState],
+) -> WildcardFilterSummary:
+    states = tuple(
+        sorted(
+            (
+                state
+                for state in snapshot_states
+                if mqtt_filter_matches(subscription.topic_filter, state.topic)
+            ),
+            key=lambda state: (state.topic.casefold(), state.topic),
+        )
+    )
+    return WildcardFilterSummary(
+        topic_filter=subscription.topic_filter,
+        matching_topic_count=len(states),
+        message_count=sum(state.message_count for state in states),
+        live_count=sum(state.status.value == "live" for state in states),
+        cached_count=sum(state.status.value == "cached" for state in states),
+        stale_count=sum(state.status.value == "stale" for state in states),
+        retained_count=sum(state.retain for state in states),
+        topics=tuple(
+            WildcardFilterTopicSummary(
+                topic=state.topic,
+                received_at=state.received_at.isoformat(timespec="seconds"),
+            )
+            for state in states
+        ),
     )
 
 

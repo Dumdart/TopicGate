@@ -400,13 +400,14 @@ class ObserverTreePane(WorkspacePane):
             "info": ("#dbeafe", "#1e40af"),
             "warning": ("#fef3c7", "#92400e"),
             "neutral": ("#e5e7eb", "#374151"),
+            "filter": ("#ede9fe", "#5b21b6"),
         }
         for badge in node.badges:
             label = QLabel(badge.label)
             label.setObjectName("topicStateBadge")
             label.setProperty("badgeKey", badge.key)
             if badge.key == "filter-reference":
-                filter_label = badge.label.removeprefix("via ")
+                filter_label = f"Filter {badge.label.removeprefix('F')}"
                 label.setToolTip(
                     f"Observed through {filter_label}; "
                     "not a configured subscription"

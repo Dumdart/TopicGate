@@ -529,11 +529,20 @@ def test_discovered_topic_updates_details_and_only_matching_filter_is_editable()
     view_model.select_topic("SmartHome/+/status")
 
     assert view_model.selected_wildcard_subscription == repository.subscriptions[0]
+    summary = view_model.selected_wildcard_filter_summary
+    assert summary is not None
+    assert summary.topic_filter == "SmartHome/+/status"
+    assert summary.matching_topic_count == 1
+    assert summary.message_count == 1
+    assert [topic.topic for topic in summary.topics] == [
+        "SmartHome/kitchen/status"
+    ]
 
     view_model.select_topic("Other/device/value")
 
     assert view_model.decoded_payload == "42"
     assert view_model.selected_subscription is None
+    assert view_model.selected_wildcard_filter_summary is None
 
 
 def test_payload_rendering_is_bounded_and_reports_truncation() -> None:
