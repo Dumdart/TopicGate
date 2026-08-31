@@ -1,48 +1,26 @@
-# Install TopicGate for Codex
+# Connect TopicGate to Codex
 
-Codex can use TopicGate as an MCP server or through the bundled skills plugin.
+First [install TopicGate](OS_INSTALL.md), run `topicgate-gui`, and configure a broker.
 
-Before configuring Codex, follow the [main TopicGate setup guide](../../README.md#get-started) to install TopicGate, launch Desktop, and configure a broker. Then return here for Codex-specific setup.
+Install the plugin:
 
-## Install the plugin from GitHub
-
-Add the TopicGate GitHub repository as a marketplace and install the plugin:
-
-```powershell
+```console
 codex plugin marketplace add Dumdart/TopicGate
 codex plugin add topicgate@topicgate
 ```
 
-Start a new Codex thread after installation. The plugin runs `topicgate --mode read-only`.
+Start a new task. The plugin loads TopicGate skills and runs the MCP server in read-only mode.
 
-<p align="center">
-  <img src="../images/plugin_in_codex.png" alt="TopicGate installed in Codex with its MCP server and skills enabled." width="720" />
-</p>
+To use only MCP:
 
-Try one of these prompts:
-
-```text
-Help me set up TopicGate.
-Inspect my TopicGate MQTT state.
-Show the latest observed MQTT values.
-```
-
-## MCP server only
-
-Use this when you do not want the plugin skills:
-
-```powershell
+```console
 codex mcp add topicgate -- topicgate --mode read-only
 ```
 
-If the executable is not on `PATH`, replace `topicgate` with its absolute path. TopicGate Desktop's MCP setup page can copy a configuration with that path already resolved.
+Trusted environments may opt into control tools:
 
-## Control mode
-
-Control mode exposes operations that can connect or disconnect brokers, change subscriptions, refresh observations, and publish MQTT messages. Add it only to a trusted Codex environment:
-
-```powershell
+```console
 codex mcp add topicgate-control -- topicgate --mode control
 ```
 
-Confirm the broker, topic, payload, and encoding before allowing a publish operation.
+Control mode can change connections, subscriptions, observations, and device state. Confirm publish details before use.
