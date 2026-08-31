@@ -22,6 +22,9 @@ TopicGate stores broker credentials and observed MQTT state locally. Its MCP ser
 
 [Watch the demo](https://www.youtube.com/watch?v=_Qtc01kABkg)
 
+For repeatable local screenshots, regression checks, and outreach demos without
+physical hardware, use the [Zigbee2MQTT scenario](demo/zigbee2mqtt_scenario/README.md).
+
 ## Get started
 
 TopicGate requires Python 3.11+ and an MQTT 5-compatible broker.
