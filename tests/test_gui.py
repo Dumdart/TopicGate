@@ -38,6 +38,7 @@ from topicgate.core.models.current_topic import CurrentTopic
 from topicgate.core.models.observation_status import ObservationStatus
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.core.models.broker_profile import BrokerProfile
+from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_observation import MqttObservation as TopicState
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
@@ -54,6 +55,7 @@ from topicgate.core.models.observation_deletion_preview import (
     ObservationDeletionPreview,
 )
 from topicgate.gui.components.about_dialog import AboutDialog
+from topicgate.gui.components.application_header import ApplicationHeader
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
@@ -324,6 +326,37 @@ def test_redesigned_window_exposes_header_and_publish_workspace() -> None:
     assert "QSplitter::handle:horizontal" in window.styleSheet()
     assert "color: #737b85" in window.styleSheet()
 
+    window.close()
+    application.processEvents()
+
+
+def test_topic_edit_button_reveals_settings_and_publish_panel() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    view_model = MainViewModel(runtime_for(repository), repository.state.topic)
+    settings = QSettings(
+        str(Path(".pytest_cache/topic-edit-panel.ini").resolve()),
+        QSettings.Format.IniFormat,
+    )
+    settings.clear()
+    window = MainWindow(view_model, settings)
+    context = window.findChild(QWidget, "contextPanel")
+    edit_button = window.findChild(QToolButton, "topicEditButton")
+
+    assert context is not None
+    assert edit_button is not None
+    assert context.isHidden()
+    assert edit_button.text() == "Edit"
+
+    edit_button.click()
+
+    assert not context.isHidden()
+    assert edit_button.text() == "Done"
+
+    edit_button.click()
+
+    assert context.isHidden()
+    assert edit_button.text() == "Edit"
     window.close()
     application.processEvents()
 
@@ -924,6 +957,41 @@ def test_connection_controls_bundle_actions_and_request_signals() -> None:
     assert requests == ["connect", "reconnect", "disconnect"]
     assert not hasattr(controls, "status_label")
     controls.deleteLater()
+    application.processEvents()
+
+
+def test_application_header_prioritizes_actions_for_connection_state() -> None:
+    application = QApplication.instance() or QApplication([])
+    header = ApplicationHeader()
+    broker = BrokerSummary(
+        uuid4(),
+        "Local broker",
+        MqttConfig("broker.local", 1883, "", ""),
+        False,
+    )
+
+    header.render((broker,), broker, "disconnected", False)
+
+    assert not header.connect_button.isHidden()
+    assert header.reconnect_button.isHidden()
+    assert header.disconnect_button.isHidden()
+    assert header.connect_button.property("primary") is True
+    assert header.endpoint.text() == "mqtt://broker.local:1883"
+
+    header.render((broker,), broker, "connected", False)
+
+    assert header.connect_button.isHidden()
+    assert not header.reconnect_button.isHidden()
+    assert not header.disconnect_button.isHidden()
+    assert header.reconnect_button.property("primary") is True
+    assert header.disconnect_button.property("danger") is True
+
+    header.render((broker,), broker, "reconnecting", True)
+
+    assert header.reconnect_button.text() == "Reconnecting\u2026"
+    assert not header.reconnect_button.isEnabled()
+    assert not header.selector.isEnabled()
+    header.deleteLater()
     application.processEvents()
 
 

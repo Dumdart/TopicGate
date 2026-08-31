@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
         )
         self._observer_tree.topic_selected.connect(self._view_model.select_topic)
         self._topic_details.topic_selected.connect(self._view_model.select_topic)
+        self._topic_details.editing_changed.connect(
+            self._set_context_panel_visible
+        )
         self._observer_tree.add_filter_requested.connect(
             self._show_add_filter_dialog
         )
@@ -154,9 +157,9 @@ class MainWindow(QMainWindow):
             )
         )
 
-        context = QWidget()
-        context.setObjectName("contextPanel")
-        context_layout = QVBoxLayout(context)
+        self._context_panel = QWidget()
+        self._context_panel.setObjectName("contextPanel")
+        context_layout = QVBoxLayout(self._context_panel)
         context_layout.setContentsMargins(0, 0, 0, 0)
         context_layout.setSpacing(8)
         context_layout.addWidget(self._subscription_settings, 3)
@@ -167,7 +170,7 @@ class MainWindow(QMainWindow):
         self._splitter.setChildrenCollapsible(False)
         self._splitter.addWidget(self._observer_tree)
         self._splitter.addWidget(self._topic_details)
-        self._splitter.addWidget(context)
+        self._splitter.addWidget(self._context_panel)
         self._splitter.setStretchFactor(0, 4)
         self._splitter.setStretchFactor(1, 4)
         self._splitter.setStretchFactor(2, 2)
@@ -183,6 +186,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1024, 640)
         self.resize(1280, 800)
         self._splitter.setSizes([330, 580, 330])
+        self._context_panel.setHidden(True)
+
+    def _set_context_panel_visible(self, visible: bool) -> None:
+        self._context_panel.setVisible(visible)
 
     def _create_actions(self) -> None:
         self._connection_controls = ConnectionControls(self)

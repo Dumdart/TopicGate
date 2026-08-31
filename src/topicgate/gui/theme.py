@@ -17,6 +17,9 @@ QToolButton#snapshotToggleButton:hover { background: #eef2f6; }
 QGroupBox#snapshotControls, QGroupBox#snapshotHealthPanel { border: 1px solid #c8ced6; border-radius: 5px; margin-top: 8px; padding-top: 8px; }
 QGroupBox#snapshotControls::title, QGroupBox#snapshotHealthPanel::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; color: #4b5563; font-weight: 650; }
 QLabel#applicationTitle { font-size: 22px; font-weight: 650; }
+QLabel#applicationSubtitle, QLabel#brokerEndpoint { color: #667085; }
+QLabel#brokerEndpoint { font-size: 12px; }
+QLabel#brokerSectionTitle { color: #475467; font-size: 11px; font-weight: 650; letter-spacing: 0.5px; }
 QLabel#sectionTitle, QLabel#workspaceHeading { color: #4b5563; font-weight: 650; }
 QLabel#sectionTitle { font-size: 11px; }
 QLabel#workspaceHeading { font-size: 15px; }
@@ -30,6 +33,11 @@ QPushButton:hover, QToolButton:hover { background: #f7f8fa; border-color: #89939
 QPushButton:pressed, QToolButton:pressed { background: #eceff3; }
 QPushButton:disabled, QToolButton:disabled { color: #737b85; background: #f1f3f5; border-color: #c8ced6; }
 QPushButton[primary="true"] { color: #ffffff; background: #405d7a; border-color: #405d7a; }
+QPushButton[primary="true"]:hover { background: #334e68; border-color: #334e68; }
+QPushButton[primary="true"]:pressed { background: #2b4259; border-color: #2b4259; }
+QPushButton[primary="true"]:disabled { color: #737b85; background: #e5e7eb; border-color: #c8ced6; }
+QPushButton[danger="true"] { color: #a53030; border-color: #d7a4a4; }
+QPushButton[danger="true"]:hover { color: #8f2525; background: #fff5f5; border-color: #c77d7d; }
 QMenuBar, QMenu, QDockWidget { background: #ffffff; }
 QMenuBar { border-bottom: 1px solid #c8ced6; }
 QHeaderView::section { color: #4b5563; background: #f3f5f7; border: 0; border-bottom: 1px solid #c8ced6; padding: 6px; font-weight: 600; }

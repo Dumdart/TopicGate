@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -19,9 +20,19 @@ class TopicDetailsPane(WorkspacePane):
     """Read-only details and statistics for the selected live topic."""
 
     topic_selected = Signal(str)
+    editing_changed = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__("Details / Stats")
+
+        self._edit_button = QToolButton()
+        self._edit_button.setObjectName("topicEditButton")
+        self._edit_button.setText("Edit")
+        self._edit_button.setCheckable(True)
+        self._edit_button.setAccessibleName("Edit topic settings and publish")
+        self._edit_button.setToolTip("Show subscription settings and publishing")
+        self._edit_button.toggled.connect(self._toggle_editing)
+        self.header_layout.addWidget(self._edit_button)
 
         self._filter_summary = QWidget()
         self._filter_summary.setObjectName("subscriptionFilterSummary")
@@ -158,6 +169,15 @@ class TopicDetailsPane(WorkspacePane):
 
     def focus_payload(self) -> None:
         self._decoded_payload.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _toggle_editing(self, editing: bool) -> None:
+        self._edit_button.setText("Done" if editing else "Edit")
+        self._edit_button.setToolTip(
+            "Hide subscription settings and publishing"
+            if editing
+            else "Show subscription settings and publishing"
+        )
+        self.editing_changed.emit(editing)
 
     def _select_filter_topic(self, row: int, _column: int) -> None:
         item = self._filter_topics.item(row, 0)

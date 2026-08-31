@@ -1,5 +1,11 @@
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
 
 class WorkspacePane(QFrame):
@@ -20,9 +26,12 @@ class WorkspacePane(QFrame):
         )
 
         self.content_layout = QVBoxLayout(self)
-        heading = QLabel(title)
-        heading.setObjectName("workspaceHeading")
-        self.content_layout.addWidget(heading)
+        self.header_layout = QHBoxLayout()
+        self.heading = QLabel(title)
+        self.heading.setObjectName("workspaceHeading")
+        self.header_layout.addWidget(self.heading)
+        self.header_layout.addStretch(1)
+        self.content_layout.addLayout(self.header_layout)
 
     def minimumSizeHint(self) -> QSize:
         hint = super().minimumSizeHint()
