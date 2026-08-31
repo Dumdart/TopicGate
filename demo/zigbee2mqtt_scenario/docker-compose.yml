@@ -7,14 +7,22 @@ services:
     ports:
       - "${MQTT_PORT:-1883}:1883"
 
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mosquitto_sub -h localhost -p 1883 -u "$${MQTT_USERNAME}"
+          -P "$${MQTT_PASSWORD}" -t '$$SYS/broker/version' -C 1 -W 3
+      interval: 5s
+      timeout: 4s
+      retries: 10
+
     environment:
       MQTT_USERNAME: "${MQTT_USERNAME:-topicgate}"
-      MQTT_PASSWORD: "${MQTT_PASSWORD:-topicgate}"
+      MQTT_PASSWORD: "${MQTT_PASSWORD:-topicgate-demo-password}"
 
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - mosquitto-data:/mosquitto/data
-      - mosquitto-log:/mosquitto/log
 
     command:
       - /bin/sh
@@ -40,7 +48,3 @@ services:
         echo "  TLS: false"
 
         exec mosquitto -c /mosquitto/config/mosquitto.conf
-
-volumes:
-  mosquitto-data:
-  mosquitto-log:
