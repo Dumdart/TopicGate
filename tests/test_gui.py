@@ -347,6 +347,11 @@ def test_topic_edit_button_reveals_settings_and_publish_panel() -> None:
     assert edit_button is not None
     assert context.isHidden()
     assert edit_button.text() == "Edit"
+    assert not edit_button.icon().isNull()
+    assert (
+        edit_button.toolButtonStyle()
+        == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    )
 
     edit_button.click()
 
