@@ -876,25 +876,28 @@ def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
     application.processEvents()
 
 
-def test_topic_metadata_hides_diagnostics_until_details_are_requested() -> None:
+def test_topic_metadata_hides_advanced_fields_until_requested() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     pane = TopicDetailsPane()
     pane.render(MainViewModel(runtime_for(repository), repository.state.topic))
-    details = pane.findChild(QToolButton, "topicMetadataDetailsButton")
+    advanced = pane.findChild(QToolButton, "topicMetadataAdvancedButton")
     source = pane.findChild(QLabel, "observationSourceLabel")
     state = pane.findChild(QLabel, "topicStateStatusLabel")
     messages = pane.findChild(QLabel, "messageCountLabel")
+    raw = pane.findChild(QPlainTextEdit, "rawPayload")
 
-    assert details.text() == "Show details"
+    assert advanced.text() == "Advanced"
     assert source.isHidden()
+    assert raw.isHidden()
     assert not state.isHidden()
     assert not messages.isHidden()
 
-    details.click()
+    advanced.click()
 
-    assert details.text() == "Hide details"
+    assert advanced.text() == "Hide advanced"
     assert not source.isHidden()
+    assert not raw.isHidden()
 
     pane.deleteLater()
     application.processEvents()
@@ -936,7 +939,7 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
 
     assert notice.isHidden()
     assert not decoded.isHidden()
-    assert not raw.isHidden()
+    assert raw.isHidden()
     assert decoded.toPlainText() == "21.5"
     pane.deleteLater()
     application.processEvents()

@@ -95,6 +95,7 @@ class TopicDetailsPane(WorkspacePane):
         self.content_layout.addWidget(self._filter_summary, 1)
 
         self._metadata = TopicMetadataPane()
+        self._metadata.advanced_changed.connect(self._set_advanced_visible)
         self.content_layout.addWidget(self._metadata)
 
         self._decoded_label = self._section_label("Decoded payload")
@@ -114,20 +115,23 @@ class TopicDetailsPane(WorkspacePane):
         self._raw_payload.setReadOnly(True)
         self._raw_payload.setMaximumHeight(110)
         self.content_layout.addWidget(self._raw_payload, 1)
+        self._showing_filter = False
+        self._advanced_visible = False
+        self._update_raw_visibility()
 
     def render(self, view_model: MainViewModel) -> None:
         summary = view_model.selected_wildcard_filter_summary
         showing_filter = summary is not None
+        self._showing_filter = showing_filter
         self._filter_summary.setVisible(showing_filter)
         self._filter_notice.setVisible(showing_filter)
         for widget in (
             self._metadata,
             self._decoded_label,
             self._decoded_payload,
-            self._raw_label,
-            self._raw_payload,
         ):
             widget.setVisible(not showing_filter)
+        self._update_raw_visibility()
         if summary is not None:
             self._filter_notice.setText(
                 f"Filter: {summary.topic_filter}"
@@ -169,6 +173,15 @@ class TopicDetailsPane(WorkspacePane):
 
     def focus_payload(self) -> None:
         self._decoded_payload.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _set_advanced_visible(self, visible: bool) -> None:
+        self._advanced_visible = visible
+        self._update_raw_visibility()
+
+    def _update_raw_visibility(self) -> None:
+        visible = self._advanced_visible and not self._showing_filter
+        self._raw_label.setVisible(visible)
+        self._raw_payload.setVisible(visible)
 
     def _toggle_editing(self, editing: bool) -> None:
         self._edit_button.setText("Done" if editing else "Edit")

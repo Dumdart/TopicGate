@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFormLayout, QLabel, QToolButton, QWidget
 
 from topicgate.presentation.topic_presentation import TopicDetail
@@ -6,6 +6,8 @@ from topicgate.presentation.topic_presentation import TopicDetail
 
 class TopicMetadataPane(QWidget):
     """Compact metadata renderer for the selected topic detail."""
+
+    advanced_changed = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -51,7 +53,7 @@ class TopicMetadataPane(QWidget):
         for title, widget in rows:
             self._form.addRow(title, widget)
 
-        self._detail_widgets = (
+        self._advanced_widgets = (
             self.source,
             self.encoding,
             self.size,
@@ -63,14 +65,14 @@ class TopicMetadataPane(QWidget):
             self.qos,
             self.dropped,
         )
-        self._details_button = QToolButton()
-        self._details_button.setObjectName("topicMetadataDetailsButton")
-        self._details_button.setCheckable(True)
-        self._details_button.setText("Show details")
-        self._details_button.setAccessibleName("Show topic details")
-        self._details_button.toggled.connect(self._set_details_visible)
-        self._form.addRow(self._details_button)
-        self._set_details_visible(False)
+        self._advanced_button = QToolButton()
+        self._advanced_button.setObjectName("topicMetadataAdvancedButton")
+        self._advanced_button.setCheckable(True)
+        self._advanced_button.setText("Advanced")
+        self._advanced_button.setAccessibleName("Show advanced topic details")
+        self._advanced_button.toggled.connect(self._set_advanced_visible)
+        self._form.addRow(self._advanced_button)
+        self._set_advanced_visible(False)
 
     def render(self, detail: TopicDetail) -> None:
         self.topic.setText(detail.topic or "No topic selected")
@@ -94,15 +96,18 @@ class TopicMetadataPane(QWidget):
         self.messages.setText(str(detail.message_count))
         self.dropped.setText(str(detail.dropped_message_count))
 
-    def _set_details_visible(self, visible: bool) -> None:
-        for widget in self._detail_widgets:
+    def _set_advanced_visible(self, visible: bool) -> None:
+        for widget in self._advanced_widgets:
             self._form.setRowVisible(widget, visible)
-        self._details_button.setText(
-            "Hide details" if visible else "Show details"
+        self._advanced_button.setText(
+            "Hide advanced" if visible else "Advanced"
         )
-        self._details_button.setAccessibleName(
-            "Hide topic details" if visible else "Show topic details"
+        self._advanced_button.setAccessibleName(
+            "Hide advanced topic details"
+            if visible
+            else "Show advanced topic details"
         )
+        self.advanced_changed.emit(visible)
 
     @staticmethod
     def _label(name: str, text: str = "-") -> QLabel:
