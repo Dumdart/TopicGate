@@ -13,6 +13,22 @@ def _print_error(error: Exception) -> None:
     message = error.args[0] if isinstance(error, KeyError) else str(error)
     print(f"Error: {message}", file=sys.stderr)
 
+def list_profiles(args: argparse.Namespace) -> int:
+    dependencies = AppDependencies()
+
+    for profile in dependencies.broker_profiles.list_profile_summaries():
+        print(
+            profile.id,
+            profile.name,
+            profile.host,
+            profile.port,
+            profile.username,
+            profile.use_tls,
+            sep="\t",
+        )
+
+    return 0
+
 
 def add_profile(args: argparse.Namespace) -> int:
     dependencies = AppDependencies()
@@ -74,6 +90,19 @@ def add_subscription(args: argparse.Namespace) -> int:
 
     return 0
 
+def test_profile(args: argparse.Namespace) -> int:
+    dependencies = AppDependencies()
+
+    try:
+        for profile in dependencies.broker_profiles.get_all_profiles():
+            print(f"Testing profile: {profile.name}")
+            dependencies.broker_profiles.test_profile(profile.id)
+    except KeyError as error:
+        _print_error(error)
+        return 1
+
+    return 0
+
 def remove_subscription(args: argparse.Namespace) -> int:
     dependencies = AppDependencies()
 
@@ -107,6 +136,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_profile_parser.add_argument("--no-password", action="store_true", help="MQTT password")
     add_profile_parser.set_defaults(handler=add_profile)
 
+    list_profile_parser = profile_commands.add_parser("list", help="List all profiles")
+    list_profile_parser.set_defaults(handler=list_profiles)
+
+    test_profile_parser = profile_commands.add_parser("test", help="Test profile connection")
+    test_profile_parser.set_defaults(handler=test_profile)
+
+
     subscription_parser = commands.add_parser("sub", help="Manage subscriptions")
     subscription_commands = subscription_parser.add_subparsers(dest="subscription_command", required=True)
 
@@ -132,6 +168,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_sub_parser.add_argument("--name", help="Profile name", required=True)
     add_sub_parser.add_argument("--topic", help="Topic to subscribe to", required=True)
     add_sub_parser.set_defaults(handler=remove_subscription)
+
+
     return parser
 
 def main(argv: Sequence[str] | None = None) -> int:

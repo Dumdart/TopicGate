@@ -1,4 +1,7 @@
+import asyncio
+from collections.abc import Callable
 from dataclasses import replace
+from typing import Protocol
 from uuid import UUID
 
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
@@ -6,10 +9,12 @@ from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
+from topicgate.core.models.broker_profile_summary import BrokerProfileSummary
 from topicgate.core.models.observer_workspace import ObserverWorkspace
 from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
+from topicgate.infrastructure.mqtt.mqtt_client import MqttClient
 from topicgate.infrastructure.repository.broker_config_repository import (
     BrokerConfigRepository,
 )
@@ -17,6 +22,12 @@ from topicgate.infrastructure.repository.broker_repository import BrokerReposito
 from topicgate.infrastructure.repository.subscription_repository import (
     SubscriptionRepository,
 )
+
+
+class MqttConnection(Protocol):
+    async def connect(self, timeout: float = 10.0) -> bool: ...
+
+    async def disconnect(self) -> bool: ...
 
 
 class BrokerProfileService:
@@ -30,6 +41,7 @@ class BrokerProfileService:
         credential_store: CredentialStore,
         runtime_state: BrokerRuntimeState | None = None,
         topic_messages: TopicMessageRecorder | None = None,
+        mqtt_client_factory: Callable[[MqttConfig], MqttConnection] = MqttClient,
     ) -> None:
         if isinstance(settings, DatabaseContext):
             self._db = settings
@@ -45,6 +57,7 @@ class BrokerProfileService:
         self.configs = BrokerConfigRepository(self._db)
         self.subscriptions = SubscriptionRepository(self._db)
         self._topic_message_recorder = topic_messages
+        self._mqtt_client_factory = mqtt_client_factory
         self._settings_id = supplied_settings.id if supplied_settings else None
 
         identities = self.brokers.list_profiles()
@@ -107,6 +120,43 @@ class BrokerProfileService:
         if identity is None:
             raise KeyError(f"Unknown broker profile: {normalized_name}")
         return self.get_profile(identity.id)
+
+    def list_profile_summaries(self) -> tuple[BrokerProfileSummary, ...]:  # noqa: F821
+        return tuple(
+            BrokerProfileSummary(
+                profile.id,
+                profile.name,
+                profile.config.host,
+                profile.config.port,
+                profile.config.username,
+                profile.config.use_tls,
+            )
+            for profile in self.get_all_profiles()
+        )
+
+
+    def test_profile(
+        self,
+        profile_id: UUID,
+        *,
+        timeout: float = 10.0,
+    ) -> bool:
+        return asyncio.run(self._test_profile(profile_id, timeout=timeout))
+
+    async def _test_profile(
+        self,
+        profile_id: UUID,
+        *,
+        timeout: float,
+    ) -> bool:
+        profile = self.get_profile(profile_id)
+        client = self._mqtt_client_factory(profile.config)
+        try:
+            if not await client.connect(timeout=timeout):
+                raise ConnectionError("MQTT broker connection test failed.")
+            return True
+        finally:
+            await client.disconnect()
 
     def create_profile(self, name: str, config: MqttConfig) -> BrokerProfile:
         name = self.brokers.validate_profile_name(name)

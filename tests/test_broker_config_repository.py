@@ -5,6 +5,27 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.subscription import Subscription
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 
+
+class FakeMqttConnection:
+    def __init__(
+        self,
+        *,
+        connect_error: Exception | None = None,
+    ) -> None:
+        self.connect_error = connect_error
+        self.connect_timeouts: list[float] = []
+        self.disconnect_count = 0
+
+    async def connect(self, timeout: float = 10.0) -> bool:
+        self.connect_timeouts.append(timeout)
+        if self.connect_error is not None:
+            raise self.connect_error
+        return True
+
+    async def disconnect(self) -> bool:
+        self.disconnect_count += 1
+        return False
+
 def test_broker_repository_returns_initial_settings(credential_store) -> None:
     config = AppConfig(
         mqtt=MqttConfig("broker", 1883, "observer", "password")
@@ -111,6 +132,58 @@ def test_broker_profile_service_rejects_unknown_profile_name(
         assert error.args[0] == "Unknown broker profile: Missing"
     else:
         raise AssertionError("Expected an unknown profile name to be rejected")
+
+
+def test_broker_profile_service_tests_temporary_mqtt_connection(
+    credential_store,
+) -> None:
+    connection = FakeMqttConnection()
+    supplied_configs: list[MqttConfig] = []
+
+    def create_connection(config: MqttConfig) -> FakeMqttConnection:
+        supplied_configs.append(config)
+        return connection
+
+    repository = BrokerProfileService(
+        credential_store=credential_store,
+        mqtt_client_factory=create_connection,
+    )
+    profile = repository.create_profile(
+        "Tested",
+        MqttConfig("broker", 8883, "observer", "secret", True),
+    )
+
+    result = repository.test_profile(profile.id, timeout=2.5)
+
+    assert result is True
+    assert supplied_configs == [profile.config]
+    assert connection.connect_timeouts == [2.5]
+    assert connection.disconnect_count == 1
+
+
+def test_broker_profile_service_disconnects_after_failed_test(
+    credential_store,
+) -> None:
+    connection = FakeMqttConnection(
+        connect_error=ConnectionError("broker unavailable")
+    )
+    repository = BrokerProfileService(
+        credential_store=credential_store,
+        mqtt_client_factory=lambda _config: connection,
+    )
+    profile = repository.create_profile(
+        "Unavailable",
+        MqttConfig("broker", 1883, "", ""),
+    )
+
+    try:
+        repository.test_profile(profile.id)
+    except ConnectionError as error:
+        assert str(error) == "broker unavailable"
+    else:
+        raise AssertionError("Expected the connection test to fail")
+
+    assert connection.disconnect_count == 1
 
 
 def test_broker_repository_provides_two_empty_independent_profiles(

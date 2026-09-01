@@ -96,3 +96,18 @@ def test_subscription_add_accepts_duplicate() -> None:
         )
 
     assert result == 0
+
+
+def test_profile_test_runs_temporary_connection_check() -> None:
+    dependencies, profile = dependencies_with()
+    dependencies.broker_profiles.get_all_profiles.return_value = (profile,)
+    dependencies.broker_profiles.test_profile.return_value = True
+
+    with patch(
+        "topicgate.cli.topicgate_cli.AppDependencies",
+        return_value=dependencies,
+    ):
+        result = main(["profile", "test"])
+
+    assert result == 0
+    dependencies.broker_profiles.test_profile.assert_called_once_with(profile.id)
