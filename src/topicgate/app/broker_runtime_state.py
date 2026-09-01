@@ -12,8 +12,8 @@ class BrokerRuntimeState:
         self._profile_handles: dict[UUID, BrokerProfile] = {}
         self._config_ids: dict[UUID, int | None] = {}
 
-    def remove(self, broker_id: UUID) -> None:
-        self._repositories.pop(broker_id, None)
+    def remove_profile_metadata(self, broker_id: UUID) -> None:
+        """Forget cached profile data without changing runtime repositories."""
         self._profile_handles.pop(broker_id, None)
         self._config_ids.pop(broker_id, None)
 

@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from PySide6.QtCore import QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
@@ -8,18 +6,16 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMenu,
     QScrollArea,
-    QStyle,
     QToolButton,
     QTreeView,
     QWidget,
 )
 
-from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
 from topicgate.gui.components.snapshot_panel import SnapshotPanel
+from topicgate.gui.icons import delete_icon
 from topicgate.presentation.topic_presentation import TopicTreeNode
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -31,10 +27,6 @@ class ObserverTreePane(WorkspacePane):
     topic_selected = Signal(str)
     add_filter_requested = Signal()
     remove_filter_requested = Signal(object)
-    broker_profile_selected = Signal(object)
-    add_broker_profile_requested = Signal()
-    edit_broker_profile_requested = Signal(object)
-    delete_broker_profile_requested = Signal()
     snapshot_apply_requested = Signal(object)
     snapshot_reset_requested = Signal()
     reconnect_observe_requested = Signal(object)
@@ -58,15 +50,6 @@ class ObserverTreePane(WorkspacePane):
         add_button.clicked.connect(self.add_filter_requested)
         controls.addWidget(add_button)
 
-        self._broker_profile_button = QToolButton()
-        self._broker_profile_button.setObjectName("brokerProfileButton")
-        self._broker_profile_button.setMinimumWidth(126)
-        self._broker_profile_button.setPopupMode(
-            QToolButton.ToolButtonPopupMode.InstantPopup
-        )
-        self._broker_profile_menu = QMenu(self._broker_profile_button)
-        self._broker_profile_button.setMenu(self._broker_profile_menu)
-        controls.addWidget(self._broker_profile_button)
         self.content_layout.addLayout(controls)
 
         self._model = QStandardItemModel(self)
@@ -238,13 +221,16 @@ class ObserverTreePane(WorkspacePane):
         append(nodes)
         self.render(paths, selected_topic, subscriptions)
 
-        def add_badges(items: tuple[TopicTreeNode, ...]) -> None:
+        def apply_node_presentation(items: tuple[TopicTreeNode, ...]) -> None:
             for node in items:
+                item = self._items[node.path]
+                item.setSelectable(node.selectable)
+                item.setData(node.path if node.selectable else None, TOPIC_ROLE)
                 if node.badges:
                     self._set_badges(node)
-                add_badges(node.children)
+                apply_node_presentation(node.children)
 
-        add_badges(nodes)
+        apply_node_presentation(nodes)
 
     def select_topic(self, topic: str) -> None:
         item = self._items.get(topic)
@@ -264,57 +250,10 @@ class ObserverTreePane(WorkspacePane):
     def focus_search(self) -> None:
         self._search_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
-    def render_broker_profiles(
-        self,
-        profiles: tuple[BrokerSummary, ...],
-        active_profile_id: UUID,
-    ) -> None:
-        """Render a quick-switch menu for the available broker profiles."""
-        self._broker_profile_menu.clear()
-        active_profile = next(
-            profile for profile in profiles if profile.id == active_profile_id
-        )
-        self._broker_profile_button.setText(active_profile.name)
-        self._broker_profile_button.setToolTip(
-            f"Switch broker profile (current: {active_profile.name})"
-        )
-        self._broker_profile_button.setAccessibleName("Switch broker profile")
-        for profile in profiles:
-            action = self._broker_profile_menu.addAction(profile.name)
-            action.setCheckable(True)
-            action.setChecked(profile.id == active_profile_id)
-            action.setEnabled(profile.id != active_profile_id)
-            action.triggered.connect(
-                lambda _checked=False, profile_id=profile.id: (
-                    self.broker_profile_selected.emit(profile_id)
-                )
-            )
-        self._broker_profile_menu.addSeparator()
-        add_action = self._broker_profile_menu.addAction("Add profile...")
-        add_action.setObjectName("addBrokerProfileAction")
-        add_action.triggered.connect(self.add_broker_profile_requested.emit)
-        edit_menu = self._broker_profile_menu.addMenu("Edit profile...")
-        edit_menu.menuAction().setObjectName("editBrokerProfileAction")
-        for profile in profiles:
-            edit_action = edit_menu.addAction(profile.name)
-            edit_action.triggered.connect(
-                lambda _checked=False, profile_id=profile.id: (
-                    self.edit_broker_profile_requested.emit(profile_id)
-                )
-            )
-        delete_action = self._broker_profile_menu.addAction(
-            "Delete current profile..."
-        )
-        delete_action.setObjectName("deleteBrokerProfileAction")
-        delete_action.setEnabled(len(profiles) > 1)
-        delete_action.triggered.connect(self.delete_broker_profile_requested.emit)
-
-    def set_profile_switching(self, switching: bool) -> None:
-        """Prevent duplicate profile switches while the broker reconnects."""
-        self._broker_profile_button.setEnabled(not switching)
+    def set_connection_busy(self, busy: bool) -> None:
         action = str(self._empty_state_action.property("action") or "")
         if action in {"connect", "observe"}:
-            self._empty_state_action.setEnabled(not switching)
+            self._empty_state_action.setEnabled(not busy)
 
     def _add_topic(self, topic: str) -> None:
         parent = self._model.invisibleRootItem()
@@ -349,23 +288,21 @@ class ObserverTreePane(WorkspacePane):
         button.setObjectName("removeSubscriptionButton")
         button.setFixedSize(24, 18)
         button.setIconSize(QSize(12, 12))
-        button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon)
-        )
+        button.setIcon(delete_icon())
         button.setStyleSheet(
             "QToolButton {"
-            " background-color: #7f1d1d;"
-            " border: 1px solid #b91c1c;"
+            " background-color: transparent;"
+            " border: 1px solid transparent;"
             " border-radius: 4px;"
             " padding: 0;"
             "}"
             "QToolButton:hover {"
-            " background-color: #b91c1c;"
-            " border-color: #ef4444;"
+            " background-color: #fff5f5;"
+            " border-color: #d7a4a4;"
             "}"
             "QToolButton:pressed {"
-            " background-color: #450a0a;"
-            " border-color: #991b1b;"
+            " background-color: #fee2e2;"
+            " border-color: #c77d7d;"
             "}"
         )
         button.setToolTip(f"Remove subscription {subscription.topic_filter}")
@@ -397,17 +334,59 @@ class ObserverTreePane(WorkspacePane):
             "info": ("#dbeafe", "#1e40af"),
             "warning": ("#fef3c7", "#92400e"),
             "neutral": ("#e5e7eb", "#374151"),
+            "filter": ("#ede9fe", "#5b21b6"),
         }
         for badge in node.badges:
-            label = QLabel(badge.label)
-            label.setObjectName("topicStateBadge")
-            label.setProperty("badgeKey", badge.key)
+            badge_widget: QLabel | QToolButton
+            target_path = badge.target_path
+            if target_path is not None:
+                button = QToolButton()
+                button.setObjectName("topicFilterBadgeButton")
+                button.setText(badge.label)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setProperty("targetPath", target_path)
+                button.clicked.connect(
+                    lambda _checked=False, path=target_path: (
+                        self.topic_selected.emit(path)
+                    )
+                )
+                badge_widget = button
+            else:
+                badge_widget = QLabel(badge.label)
+                badge_widget.setObjectName("topicStateBadge")
+            badge_widget.setProperty("badgeKey", badge.key)
+            if badge.key == "filter-reference":
+                filter_label = f"Filter {badge.label.removeprefix('F')}"
+                badge_widget.setToolTip(
+                    f"Go to {filter_label} ({target_path})"
+                )
+                badge_widget.setAccessibleName(
+                    f"Go to {filter_label}, {target_path}"
+                )
+            elif badge.key == "filter":
+                badge_widget.setToolTip(
+                    f"Go to {badge.label} ({target_path})"
+                )
+                badge_widget.setAccessibleName(
+                    f"Go to {badge.label}, {target_path}"
+                )
             background, foreground = colors[badge.tone]
-            label.setStyleSheet(
-                f"background: {background}; color: {foreground}; "
-                "border-radius: 5px; padding: 1px 4px; font-size: 10px;"
-            )
-            layout.addWidget(label)
+            if target_path is not None:
+                badge_widget.setStyleSheet(
+                    "QToolButton {"
+                    f" background: {background}; color: {foreground};"
+                    " border: 0; border-radius: 5px; padding: 1px 4px;"
+                    " font-size: 10px;"
+                    "}"
+                    "QToolButton:hover { background: #ddd6fe; }"
+                    "QToolButton:pressed { background: #c4b5fd; }"
+                )
+            else:
+                badge_widget.setStyleSheet(
+                    f"background: {background}; color: {foreground}; "
+                    "border-radius: 5px; padding: 1px 4px; font-size: 10px;"
+                )
+            layout.addWidget(badge_widget)
         layout.addStretch(1)
         state_index = item.index().siblingAtColumn(2)
         self._tree.setIndexWidget(self._proxy.mapFromSource(state_index), widget)

@@ -32,7 +32,10 @@ from topicgate.core.models.observation_retention_policy import (
     ObservationRetentionPolicy,
 )
 from topicgate.core.models.topic_message import TopicMessage
-from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.mqtt_topics import (
+    mqtt_filter_has_wildcards,
+    mqtt_filter_matches,
+)
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.presentation.snapshot_presentation import (
     BrokerSnapshotHealth,
@@ -42,10 +45,12 @@ from topicgate.presentation.snapshot_presentation import (
 from topicgate.presentation.topic_presentation import (
     TopicDetail,
     TopicTreeNode,
+    WildcardFilterSummary,
     build_topic_tree,
     collect_visible_topic_paths,
     matching_subscription,
     topic_detail,
+    wildcard_filter_summary,
 )
 from topicgate.presentation.retention_presentation import (
     RETENTION_PRESETS,
@@ -336,6 +341,25 @@ class MainViewModel(QObject):
     @property
     def selected_subscription(self) -> Subscription | None:
         return matching_subscription(self.subscriptions, self._topic)
+
+    @property
+    def selected_wildcard_subscription(self) -> Subscription | None:
+        return next(
+            (
+                item
+                for item in self.subscriptions
+                if item.topic_filter == self._topic
+                and mqtt_filter_has_wildcards(item.topic_filter)
+            ),
+            None,
+        )
+
+    @property
+    def selected_wildcard_filter_summary(self) -> WildcardFilterSummary | None:
+        subscription = self.selected_wildcard_subscription
+        if subscription is None:
+            return None
+        return wildcard_filter_summary(subscription, self._snapshot.topics)
 
     async def start(self) -> None:
         """Load the current value and listen for messages and connection changes."""

@@ -23,8 +23,58 @@ def test_visible_paths_and_tree_merge_only_matching_observed_topics() -> None:
     assert paths == ("$SYS/+/load", "$SYS/node/load", "home/#", "home/kitchen/temp")
     tree = build_topic_tree(paths, subscriptions, ("home/kitchen/temp",))
     assert [node.path for node in tree] == ["$SYS", "home"]
+    assert tree[1].selectable is False
+    wildcard = next(node for node in tree[1].children if node.label == "#")
+    assert wildcard.selectable is True
+    assert wildcard.is_wildcard_filter is True
+    assert [badge.label for badge in wildcard.badges] == ["Filter 2"]
+    assert wildcard.badges[0].target_path == "home/#"
     kitchen = next(node for node in tree[1].children if node.label == "kitchen")
     assert kitchen.children[0].is_observed is True
+    assert [badge.label for badge in kitchen.children[0].badges] == ["F2"]
+    assert kitchen.children[0].badges[0].tone == "filter"
+    assert kitchen.children[0].badges[0].target_path == "home/#"
+
+
+def test_exact_subscription_is_not_tagged_with_a_filter_reference() -> None:
+    subscriptions = (Subscription("home/#"), Subscription("home/battery"))
+    tree = build_topic_tree(
+        ("home/#", "home/battery"),
+        subscriptions,
+        ("home/battery",),
+    )
+
+    battery = next(node for node in tree[0].children if node.label == "battery")
+    wildcard = next(node for node in tree[0].children if node.label == "#")
+
+    assert [badge.label for badge in wildcard.badges] == ["Filter 1"]
+    assert [badge.label for badge in battery.badges] == []
+
+
+def test_observed_topic_links_to_the_most_specific_wildcard_filter() -> None:
+    subscriptions = (
+        Subscription("sensors/#"),
+        Subscription("sensors/+/temperature"),
+    )
+    tree = build_topic_tree(
+        (
+            "sensors/#",
+            "sensors/+/temperature",
+            "sensors/kitchen/temperature",
+        ),
+        subscriptions,
+        ("sensors/kitchen/temperature",),
+    )
+
+    kitchen = next(
+        node for node in tree[0].children if node.label == "kitchen"
+    )
+
+    assert [badge.label for badge in kitchen.children[0].badges] == ["F2"]
+    assert (
+        kitchen.children[0].badges[0].target_path
+        == "sensors/+/temperature"
+    )
 
 
 def test_matching_subscription_prefers_exact_then_specific_filter() -> None:

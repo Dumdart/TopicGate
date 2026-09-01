@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from topicgate.app.broker_runtime_state import BrokerRuntimeState
+from topicgate.app.services.broker_profile_service import BrokerProfileService
 from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -556,6 +558,36 @@ async def test_runtime_creates_updates_and_deletes_broker_profiles() -> None:
         assert deleted.id == removable.id
 
     await scenario()
+
+
+async def test_runtime_deletes_active_broker_with_shared_runtime_state(
+    credential_store,
+) -> None:
+    state = BrokerRuntimeState()
+    brokers = BrokerProfileService(
+        credential_store=credential_store,
+        runtime_state=state,
+    )
+    active, replacement = brokers.get_all_profiles()
+    repositories = {
+        profile.id: MagicMock(
+            stop=AsyncMock(),
+            start=AsyncMock(),
+            update_broker=AsyncMock(),
+        )
+        for profile in (active, replacement)
+    }
+    state.repositories.update(repositories)
+    runtime = TopicGateRuntime(brokers, state.repositories, active.id)
+
+    deleted = await runtime.delete_broker(active.id)
+
+    assert deleted.id == active.id
+    assert runtime.active_broker.id == replacement.id
+    assert active.id not in state.repositories
+    assert tuple(profile.id for profile in brokers.get_all_profiles()) == (
+        replacement.id,
+    )
 
 
 async def test_runtime_flushes_observations_before_deleting_a_broker() -> None:

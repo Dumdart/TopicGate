@@ -14,7 +14,10 @@ from topicgate.app.models.broker_snapshot import (
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.core.models.mqtt_observation import MqttObservation
 from topicgate.core.models.subscription import Subscription
-from topicgate.core.mqtt_topics import mqtt_filter_matches
+from topicgate.core.mqtt_topics import (
+    mqtt_filter_has_wildcards,
+    mqtt_filter_matches,
+)
 from topicgate.core.payload_limits import (
     MAX_FORMATTED_JSON_CHARACTERS,
     MAX_RENDERED_PAYLOAD_BYTES,
@@ -79,6 +82,24 @@ class SubscriptionDetail:
 
 
 @dataclass(frozen=True)
+class WildcardFilterTopicSummary:
+    topic: str
+    received_at: str
+
+
+@dataclass(frozen=True)
+class WildcardFilterSummary:
+    topic_filter: str
+    matching_topic_count: int
+    message_count: int
+    live_count: int
+    cached_count: int
+    stale_count: int
+    retained_count: int
+    topics: tuple[WildcardFilterTopicSummary, ...]
+
+
+@dataclass(frozen=True)
 class TopicTreeNode:
     label: str
     path: str
@@ -86,6 +107,7 @@ class TopicTreeNode:
     is_subscription: bool
     is_observed: bool
     children: tuple["TopicTreeNode", ...]
+    is_wildcard_filter: bool = False
     badges: tuple[TopicStateBadge, ...] = ()
 
 
@@ -154,7 +176,25 @@ def build_topic_tree(
     observed_topics: Iterable[str] = (),
     snapshot_states: Iterable[SnapshotTopicState] = (),
 ) -> tuple[TopicTreeNode, ...]:
+    subscriptions = tuple(subscriptions)
     subscription_paths = {item.topic_filter for item in subscriptions}
+    wildcard_filters = tuple(
+        sorted(
+            (
+                item
+                for item in subscriptions
+                if mqtt_filter_has_wildcards(item.topic_filter)
+            ),
+            key=lambda item: (
+                item.topic_filter.casefold(),
+                item.topic_filter,
+            ),
+        )
+    )
+    filter_labels = {
+        item.topic_filter: f"Filter {index}"
+        for index, item in enumerate(wildcard_filters, start=1)
+    }
     observed_paths = set(observed_topics)
     states_by_topic = {state.topic: state for state in snapshot_states}
     root: dict[str, dict] = {}
@@ -176,6 +216,41 @@ def build_topic_tree(
             path = node["path"]
             is_subscription = path in subscription_paths
             is_observed = path in observed_paths
+            is_wildcard_filter = (
+                is_subscription and mqtt_filter_has_wildcards(path)
+            )
+            source_filter = (
+                matching_subscription(wildcard_filters, path)
+                if is_observed and not is_subscription
+                else None
+            )
+            badges = (
+                topic_state_badges(states_by_topic[path])
+                if path in states_by_topic
+                else ()
+            )
+            if source_filter is not None:
+                badges = (
+                    TopicStateBadge(
+                        "filter-reference",
+                        filter_labels[source_filter.topic_filter].replace(
+                            "Filter ", "F"
+                        ),
+                        "filter",
+                        source_filter.topic_filter,
+                    ),
+                    *badges,
+                )
+            if is_wildcard_filter:
+                badges = (
+                    TopicStateBadge(
+                        "filter",
+                        filter_labels[path],
+                        "filter",
+                        path,
+                    ),
+                    *badges,
+                )
             result.append(
                 TopicTreeNode(
                     label=segment or "/",
@@ -184,11 +259,8 @@ def build_topic_tree(
                     is_subscription=is_subscription,
                     is_observed=is_observed,
                     children=convert(node["children"]),
-                    badges=(
-                        topic_state_badges(states_by_topic[path])
-                        if path in states_by_topic
-                        else ()
-                    ),
+                    is_wildcard_filter=is_wildcard_filter,
+                    badges=badges,
                 )
             )
         return tuple(result)
@@ -439,6 +511,38 @@ def subscription_detail(subscription: Subscription | None) -> SubscriptionDetail
             1: "Only for a new subscription",
             2: "Do not send retained messages",
         }[subscription.retain_handling],
+    )
+
+
+def wildcard_filter_summary(
+    subscription: Subscription,
+    snapshot_states: Iterable[SnapshotTopicState],
+) -> WildcardFilterSummary:
+    states = tuple(
+        sorted(
+            (
+                state
+                for state in snapshot_states
+                if mqtt_filter_matches(subscription.topic_filter, state.topic)
+            ),
+            key=lambda state: (state.topic.casefold(), state.topic),
+        )
+    )
+    return WildcardFilterSummary(
+        topic_filter=subscription.topic_filter,
+        matching_topic_count=len(states),
+        message_count=sum(state.message_count for state in states),
+        live_count=sum(state.status.value == "live" for state in states),
+        cached_count=sum(state.status.value == "cached" for state in states),
+        stale_count=sum(state.status.value == "stale" for state in states),
+        retained_count=sum(state.retain for state in states),
+        topics=tuple(
+            WildcardFilterTopicSummary(
+                topic=state.topic,
+                received_at=state.received_at.isoformat(timespec="seconds"),
+            )
+            for state in states
+        ),
     )
 
 
