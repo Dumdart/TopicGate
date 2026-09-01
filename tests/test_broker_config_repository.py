@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.subscription import Subscription
 from topicgate.app.services.broker_profile_service import BrokerProfileService
 
 def test_broker_repository_returns_initial_settings(credential_store) -> None:
@@ -65,6 +66,37 @@ def test_broker_repository_links_workspace_to_active_profile(
     workspace = repository.get_observer_workspace()
     assert workspace.profile_id == profile.id
     assert profile.workspace_id == workspace.id
+
+
+def test_broker_profile_service_adds_and_removes_profile_subscription(
+    credential_store,
+) -> None:
+    repository = BrokerProfileService(credential_store=credential_store)
+    profile = repository.create_profile(
+        "Subscribed",
+        MqttConfig("broker", 1883, "", ""),
+    )
+    subscription = Subscription(
+        "zigbee2mqtt/#",
+        qos=2,
+        retain_as_published=True,
+        retain_handling=1,
+    )
+
+    added = repository.add_subscription(profile.id, subscription)
+
+    assert added is subscription
+    assert repository.get_profile(profile.id).workspace.subscriptions == (
+        subscription,
+    )
+
+    removed = repository.remove_subscription(
+        profile.id,
+        subscription.topic_filter,
+    )
+
+    assert removed == subscription
+    assert repository.get_profile(profile.id).workspace.subscriptions == ()
 
 
 def test_broker_repository_provides_two_empty_independent_profiles(
@@ -132,6 +164,38 @@ def test_broker_profile_service_rejects_duplicate_names(
     else:
         raise AssertionError("Expected a duplicate profile name to be rejected")
 
+
+def test_creating_passwordless_profile_does_not_mutate_credentials(
+    credential_store,
+) -> None:
+    credentials = MagicMock(wraps=credential_store)
+    repository = BrokerProfileService(credential_store=credentials)
+    credentials.reset_mock()
+
+    repository.create_profile(
+        "Passwordless",
+        MqttConfig("broker", 1883, "", ""),
+    )
+
+    credentials.set_password.assert_not_called()
+    credentials.delete_password.assert_not_called()
+
+
+def test_clearing_existing_profile_password_deletes_credential(
+    credential_store,
+) -> None:
+    credentials = MagicMock(wraps=credential_store)
+    repository = BrokerProfileService(credential_store=credentials)
+    profile = repository.create_profile(
+        "Authenticated",
+        MqttConfig("broker", 1883, "observer", "secret"),
+    )
+    credentials.reset_mock()
+
+    profile.config = MqttConfig("broker", 1883, "", "")
+    repository.update_profile(profile)
+
+    credentials.delete_password.assert_called_once_with(profile.id)
 
 
 def test_broker_repository_allows_plaintext_credential_mutations(

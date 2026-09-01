@@ -7,6 +7,7 @@ from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.observer_workspace import ObserverWorkspace
+from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
 from topicgate.infrastructure.repository.broker_config_repository import (
@@ -98,7 +99,11 @@ class BrokerProfileService:
             identity = self.brokers.create_profile(
                 name, config_id, session=session
             )
-        self._store_password(identity.id, config.password)
+        self._store_password(
+            identity.id,
+            config.password,
+            delete_when_empty=False,
+        )
         self._runtime_state.set_config_id(identity.id, config.id)
         profile = self.get_profile(identity.id)
         self._runtime_state.set_profile_handle(profile)
@@ -150,6 +155,20 @@ class BrokerProfileService:
             self._runtime_state.set_config_id(profile_id, config.id)
         self.select_active_profile(profile_id)
 
+    def add_subscription(self, profile_id: UUID, subscription: Subscription) -> Subscription:
+        profile = self.get_profile(profile_id)
+        return self.subscriptions.add(
+            profile.workspace_id,
+            subscription,
+        )
+
+    def remove_subscription(self, profile_id: UUID, topic_filter: str) -> Subscription:
+        profile = self.get_profile(profile_id)
+        return self.subscriptions.remove(
+            profile.workspace_id,
+            topic_filter,
+        )
+
     def replace_subscriptions(self, workspace_id: UUID, subscriptions) -> None:
         self.subscriptions.replace_all(workspace_id, tuple(subscriptions))
 
@@ -191,13 +210,23 @@ class BrokerProfileService:
             identity = self.brokers.create_profile(
                 name, config_id, is_active=is_active, session=session
             )
-        self._store_password(identity.id, config.password)
+        self._store_password(
+            identity.id,
+            config.password,
+            delete_when_empty=False,
+        )
         self._runtime_state.set_config_id(identity.id, config.id)
 
-    def _store_password(self, profile_id: UUID, password: str) -> None:
+    def _store_password(
+        self,
+        profile_id: UUID,
+        password: str,
+        *,
+        delete_when_empty: bool = True,
+    ) -> None:
         if password:
             self._credentials.set_password(profile_id, password)
-        else:
+        elif delete_when_empty:
             self._delete_password(profile_id)
 
     def _delete_password(self, profile_id: UUID) -> None:

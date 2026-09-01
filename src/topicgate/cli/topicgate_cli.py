@@ -6,13 +6,14 @@ import sys
 
 from topicgate.app.app_dependencies import AppDependencies
 from topicgate.core.config.mqtt_config import MqttConfig
+from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure import mqtt
 
 def add_profile(args: argparse.Namespace) -> int:
     dependencies = AppDependencies()
 
     # Securely prompt for password
-    password = getpass("MQTT password: ")
+    password = "" if args.no_password else getpass("MQTT password: ")
 
     config = MqttConfig(
         username=args.username,
@@ -32,6 +33,40 @@ def add_profile(args: argparse.Namespace) -> int:
 
     return 0
 
+def add_subscription(args: argparse.Namespace) -> int:
+    dependencies = AppDependencies()
+
+    profile = dependencies.broker_profiles.get_profile(args.name)
+    if not profile:
+        print(f"Error: profile '{args.name}' not found")
+        return 1
+
+    subscription = dependencies.broker_profiles.add_subscription(
+        profile.id,
+        Subscription(topic_filter=args.topic, qos=args.qos, retain_as_published=args.retain_as_published, retain_handling=args.retain_handling),
+    )
+
+    print(f"Subscription added: {subscription}")
+
+    return 0
+
+def remove_subscription(args: argparse.Namespace) -> int:
+    dependencies = AppDependencies()
+
+    profile = dependencies.broker_profiles.get_profile(args.name)
+    if not profile:
+        print(f"Error: profile '{args.name}' not found")
+        return 1
+
+    subscription = dependencies.broker_profiles.add_subscription(
+        profile.id,
+        Subscription(topic_filter=args.topic, qos=args.qos, retain_as_published=args.retain_as_published, retain_handling=args.retain_handling),
+    )
+
+    print(f"Subscription added: {subscription}")
+
+    return 0
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="topicgate-cli")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -40,12 +75,31 @@ def build_parser() -> argparse.ArgumentParser:
     profile_commands = profile_parser.add_subparsers(dest="profile_command", required=True)
 
     add_profile_parser = profile_commands.add_parser("add", help="Add a new profile")
-    add_profile_parser.add_argument("--name", help="Profile name", required=True)
+    add_profile_parser.add_argument("--name", help='Profile name (e.g. "MyBroker123")', required=True)
     add_profile_parser.add_argument("--host", default="localhost", help="MQTT broker host")
     add_profile_parser.add_argument("--port", default=1883, help="MQTT broker port")
     add_profile_parser.add_argument("--username", default="", help="MQTT username")
-    add_profile_parser.add_argument("--use-tls", default=False, help="Use TLS")
+    add_profile_parser.add_argument("--use-tls", action="store_true", help="Use TLS")
+    add_profile_parser.add_argument("--no-password", action="store_true", help="MQTT password")
     add_profile_parser.set_defaults(handler=add_profile)
+
+    subscription_parser = commands.add_parser("sub", help="Manage subscriptions")
+    subscription_commands = subscription_parser.add_subparsers(dest="subscription_command", required=True)
+
+    add_sub_parser = subscription_commands.add_parser("add", help="Add a subscription")
+    add_sub_parser.add_argument("--name", help="Profile name", required=True)
+    add_sub_parser.add_argument("--topic", help="Topic to subscribe to", required=True)
+    add_sub_parser.add_argument("--qos", default=1, help="QoS level")
+    add_sub_parser.add_argument("--retain-as-published", default=0, help="Retain as published")
+    add_sub_parser.add_argument("--retain-handling", default=0, help="Retain handling")
+    add_sub_parser.set_defaults(handler=add_subscription)
+
+    add_sub_parser = subscription_commands.add_parser("remove", help="Remove a subscription")
+    add_sub_parser.add_argument("--name", help="Profile name", required=True)
+    add_sub_parser.add_argument("--topic", help="Topic to subscribe to", required=True)
+    add_sub_parser.set_defaults(handler=remove_subscription)
+
+
 
     return parser
 
