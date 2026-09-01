@@ -67,6 +67,9 @@ asyncio_mode = "auto"
 [project.scripts]
 topicgate = "topicgate.mcp.server:run"
 topicgate-gui = "topicgate.gui.app:run"
+topicgate-cli = "topicgate.cli.topicgate_cli:main"
+
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
