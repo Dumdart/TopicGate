@@ -92,6 +92,22 @@ class BrokerProfileService:
     def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
         return tuple(self.get_profile(item.id) for item in self.brokers.list_profiles())
 
+    def get_profile_by_name(self, name: str) -> BrokerProfile:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("A broker profile name is required.")
+        identity = next(
+            (
+                item
+                for item in self.brokers.list_profiles()
+                if item.name.casefold() == normalized_name.casefold()
+            ),
+            None,
+        )
+        if identity is None:
+            raise KeyError(f"Unknown broker profile: {normalized_name}")
+        return self.get_profile(identity.id)
+
     def create_profile(self, name: str, config: MqttConfig) -> BrokerProfile:
         name = self.brokers.validate_profile_name(name)
         with self._db.transaction() as session:

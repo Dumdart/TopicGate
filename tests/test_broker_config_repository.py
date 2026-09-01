@@ -76,6 +76,7 @@ def test_broker_profile_service_adds_and_removes_profile_subscription(
         "Subscribed",
         MqttConfig("broker", 1883, "", ""),
     )
+    assert repository.get_profile_by_name(" subscribed ").id == profile.id
     subscription = Subscription(
         "zigbee2mqtt/#",
         qos=2,
@@ -97,6 +98,19 @@ def test_broker_profile_service_adds_and_removes_profile_subscription(
 
     assert removed == subscription
     assert repository.get_profile(profile.id).workspace.subscriptions == ()
+
+
+def test_broker_profile_service_rejects_unknown_profile_name(
+    credential_store,
+) -> None:
+    repository = BrokerProfileService(credential_store=credential_store)
+
+    try:
+        repository.get_profile_by_name("Missing")
+    except KeyError as error:
+        assert error.args[0] == "Unknown broker profile: Missing"
+    else:
+        raise AssertionError("Expected an unknown profile name to be rejected")
 
 
 def test_broker_repository_provides_two_empty_independent_profiles(
