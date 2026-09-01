@@ -1,4 +1,7 @@
+import asyncio
+from collections.abc import Callable
 from dataclasses import replace
+from typing import Protocol
 from uuid import UUID
 
 from topicgate.app.broker_runtime_state import BrokerRuntimeState
@@ -6,9 +9,12 @@ from topicgate.core.config.app_config import AppConfig
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.broker_profile import BrokerProfile
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
+from topicgate.core.models.broker_profile_summary import BrokerProfileSummary
 from topicgate.core.models.observer_workspace import ObserverWorkspace
+from topicgate.core.models.subscription import Subscription
 from topicgate.infrastructure.credentials.credential_store import CredentialStore
 from topicgate.infrastructure.database.database_context import DatabaseContext
+from topicgate.infrastructure.mqtt.mqtt_client import MqttClient
 from topicgate.infrastructure.repository.broker_config_repository import (
     BrokerConfigRepository,
 )
@@ -16,6 +22,12 @@ from topicgate.infrastructure.repository.broker_repository import BrokerReposito
 from topicgate.infrastructure.repository.subscription_repository import (
     SubscriptionRepository,
 )
+
+
+class MqttConnection(Protocol):
+    async def connect(self, timeout: float = 10.0) -> bool: ...
+
+    async def disconnect(self) -> bool: ...
 
 
 class BrokerProfileService:
@@ -29,6 +41,7 @@ class BrokerProfileService:
         credential_store: CredentialStore,
         runtime_state: BrokerRuntimeState | None = None,
         topic_messages: TopicMessageRecorder | None = None,
+        mqtt_client_factory: Callable[[MqttConfig], MqttConnection] = MqttClient,
     ) -> None:
         if isinstance(settings, DatabaseContext):
             self._db = settings
@@ -44,6 +57,7 @@ class BrokerProfileService:
         self.configs = BrokerConfigRepository(self._db)
         self.subscriptions = SubscriptionRepository(self._db)
         self._topic_message_recorder = topic_messages
+        self._mqtt_client_factory = mqtt_client_factory
         self._settings_id = supplied_settings.id if supplied_settings else None
 
         identities = self.brokers.list_profiles()
@@ -91,6 +105,59 @@ class BrokerProfileService:
     def get_all_profiles(self) -> tuple[BrokerProfile, ...]:
         return tuple(self.get_profile(item.id) for item in self.brokers.list_profiles())
 
+    def get_profile_by_name(self, name: str) -> BrokerProfile:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("A broker profile name is required.")
+        identity = next(
+            (
+                item
+                for item in self.brokers.list_profiles()
+                if item.name.casefold() == normalized_name.casefold()
+            ),
+            None,
+        )
+        if identity is None:
+            raise KeyError(f"Unknown broker profile: {normalized_name}")
+        return self.get_profile(identity.id)
+
+    def list_profile_summaries(self) -> tuple[BrokerProfileSummary, ...]:  # noqa: F821
+        return tuple(
+            BrokerProfileSummary(
+                profile.id,
+                profile.name,
+                profile.config.host,
+                profile.config.port,
+                profile.config.username,
+                profile.config.use_tls,
+            )
+            for profile in self.get_all_profiles()
+        )
+
+
+    def test_profile(
+        self,
+        profile_id: UUID,
+        *,
+        timeout: float = 10.0,
+    ) -> bool:
+        return asyncio.run(self._test_profile(profile_id, timeout=timeout))
+
+    async def _test_profile(
+        self,
+        profile_id: UUID,
+        *,
+        timeout: float,
+    ) -> bool:
+        profile = self.get_profile(profile_id)
+        client = self._mqtt_client_factory(profile.config)
+        try:
+            if not await client.connect(timeout=timeout):
+                raise ConnectionError("MQTT broker connection test failed.")
+            return True
+        finally:
+            await client.disconnect()
+
     def create_profile(self, name: str, config: MqttConfig) -> BrokerProfile:
         name = self.brokers.validate_profile_name(name)
         with self._db.transaction() as session:
@@ -98,7 +165,11 @@ class BrokerProfileService:
             identity = self.brokers.create_profile(
                 name, config_id, session=session
             )
-        self._store_password(identity.id, config.password)
+        self._store_password(
+            identity.id,
+            config.password,
+            delete_when_empty=False,
+        )
         self._runtime_state.set_config_id(identity.id, config.id)
         profile = self.get_profile(identity.id)
         self._runtime_state.set_profile_handle(profile)
@@ -126,9 +197,20 @@ class BrokerProfileService:
         self.save()
 
     def delete_profile(self, profile_id: UUID) -> BrokerProfile:
-        profile = self._runtime_state.get_profile_handle(profile_id) or self.get_profile(
-            profile_id
+        identities = self.brokers.list_profiles()
+        identity = next((item for item in identities if item.id == profile_id), None)
+        if identity is None:
+            raise KeyError(f"Unknown broker profile: {profile_id}")
+        if len(identities) == 1:
+            raise ValueError("The final broker profile cannot be removed.")
+
+        profile = (
+            self._runtime_state.get_profile_handle(profile_id)
+            or self.get_profile(profile_id)
         )
+        if identity.is_active:
+            replacement = next(item for item in identities if item.id != profile_id)
+            self.select_active_profile(replacement.id)
         self.brokers.delete_profile(profile_id)
         if self._topic_message_recorder is not None:
             self._topic_message_recorder.remove_current_broker(profile_id)
@@ -149,6 +231,22 @@ class BrokerProfileService:
             self._store_password(profile_id, config.password)
             self._runtime_state.set_config_id(profile_id, config.id)
         self.select_active_profile(profile_id)
+
+    def add_subscription(
+        self, profile_id: UUID, subscription: Subscription
+    ) -> Subscription:
+        profile = self.get_profile(profile_id)
+        return self.subscriptions.add(
+            profile.workspace_id,
+            subscription,
+        )
+
+    def remove_subscription(self, profile_id: UUID, topic_filter: str) -> Subscription:
+        profile = self.get_profile(profile_id)
+        return self.subscriptions.remove(
+            profile.workspace_id,
+            topic_filter,
+        )
 
     def replace_subscriptions(self, workspace_id: UUID, subscriptions) -> None:
         self.subscriptions.replace_all(workspace_id, tuple(subscriptions))
@@ -191,13 +289,23 @@ class BrokerProfileService:
             identity = self.brokers.create_profile(
                 name, config_id, is_active=is_active, session=session
             )
-        self._store_password(identity.id, config.password)
+        self._store_password(
+            identity.id,
+            config.password,
+            delete_when_empty=False,
+        )
         self._runtime_state.set_config_id(identity.id, config.id)
 
-    def _store_password(self, profile_id: UUID, password: str) -> None:
+    def _store_password(
+        self,
+        profile_id: UUID,
+        password: str,
+        *,
+        delete_when_empty: bool = True,
+    ) -> None:
         if password:
             self._credentials.set_password(profile_id, password)
-        else:
+        elif delete_when_empty:
             self._delete_password(profile_id)
 
     def _delete_password(self, profile_id: UUID) -> None:

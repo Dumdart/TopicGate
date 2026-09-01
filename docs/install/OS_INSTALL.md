@@ -53,9 +53,35 @@ topicgate-gui
 
 Do not run the desktop with `sudo` or through SSH. PySide6 and the Secret Service credential store require the logged-in desktop session. After configuring a password-protected broker, verify reconnection after a complete logout and login.
 
+## Headless broker configuration
+
+The `topicgate-cli` command configures broker profiles and subscriptions without starting the desktop. Add a profile with an MQTT password prompt:
+
+```console
+topicgate-cli profile add --name "Home" --host mqtt.example.com --port 1883 --username topicgate
+```
+
+Use `--use-tls` to enable TLS or `--no-password` to skip the password prompt for a passwordless broker. Existing profile names are left unchanged, so the command can be safely repeated. List profiles or test every configured profile with:
+
+```console
+topicgate-cli profile list
+topicgate-cli profile test
+```
+
+Add and remove subscriptions by profile name:
+
+```console
+topicgate-cli sub add --name "Home" --topic "home/+/temperature" --qos 1
+topicgate-cli sub remove --name "Home" --topic "home/+/temperature"
+```
+
+Subscription QoS can be `0`, `1`, or `2`. The optional `--retain-as-published` flag preserves the broker's retain flag, and `--retain-handling` accepts `0`, `1`, or `2`.
+
+> Profiles created by the headless command become available to newly started TopicGate processes immediately. Restart an already-running desktop or MCP process to reload externally created profiles.
+
 ## Ubuntu Server
 
-The CLI, migrations, disconnected read-only startup, and clean shutdown have been manually verified without PySide6. There is no supported headless broker-configuration flow.
+The CLI, migrations, disconnected read-only startup, and clean shutdown have been manually verified without PySide6. Use `topicgate-cli` for passwordless headless broker configuration.
 
 Authenticated unattended operation is unsupported because Secret Service may be locked or unavailable after SSH login. Do not use plaintext keyrings, `keyrings.alt`, or database edits as production workarounds. A null keyring is suitable only for passwordless testing.
 
