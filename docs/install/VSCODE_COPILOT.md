@@ -1,39 +1,29 @@
-# Install TopicGate for VS Code and GitHub Copilot
+# Connect TopicGate to VS Code or GitHub Copilot CLI
 
-TopicGate is packaged as an Agent Plugins 1.0 plugin for GitHub Copilot in VS Code and GitHub Copilot CLI.
+First [install TopicGate](OS_INSTALL.md), run `topicgate-gui`, and configure a broker.
 
-Before configuring VS Code or GitHub Copilot, follow the [main TopicGate setup guide](../../README.md#get-started) to install TopicGate, launch Desktop, and configure a broker. Then return here for host-specific setup.
+## VS Code
 
-## Install in VS Code
-
-Agent plugins require a current VS Code release with GitHub Copilot and the `chat.plugins.enabled` setting enabled.
-
-Add the TopicGate marketplace to your VS Code `settings.json`:
+Enable `chat.plugins.enabled`, then add the marketplace to `settings.json`:
 
 ```json
-"chat.plugins.marketplaces": [
-  "Dumdart/TopicGate"
-]
+"chat.plugins.marketplaces": ["Dumdart/TopicGate"]
 ```
 
-Open the Extensions view, search for `@agentPlugins`, select TopicGate, and choose **Install**. You can also run **Chat: Open Customizations**, open the **Plugins** tab, and install TopicGate from the marketplace there.
+In Extensions, search for `@agentPlugins` and install TopicGate. Start a new chat.
 
-After installation, start a new chat. The skills appear in **Chat: Configure Skills**, and the `topicgate` server appears under **MCP: List Servers**.
+## GitHub Copilot CLI
 
-## Install with GitHub Copilot CLI
-
-Add the TopicGate GitHub repository as a marketplace and install the plugin:
-
-```powershell
+```console
 copilot plugin marketplace add Dumdart/TopicGate
 copilot plugin install topicgate@topicgate
 ```
 
-VS Code automatically discovers plugins installed by GitHub Copilot CLI. Start a new Copilot session and use `/skills list` to confirm that the TopicGate skills loaded.
+Start a new session and run `/skills list`.
 
-## MCP server only
+## MCP only
 
-Use this workspace configuration when you want the MCP tools without the plugin skills. Create `.vscode/mcp.json` in the workspace:
+Create `.vscode/mcp.json`:
 
 ```json
 {
@@ -47,22 +37,4 @@ Use this workspace configuration when you want the MCP tools without the plugin 
 }
 ```
 
-If `topicgate` is not on `PATH`, replace it with its absolute path. TopicGate Desktop's MCP setup page can copy a configuration with the resolved executable path.
-
-## Control mode
-
-The installed plugin intentionally uses read-only mode. To expose operations that connect or disconnect brokers, change subscriptions, refresh observations, or publish MQTT messages, configure a separate workspace MCP server:
-
-```json
-{
-  "servers": {
-    "topicgate-control": {
-      "type": "stdio",
-      "command": "topicgate",
-      "args": ["--mode", "control"]
-    }
-  }
-}
-```
-
-Use control mode only in a trusted workspace. Confirm the broker, topic, payload, and encoding before allowing a publish operation.
+Use `--mode control` only in a trusted workspace. Control mode can change connections, subscriptions, observations, and device state.
