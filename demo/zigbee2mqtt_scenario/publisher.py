@@ -23,12 +23,36 @@ class DemoCase:
 
 
 DEMO_CASES = (
-    DemoCase("kitchen_sensor", "healthy", "zigbee2mqtt/kitchen_sensor", "Online availability and state refreshed every five seconds."),
-    DemoCase("hallway_light", "online", "zigbee2mqtt/hallway_light/availability", "Availability is explicitly online."),
-    DemoCase("garage_sensor", "offline", "zigbee2mqtt/garage_sensor/availability", "Availability is explicitly offline."),
-    DemoCase("attic_sensor", "stale", "zigbee2mqtt/attic_sensor", "State is published once with last_seen 24 hours in the past."),
-    DemoCase("basement_freezer", "retained/disconnected", "zigbee2mqtt/basement_freezer", "A short-lived client publishes retained state, then disconnects."),
-    DemoCase("nursery_sensor", "missing expected topic", "zigbee2mqtt/nursery_sensor", "Listed in bridge/devices but intentionally never published."),
+    DemoCase(
+        "kitchen_sensor",
+        "healthy",
+        "zigbee2mqtt/kitchen_sensor",
+        "Online availability and state refreshed every five seconds.",
+    ),
+    DemoCase(
+        "garage_sensor",
+        "offline",
+        "zigbee2mqtt/garage_sensor/availability",
+        "Availability is explicitly offline.",
+    ),
+    DemoCase(
+        "attic_sensor",
+        "stale",
+        "zigbee2mqtt/attic_sensor",
+        "State is published once with last_seen 24 hours in the past.",
+    ),
+    DemoCase(
+        "basement_freezer",
+        "retained/disconnected",
+        "zigbee2mqtt/basement_freezer",
+        "A short-lived client publishes retained state, then disconnects.",
+    ),
+    DemoCase(
+        "nursery_sensor",
+        "missing expected topic",
+        "zigbee2mqtt/nursery_sensor",
+        "Listed in bridge/devices but intentionally never published.",
+    ),
 )
 
 EXPECTED_DEVICES = tuple(case.device for case in DEMO_CASES)
@@ -73,9 +97,18 @@ def publish_initial_state(client: Publisher, now: datetime) -> None:
     client.publish(
         "zigbee2mqtt/bridge/devices", bridge_devices_payload(), qos=1, retain=True
     ).wait_for_publish(timeout=5)
-    publish_message(client, "zigbee2mqtt/hallway_light/availability", {"state": "online"}, retain=True)
-    publish_message(client, "zigbee2mqtt/garage_sensor/availability", {"state": "offline"}, retain=True)
-    publish_message(client, "zigbee2mqtt/attic_sensor/availability", {"state": "online"}, retain=True)
+    publish_message(
+        client,
+        "zigbee2mqtt/garage_sensor/availability",
+        {"state": "offline"},
+        retain=True,
+    )
+    publish_message(
+        client,
+        "zigbee2mqtt/attic_sensor/availability",
+        {"state": "online"},
+        retain=True,
+    )
     publish_message(
         client,
         "zigbee2mqtt/attic_sensor",
@@ -89,7 +122,12 @@ def publish_initial_state(client: Publisher, now: datetime) -> None:
 
 
 def publish_healthy_state(client: Publisher, sequence: int, now: datetime) -> None:
-    publish_message(client, "zigbee2mqtt/kitchen_sensor/availability", {"state": "online"}, retain=True)
+    publish_message(
+        client,
+        "zigbee2mqtt/kitchen_sensor/availability",
+        {"state": "online"},
+        retain=True,
+    )
     publish_message(
         client,
         "zigbee2mqtt/kitchen_sensor",
@@ -144,14 +182,18 @@ def connect(client: mqtt.Client, host: str, port: int) -> None:
         raise TimeoutError(f"Timed out connecting to MQTT broker at {host}:{port}")
 
 
-def publish_disconnected_retained_value(host: str, port: int) -> None:
+def publish_disconnected_retained_value(
+    host: str,
+    port: int,
+    now: datetime,
+) -> None:
     ghost = new_client("topicgate-demo-disconnected-publisher")
     connect(ghost, host, port)
     try:
         publish_message(
             ghost,
             "zigbee2mqtt/basement_freezer",
-            {"last_seen": datetime.now(UTC).isoformat(), "temperature": -18.7},
+            {"last_seen": now.isoformat(), "temperature": -18.7},
             retain=True,
         )
     finally:
@@ -172,7 +214,7 @@ def run(host: str, port: int, *, once: bool = False) -> None:
     try:
         now = datetime.now(UTC)
         publish_initial_state(client, now)
-        publish_disconnected_retained_value(host, port)
+        publish_disconnected_retained_value(host, port, now)
         publish_healthy_state(client, 0, now)
         print(f"Scenario ready on mqtt://{host}:{port}; Ctrl+C to stop.", flush=True)
 
@@ -189,8 +231,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=os.getenv("MQTT_HOST", "localhost"))
     parser.add_argument("--port", type=int, default=int(os.getenv("MQTT_PORT", "1883")))
-    parser.add_argument("--once", action="store_true", help="Publish one deterministic cycle and exit.")
-    parser.add_argument("--describe", action="store_true", help="Print the canonical scenario table.")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Publish one deterministic cycle and exit.",
+    )
+    parser.add_argument(
+        "--describe",
+        action="store_true",
+        help="Print the canonical scenario table.",
+    )
     return parser.parse_args()
 
 

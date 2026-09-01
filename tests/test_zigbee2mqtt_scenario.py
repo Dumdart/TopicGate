@@ -33,14 +33,21 @@ def test_initial_scenario_has_expected_anomalies_and_omits_missing_topic():
     publisher.publish_initial_state(client, now)
 
     messages = {topic: (payload, retain) for topic, payload, _, retain in client.messages}
+    assert set(messages) == {
+        "zigbee2mqtt/attic_sensor",
+        "zigbee2mqtt/attic_sensor/availability",
+        "zigbee2mqtt/bridge/devices",
+        "zigbee2mqtt/bridge/state",
+        "zigbee2mqtt/garage_sensor/availability",
+    }
     inventory = {
         device["friendly_name"]
         for device in messages["zigbee2mqtt/bridge/devices"][0]
     }
     assert inventory == set(publisher.EXPECTED_DEVICES)
+    assert len(inventory) == 5
     assert publisher.MISSING_TOPIC not in messages
     assert messages["zigbee2mqtt/garage_sensor/availability"][0] == {"state": "offline"}
-    assert messages["zigbee2mqtt/hallway_light/availability"][0] == {"state": "online"}
     assert messages["zigbee2mqtt/attic_sensor"][0]["last_seen"] == "2026-08-28T10:00:00+00:00"
 
 
@@ -58,17 +65,21 @@ def test_healthy_device_refreshes_with_non_retained_state():
 
 def test_retained_value_is_published_by_a_client_that_then_disconnects():
     client = RecordingClient()
+    now = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 
     with (
         patch.object(publisher, "new_client", return_value=client),
         patch.object(publisher, "connect") as connect,
     ):
-        publisher.publish_disconnected_retained_value("broker", 1883)
+        publisher.publish_disconnected_retained_value("broker", 1883, now)
 
     connect.assert_called_once_with(client, "broker", 1883)
     topic, payload, qos, retain = client.messages[0]
     assert topic == "zigbee2mqtt/basement_freezer"
-    assert payload["temperature"] == -18.7
+    assert payload == {
+        "last_seen": "2026-08-29T10:00:00+00:00",
+        "temperature": -18.7,
+    }
     assert qos == 1
     assert retain is True
     assert [message[0] for message in client.messages[-2:]] == [
