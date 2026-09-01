@@ -15,8 +15,6 @@ class TopicMetadataPane(QWidget):
         self._form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
-        self.topic = self._label("topicPathLabel", "No topic selected")
-        self.topic.setWordWrap(True)
         self.received = self._label("receivedAtLabel")
         self.age = self._label("topicAgeLabel")
         self.source = self._label("observationSourceLabel")
@@ -33,7 +31,6 @@ class TopicMetadataPane(QWidget):
         self.messages = self._label("messageCountLabel", "0")
         self.dropped = self._label("droppedMessageCountLabel", "0")
         rows = (
-            ("Topic path", self.topic),
             ("Last received", self.received),
             ("Age", self.age),
             ("Observation source", self.source),
@@ -75,7 +72,6 @@ class TopicMetadataPane(QWidget):
         self._set_advanced_visible(False)
 
     def render(self, detail: TopicDetail) -> None:
-        self.topic.setText(detail.topic or "No topic selected")
         self.received.setText(detail.received_at)
         self.age.setText(detail.age_label)
         self.source.setText(detail.source_label)

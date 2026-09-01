@@ -22,6 +22,7 @@ from topicgate.gui.components.add_subscription_dialog import AddSubscriptionDial
 from topicgate.gui.components.broker_settings_dialog import (
     BrokerSettingsDialog,
 )
+from topicgate.gui.components.broker_connection import BrokerConnectionPane
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.log_console import LogConsoleDock
 from topicgate.gui.components.mcp_setup_dialog import McpSetupDialog
@@ -42,7 +43,7 @@ from topicgate.paths import asset_path
 
 
 class MainWindow(QMainWindow):
-    """Compose and coordinate the observer's three-pane workspace."""
+    """Compose and coordinate the observer workspace."""
 
     def __init__(
         self,
@@ -76,6 +77,7 @@ class MainWindow(QMainWindow):
     def _create_workspace(self) -> None:
         self._observer_tree = ObserverTreePane()
         self._topic_details = TopicDetailsPane()
+        self._broker_connection = BrokerConnectionPane()
         self._subscription_settings = SubscriptionSettingsPane()
         self._onboarding = OnboardingPanel()
         self._observer_tree.topic_selected.connect(self._view_model.select_topic)
@@ -138,11 +140,19 @@ class MainWindow(QMainWindow):
         context_layout.setSpacing(8)
         context_layout.addWidget(self._subscription_settings)
 
+        self._topic_inspector = QWidget()
+        self._topic_inspector.setObjectName("topicInspector")
+        inspector_layout = QVBoxLayout(self._topic_inspector)
+        inspector_layout.setContentsMargins(0, 0, 0, 0)
+        inspector_layout.setSpacing(8)
+        inspector_layout.addWidget(self._broker_connection)
+        inspector_layout.addWidget(self._topic_details, 1)
+
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.setObjectName("workspaceSplitter")
         self._splitter.setChildrenCollapsible(False)
         self._splitter.addWidget(self._observer_tree)
-        self._splitter.addWidget(self._topic_details)
+        self._splitter.addWidget(self._topic_inspector)
         self._splitter.addWidget(self._context_panel)
         self._splitter.setStretchFactor(0, 4)
         self._splitter.setStretchFactor(1, 4)
@@ -206,6 +216,27 @@ class MainWindow(QMainWindow):
         self._connection_controls.disconnect_requested.connect(
             lambda: self._run_async(self._view_model.disconnect_from_broker())
         )
+        self._broker_connection.broker_selected.connect(
+            self._confirm_broker_profile_switch
+        )
+        self._broker_connection.edit_profile_requested.connect(
+            self._show_broker_settings_dialog
+        )
+        self._broker_connection.add_profile_requested.connect(
+            self._show_create_broker_profile_dialog
+        )
+        self._broker_connection.delete_profile_requested.connect(
+            self._confirm_delete_broker_profile
+        )
+        self._broker_connection.connect_requested.connect(
+            lambda: self._run_async(self._view_model.connect_to_broker())
+        )
+        self._broker_connection.reconnect_requested.connect(
+            self._confirm_reconnect_and_observe
+        )
+        self._broker_connection.disconnect_requested.connect(
+            lambda: self._run_async(self._view_model.disconnect_from_broker())
+        )
 
         self._add_filter_action = QAction("Add filter", self)
         self._add_filter_action.setShortcut("Ctrl+N")
@@ -259,13 +290,6 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._stored_observations_action)
         file_menu.addSeparator()
         file_menu.addAction(self._quit_action)
-
-        normal_menu_height = self.menuBar().sizeHint().height()
-        self._connection_controls.button.setMaximumHeight(normal_menu_height)
-        self.menuBar().setCornerWidget(
-            self._connection_controls.button,
-            Qt.Corner.TopRightCorner,
-        )
 
         self._view_menu: QMenu = self.menuBar().addMenu("&View")
         self._view_menu.addAction(self._expand_action)
@@ -364,6 +388,7 @@ class MainWindow(QMainWindow):
             self._view_model.is_busy("broker")
             or self._view_model.is_busy("connection")
         )
+        self._render_broker_connection()
 
     def _render_details(self) -> None:
         self._topic_details.render(self._view_model)
@@ -373,6 +398,7 @@ class MainWindow(QMainWindow):
             self._view_model.topic,
             self._view_model.selected_subscription,
         )
+        self._render_broker_connection()
 
     def _render_connection(self) -> None:
         if self._view_model.connection_status == "connected":
@@ -399,6 +425,14 @@ class MainWindow(QMainWindow):
             self._view_model.connection_status,
             busy,
         )
+        self._render_broker_connection(busy)
+
+    def _render_broker_connection(self, busy: bool | None = None) -> None:
+        if busy is None:
+            busy = self._view_model.is_busy("broker") or self._view_model.is_busy(
+                "connection"
+            )
+        self._broker_connection.render(self._view_model, busy)
 
     def _render_operation_state(self) -> None:
         self._topic_details.render(self._view_model)
@@ -761,6 +795,8 @@ class MainWindow(QMainWindow):
             self._run_async(
                 self._switch_broker_profile(profile_id, next_profile.config)
             )
+        else:
+            self._render_broker_connection()
 
     async def _switch_broker_profile(
         self,
@@ -773,15 +809,31 @@ class MainWindow(QMainWindow):
             self._render_connection_controls()
             self._observer_tree.set_connection_busy(False)
 
-    def _confirm_delete_broker_profile(self) -> None:
-        profile = self._view_model.active_broker_profile
-        if len(self._view_model.broker_profiles) == 1:
+    def _confirm_delete_broker_profile(
+        self,
+        profile_id: object = None,
+    ) -> None:
+        profiles = self._view_model.broker_profiles
+        selected_profile_id = (
+            profile_id
+            if isinstance(profile_id, UUID)
+            else self._view_model.active_broker_profile.id
+        )
+        profile = next(
+            item for item in profiles if item.id == selected_profile_id
+        )
+        if len(profiles) == 1:
             return
+        deleting_active = profile.id == self._view_model.active_broker_profile.id
+        consequence = (
+            "\n\nThe application will connect to another broker profile first."
+            if deleting_active
+            else ""
+        )
         result = QMessageBox.question(
             self,
             "Delete broker profile?",
-            f"Delete '{profile.name}' and its observer workspace?\n\n"
-            "The application will connect to another broker profile first.",
+            f"Delete '{profile.name}' and its observer workspace?{consequence}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

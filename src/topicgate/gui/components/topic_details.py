@@ -28,7 +28,13 @@ class TopicDetailsPane(WorkspacePane):
     subscription_editing_changed = Signal(bool)
 
     def __init__(self) -> None:
-        super().__init__("Details / Stats")
+        super().__init__("No topic selected")
+
+        self._context_kind = QLabel("FILTER")
+        self._context_kind.setObjectName("topicContextKind")
+        self._context_kind.setAccessibleName("Topic filter")
+        self._context_kind.setHidden(True)
+        self.header_layout.insertWidget(1, self._context_kind)
 
         self._edit_button = QToolButton()
         self._edit_button.setObjectName("topicEditButton")
@@ -37,10 +43,10 @@ class TopicDetailsPane(WorkspacePane):
         self._edit_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self._edit_button.setText("Edit subscription")
+        self._edit_button.setText("Edit filter")
         self._edit_button.setCheckable(True)
-        self._edit_button.setAccessibleName("Edit subscription")
-        self._edit_button.setToolTip("Show subscription settings")
+        self._edit_button.setAccessibleName("Edit filter")
+        self._edit_button.setToolTip("Show filter settings")
         self._edit_button.toggled.connect(self._toggle_subscription_editing)
         self.header_layout.addWidget(self._edit_button)
 
@@ -63,12 +69,6 @@ class TopicDetailsPane(WorkspacePane):
         self._filter_summary.setObjectName("subscriptionFilterSummary")
         filter_layout = QVBoxLayout(self._filter_summary)
         filter_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._filter_notice = QLabel()
-        self._filter_notice.setObjectName("subscriptionFilterNotice")
-        self._filter_notice.setTextFormat(Qt.TextFormat.PlainText)
-        self._filter_notice.setWordWrap(True)
-        filter_layout.addWidget(self._filter_notice)
 
         filter_form = QFormLayout()
         self._filter_labels = {
@@ -153,6 +153,20 @@ class TopicDetailsPane(WorkspacePane):
 
     def render(self, view_model: MainViewModel) -> None:
         subscription = view_model.selected_subscription
+        summary = view_model.selected_wildcard_filter_summary
+        showing_filter = summary is not None
+        selected_path = view_model.topic
+        heading = selected_path or "No topic selected"
+        if not selected_path:
+            accessible_name = "No topic selected"
+        else:
+            context_name = "topic filter" if showing_filter else "topic"
+            accessible_name = f"Selected {context_name}: {heading}"
+        self.set_heading(
+            heading,
+            accessible_name,
+        )
+        self._context_kind.setVisible(showing_filter)
         self._edit_button.setEnabled(subscription is not None)
         if subscription is None and self._edit_button.isChecked():
             self._edit_button.setChecked(False)
@@ -162,11 +176,8 @@ class TopicDetailsPane(WorkspacePane):
             view_model.connection_status == "connected",
             view_model.is_busy("publish"),
         )
-        summary = view_model.selected_wildcard_filter_summary
-        showing_filter = summary is not None
         self._showing_filter = showing_filter
         self._filter_summary.setVisible(showing_filter)
-        self._filter_notice.setVisible(showing_filter)
         for widget in (
             self._metadata,
             self._decoded_label,
@@ -175,9 +186,6 @@ class TopicDetailsPane(WorkspacePane):
             widget.setVisible(not showing_filter)
         self._update_raw_visibility()
         if summary is not None:
-            self._filter_notice.setText(
-                f"Filter: {summary.topic_filter}"
-            )
             self._filter_labels["topics"].setText(
                 str(summary.matching_topic_count)
             )
@@ -237,9 +245,9 @@ class TopicDetailsPane(WorkspacePane):
 
     def _toggle_subscription_editing(self, editing: bool) -> None:
         self._edit_button.setToolTip(
-            "Hide subscription settings"
+            "Hide filter settings"
             if editing
-            else "Show subscription settings"
+            else "Show filter settings"
         )
         self.subscription_editing_changed.emit(editing)
 

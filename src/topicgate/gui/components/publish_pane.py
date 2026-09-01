@@ -23,19 +23,16 @@ class PublishPane(QWidget):
         self._connected = False
         self._busy = False
         self._selected_topic = ""
+        self._topic_hint = QLabel()
+        self._topic_hint.setObjectName("publishTopicHint")
+        self._topic_hint.setTextFormat(Qt.TextFormat.PlainText)
+        self._topic_hint.setWordWrap(True)
+        layout.addWidget(self._topic_hint)
         form = QFormLayout()
-        self._topic_label = QLabel("No topic selected")
-        self._topic_label.setObjectName("publishTopic")
-        self._topic_label.setTextFormat(Qt.TextFormat.PlainText)
-        self._topic_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self._topic_label.setWordWrap(True)
         self._encoding = QComboBox()
         self._encoding.setObjectName("publishEncoding")
         self._encoding.addItem("UTF-8", "utf-8")
         self._encoding.addItem("Base64", "base64")
-        form.addRow("Topic", self._topic_label)
         form.addRow("Encoding", self._encoding)
         layout.addLayout(form)
         self._payload = QPlainTextEdit()
@@ -54,7 +51,14 @@ class PublishPane(QWidget):
         self._connected = connected
         self._busy = busy
         self._selected_topic = selected_topic
-        self._topic_label.setText(selected_topic or "No topic selected")
+        is_filter = "+" in selected_topic or "#" in selected_topic
+        if is_filter:
+            self._topic_hint.setText(
+                "Select a concrete topic from the Payload tab to publish."
+            )
+        elif not selected_topic:
+            self._topic_hint.setText("Select a topic to publish a message.")
+        self._topic_hint.setVisible(is_filter or not selected_topic)
         self._publish.setText("Publishing…" if busy else "Publish message")
         for widget in (self._payload, self._encoding):
             widget.setEnabled(not busy)

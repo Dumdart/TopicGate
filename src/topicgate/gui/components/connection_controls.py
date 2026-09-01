@@ -16,6 +16,7 @@ class ConnectionControls(QObject):
     connect_requested = Signal()
     reconnect_requested = Signal()
     disconnect_requested = Signal()
+    details_requested = Signal()
 
     _STATUS_LABELS = {
         "connected": "Connected",
@@ -65,7 +66,7 @@ class ConnectionControls(QObject):
         self.button.setObjectName("brokerConnectionButton")
         self.button.setAutoRaise(True)
         self.button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
@@ -80,6 +81,7 @@ class ConnectionControls(QObject):
         self.menu = QMenu(self.button)
         self.menu.setObjectName("brokerConnectionMenu")
         self.button.setMenu(self.menu)
+        self.button.clicked.connect(self.details_requested)
         self._populate_corner_menu()
 
     @property
@@ -244,8 +246,8 @@ class ConnectionControls(QObject):
                 "progress."
             )
         return (
-            f"Active endpoint {endpoint}. Open the menu to connect or manage "
-            "brokers."
+            f"Active endpoint {endpoint}. Open Connection for broker details, "
+            "or use the arrow menu for quick actions."
         )
 
     @staticmethod

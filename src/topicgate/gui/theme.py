@@ -19,6 +19,8 @@ QGroupBox#snapshotControls::title, QGroupBox#snapshotHealthPanel::title { subcon
 QLabel#sectionTitle, QLabel#workspaceHeading { color: #4b5563; font-weight: 650; }
 QLabel#sectionTitle { font-size: 11px; }
 QLabel#workspaceHeading { font-size: 15px; }
+QLabel#topicContextKind { color: #405d7a; background: #e7eff7; border: 1px solid #b8c9db; border-radius: 4px; padding: 2px 5px; font-size: 10px; font-weight: 650; }
+QLabel#publishTopicHint { color: #4b5563; background: #f3f5f7; border: 1px solid #c8ced6; border-radius: 5px; padding: 7px; }
 QLineEdit, QPlainTextEdit, QComboBox, QTreeView { background: #ffffff; border: 1px solid #b8c0ca; border-radius: 5px; padding: 5px; selection-background-color: #dce9f7; }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QTreeView:focus { border: 1px solid #4f6f91; }
 QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled { color: #737b85; background: #f1f3f5; border-color: #c8ced6; }
@@ -31,6 +33,16 @@ QTabBar#topicDetailsMode::tab:last { border-top-right-radius: 5px; border-bottom
 QTabBar#topicDetailsMode::tab:!first { border-left: 0; }
 QTabBar#topicDetailsMode::tab:hover:!selected { color: #202124; background: #eef2f6; }
 QTabBar#topicDetailsMode::tab:selected { color: #ffffff; background: #405d7a; border-color: #405d7a; font-weight: 650; }
+QLabel#brokerConnectionStatus { border-radius: 9px; padding: 3px 9px; font-weight: 650; }
+QLabel#brokerConnectionStatus[connectionState="connected"] { color: #11653f; background: #dcf7e9; }
+QLabel#brokerConnectionStatus[connectionState="connecting"], QLabel#brokerConnectionStatus[connectionState="reconnecting"] { color: #8a4b00; background: #fff0d5; }
+QLabel#brokerConnectionStatus[connectionState="disconnected"] { color: #4b5563; background: #e9edf1; }
+QWidget#brokerProfilePopupRow { background: #ffffff; }
+QToolButton#selectBrokerProfileButton { border: 0; text-align: left; padding: 6px 8px; }
+QToolButton#selectBrokerProfileButton:hover { background: #eef2f6; }
+QToolButton#editBrokerProfileButton, QToolButton#deleteBrokerProfileButton { padding: 5px 8px; }
+QToolButton#deleteBrokerProfileButton { color: #a53030; border-color: #d7a4a4; }
+QToolButton#deleteBrokerProfileButton:hover { color: #8f2525; background: #fff5f5; border-color: #c77d7d; }
 QPushButton, QToolButton { background: #ffffff; border: 1px solid #b8c0ca; border-radius: 5px; padding: 6px 11px; }
 QPushButton:hover, QToolButton:hover { background: #f7f8fa; border-color: #89939f; }
 QPushButton:pressed, QToolButton:pressed { background: #eceff3; }

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QTreeView,
     QWidget,
+    QWidgetAction,
 )
 
 from topicgate.core.config.mqtt_config import MqttConfig
@@ -300,7 +301,7 @@ async def test_cache_deletion_confirmation_reports_partial_inactive_result() -> 
     application.processEvents()
 
 
-def test_redesigned_window_exposes_global_connection_control_and_workspace() -> None:
+def test_window_keeps_broker_switching_above_topic_details() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(runtime_for(repository), repository.state.topic)
@@ -313,25 +314,30 @@ def test_redesigned_window_exposes_global_connection_control_and_workspace() -> 
 
     assert window.minimumWidth() == 1024
     assert window.minimumHeight() == 640
-    connection_button = window.menuBar().cornerWidget(
-        Qt.Corner.TopRightCorner
-    )
-    assert connection_button is window.findChild(
-        QToolButton, "brokerConnectionButton"
-    )
-    assert connection_button.text() == "Default · Connected"
+    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is None
+    assert window.findChild(QTabBar, "workspaceNavigation") is None
+    assert window.findChild(QWidget, "workspaceStack") is None
+    inspector = window.findChild(QWidget, "topicInspector")
+    broker = window.findChild(QWidget, "brokerConnectionPane")
+    selector = window.findChild(QComboBox, "connectionBrokerSelector")
+    assert inspector is not None
+    assert broker is not None
+    assert selector is not None
+    assert inspector.layout().indexOf(broker) == 0
+    assert inspector.layout().indexOf(window._topic_details) == 1
+    assert selector.currentText() == "Default"
+    assert [selector.itemText(index) for index in range(selector.count())] == [
+        "Default",
+        "Local MQTT",
+    ]
+    assert window.findChild(QLabel, "activeBrokerEndpoint") is None
+    assert window.findChild(QPushButton, "editBrokerProfileButton") is None
     assert window.findChild(QComboBox, "brokerSelector") is None
     assert window.findChild(QWidget, "applicationHeader") is None
     assert window.findChild(QToolButton, "brokerProfileButton") is None
-    assert window.findChild(QAction, "activeBrokerEndpointAction").text() == (
-        "Active endpoint: mqtt://broker:1883"
-    )
-    publish_topic = window.findChild(QLabel, "publishTopic")
-    assert publish_topic.text() == repository.state.topic
-    assert (
-        publish_topic.textInteractionFlags()
-        == Qt.TextInteractionFlag.TextSelectableByMouse
-    )
+    topic_heading = window._topic_details.heading
+    assert topic_heading.text() == repository.state.topic
+    assert topic_heading.textFormat() == Qt.TextFormat.PlainText
     assert window.findChild(QPlainTextEdit, "publishPayload") is not None
     publish_payload = window.findChild(QPlainTextEdit, "publishPayload")
     assert not window.findChild(QPushButton, "publishButton").isEnabled()
@@ -364,7 +370,7 @@ def test_edit_subscription_button_reveals_only_subscription_settings() -> None:
     assert context is not None
     assert edit_button is not None
     assert context.isHidden()
-    assert edit_button.text() == "Edit subscription"
+    assert edit_button.text() == "Edit filter"
     assert not edit_button.icon().isNull()
     assert (
         edit_button.toolButtonStyle()
@@ -374,13 +380,13 @@ def test_edit_subscription_button_reveals_only_subscription_settings() -> None:
     edit_button.click()
 
     assert not context.isHidden()
-    assert edit_button.text() == "Edit subscription"
+    assert edit_button.text() == "Edit filter"
     assert context.findChild(QWidget, "topicPublishPane") is None
 
     edit_button.click()
 
     assert context.isHidden()
-    assert edit_button.text() == "Edit subscription"
+    assert edit_button.text() == "Edit filter"
     window.close()
     application.processEvents()
 
@@ -855,15 +861,19 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
         Qt.Corner.TopRightCorner
     )
     assert connection_controls is not None
-    assert connection_button is not None
-    assert connection_button.text() == "Default · Connected"
-    assert connection_button.accessibleName() == (
-        "Default, MQTT connection Connected"
-    )
-    assert connection_button.accessibleDescription() == (
-        "Active endpoint mqtt://broker:1883. Reconnect renews the connection "
-        "and refreshes observations."
-    )
+    assert connection_button is None
+    assert window.findChild(
+        QComboBox,
+        "connectionBrokerSelector",
+    ).currentText() == "Default"
+    status = window.findChild(QLabel, "brokerConnectionStatus")
+    assert status.text() == "Connected"
+    assert status.accessibleName() == "MQTT connection status"
+    assert window._broker_connection.header_layout.indexOf(
+        window._broker_connection.heading
+    ) == 0
+    assert window._broker_connection.header_layout.indexOf(status) == 1
+    assert window.findChild(QLabel, "activeBrokerEndpoint") is None
     assert window.findChild(QToolButton, "brokerSettingsButton") is None
     assert window.findChild(QWidget, "applicationHeader") is None
     assert window.findChild(QToolButton, "brokerProfileButton") is None
@@ -879,7 +889,19 @@ def test_main_window_builds_three_pane_workspace_and_collapsible_log() -> None:
     application.processEvents()
 
 
-def test_connection_corner_menu_replaces_the_top_level_connection_menu() -> None:
+def _broker_profile_row(window: MainWindow, name: str) -> QWidget:
+    menu = window.findChild(QMenu, "brokerProfileSelectorMenu")
+    for action in menu.actions():
+        if not isinstance(action, QWidgetAction):
+            continue
+        row = action.defaultWidget()
+        select_button = row.findChild(QToolButton, "selectBrokerProfileButton")
+        if select_button.text() == name:
+            return row
+    raise AssertionError(f"Broker profile row not found: {name}")
+
+
+def test_compact_broker_pane_exposes_switching_and_connection_actions() -> None:
     application = QApplication.instance() or QApplication([])
     view_model = MainViewModel(
         runtime_for(
@@ -888,34 +910,49 @@ def test_connection_corner_menu_replaces_the_top_level_connection_menu() -> None
         )
     )
     window = MainWindow(view_model)
-    button = window.findChild(QToolButton, "brokerConnectionButton")
-    lifecycle = window.findChild(QAction, "connectionLifecycleAction")
-    disconnect = window.findChild(QAction, "disconnectAction")
-    profile_actions = window.findChildren(QAction, "brokerProfileAction")
-    edit_menu = window.findChild(QMenu, "editBrokerProfileMenu")
+    selector = window.findChild(QComboBox, "connectionBrokerSelector")
+    lifecycle = window.findChild(QPushButton, "brokerLifecycleButton")
+    disconnect = window.findChild(QPushButton, "brokerDisconnectButton")
+    profile_menu = window.findChild(QMenu, "brokerProfileSelectorMenu")
 
-    assert [action.text() for action in button.menu().actions()] == [
-        "Active endpoint: mqtt://broker:1883",
-        "",
+    assert [selector.itemText(index) for index in range(selector.count())] == [
         "Default",
         "Local MQTT",
-        "",
-        "&Add broker profile...",
-        "&Edit broker profile...",
-        "&Delete broker profile...",
-        "",
-        "&Reconnect",
-        "&Disconnect",
     ]
-    assert [(action.text(), action.isChecked()) for action in profile_actions] == [
-        ("Default", True),
-        ("Local MQTT", False),
+    assert selector.currentText() == "Default"
+    assert lifecycle.text() == "Reconnect"
+    assert lifecycle.isEnabled()
+    assert disconnect.isEnabled()
+    assert [
+        action.defaultWidget()
+        .findChild(QToolButton, "selectBrokerProfileButton")
+        .text()
+        for action in profile_menu.actions()
+        if isinstance(action, QWidgetAction)
+    ] == [
+        "Default",
+        "Local MQTT",
     ]
-    assert not profile_actions[0].isEnabled()
-    assert profile_actions[1].isEnabled()
-    assert lifecycle in button.menu().actions()
-    assert disconnect in button.menu().actions()
-    assert edit_menu.menuAction() in button.menu().actions()
+    for profile_name in ("Default", "Local MQTT"):
+        row = _broker_profile_row(window, profile_name)
+        assert row.findChild(QToolButton, "editBrokerProfileButton").text() == (
+            "Edit"
+        )
+        assert row.findChild(QToolButton, "deleteBrokerProfileButton").text() == (
+            "Delete"
+        )
+    assert window.findChild(QAction, "addBrokerProfilePaneAction").text() == (
+        "+ Add Broker"
+    )
+    assert window.findChild(QToolButton, "manageBrokerProfilesButton") is None
+    assert window.findChild(QMenu, "editBrokerProfilePaneMenu") is None
+    window._broker_connection.render(view_model, busy=True)
+    assert not selector.isEnabled()
+    assert not window.findChild(QAction, "addBrokerProfilePaneAction").isEnabled()
+    assert all(
+        not _broker_profile_row(window, profile_name).isEnabled()
+        for profile_name in ("Default", "Local MQTT")
+    )
     assert window.findChild(QMenu, "connectionMenu") is None
     assert [action.text() for action in window.menuBar().actions()] == [
         "&File",
@@ -923,12 +960,7 @@ def test_connection_corner_menu_replaces_the_top_level_connection_menu() -> None
         "&Help",
     ]
 
-    window.show()
-    application.processEvents()
-    assert button.height() <= window.menuBar().height()
-    assert button.focusPolicy() == Qt.FocusPolicy.StrongFocus
-    assert edit_menu.windowType() == Qt.WindowType.Popup
-    assert edit_menu.isHidden()
+    assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is None
     window.close()
     application.processEvents()
 
@@ -937,9 +969,8 @@ def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     pane = TopicDetailsPane()
-    topic_label = pane.findChild(QLabel, "topicPathLabel")
-    assert topic_label is not None
-    assert topic_label.textFormat() == Qt.TextFormat.PlainText
+    topic_heading = pane.heading
+    assert topic_heading.textFormat() == Qt.TextFormat.PlainText
 
     topics = (
         "home/kitchen/temperature",
@@ -948,8 +979,10 @@ def test_topic_details_renders_broker_topics_as_literal_plain_text() -> None:
     )
     for topic in topics:
         pane.render(MainViewModel(runtime_for(repository), topic))
-        assert topic_label.text() == topic
-        assert topic_label.textFormat() == Qt.TextFormat.PlainText
+        assert topic_heading.text() == topic
+        assert topic_heading.toolTip() == topic
+        assert topic_heading.accessibleName() == f"Selected topic: {topic}"
+        assert topic_heading.textFormat() == Qt.TextFormat.PlainText
 
     pane.deleteLater()
     application.processEvents()
@@ -982,6 +1015,28 @@ def test_topic_metadata_hides_advanced_fields_until_requested() -> None:
     application.processEvents()
 
 
+def test_topic_details_elides_long_heading_but_preserves_full_topic() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    topic = "building/" + "/".join(
+        f"very-long-segment-{index}" for index in range(20)
+    )
+    pane = TopicDetailsPane()
+    pane.resize(320, 640)
+    pane.render(MainViewModel(runtime_for(repository), topic))
+    pane.show()
+    application.processEvents()
+
+    assert pane.heading.text() != topic
+    assert "\N{HORIZONTAL ELLIPSIS}" in pane.heading.text()
+    assert pane.heading.toolTip() == topic
+    assert pane.heading.accessibleName() == f"Selected topic: {topic}"
+
+    pane.close()
+    pane.deleteLater()
+    application.processEvents()
+
+
 def test_topic_details_switches_between_payload_and_embedded_publish() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
@@ -996,7 +1051,7 @@ def test_topic_details_switches_between_payload_and_embedded_publish() -> None:
     raw = pane.findChild(QPlainTextEdit, "rawPayload")
     advanced = pane.findChild(QToolButton, "topicMetadataAdvancedButton")
     publish = pane.findChild(QWidget, "topicPublishPane")
-    publish_topic = pane.findChild(QLabel, "publishTopic")
+    publish_hint = pane.findChild(QLabel, "publishTopicHint")
     publish_payload = pane.findChild(QPlainTextEdit, "publishPayload")
 
     assert modes.currentIndex() == 0
@@ -1007,7 +1062,8 @@ def test_topic_details_switches_between_payload_and_embedded_publish() -> None:
     assert decoded.toPlainText() == "21.5"
     assert not decoded.isHidden()
     assert publish.isHidden()
-    assert publish_topic.text() == repository.state.topic
+    assert pane.heading.toolTip() == repository.state.topic
+    assert publish_hint.isHidden()
 
     advanced.click()
     assert not raw.isHidden()
@@ -1017,7 +1073,8 @@ def test_topic_details_switches_between_payload_and_embedded_publish() -> None:
 
     assert pane.findChild(QWidget, "topicPayloadContent").isHidden()
     assert not publish.isHidden()
-    assert publish_topic.text() == repository.state.topic
+    assert pane.heading.toolTip() == repository.state.topic
+    assert publish_hint.isHidden()
     assert publish_payload.toPlainText() == "outgoing draft"
 
     modes.setCurrentIndex(0)
@@ -1025,7 +1082,7 @@ def test_topic_details_switches_between_payload_and_embedded_publish() -> None:
     assert not decoded.isHidden()
     assert not raw.isHidden()
     assert advanced.isChecked()
-    assert publish_topic.text() == repository.state.topic
+    assert pane.heading.toolTip() == repository.state.topic
     assert publish_payload.toPlainText() == "outgoing draft"
     pane.close()
     pane.deleteLater()
@@ -1042,12 +1099,18 @@ def test_publish_mode_displays_but_rejects_wildcard_or_empty_selection() -> None
     pane.render(view_model)
 
     modes = pane.findChild(QTabBar, "topicDetailsMode")
-    publish_topic = pane.findChild(QLabel, "publishTopic")
+    publish_hint = pane.findChild(QLabel, "publishTopicHint")
     publish_button = pane.findChild(QPushButton, "publishButton")
     edit_button = pane.findChild(QToolButton, "topicEditButton")
+    context_kind = pane.findChild(QLabel, "topicContextKind")
     modes.setCurrentIndex(1)
 
-    assert publish_topic.text() == wildcard.topic_filter
+    assert pane.heading.text() == wildcard.topic_filter
+    assert context_kind.text() == "FILTER"
+    assert not context_kind.isHidden()
+    assert publish_hint.text() == (
+        "Select a concrete topic from the Payload tab to publish."
+    )
     assert not publish_button.isEnabled()
     assert edit_button.isEnabled()
 
@@ -1055,7 +1118,9 @@ def test_publish_mode_displays_but_rejects_wildcard_or_empty_selection() -> None
     pane.render(view_model)
 
     assert modes.currentIndex() == 1
-    assert publish_topic.text() == "No topic selected"
+    assert pane.heading.text() == "No topic selected"
+    assert context_kind.isHidden()
+    assert publish_hint.text() == "Select a topic to publish a message."
     assert not publish_button.isEnabled()
     assert not edit_button.isEnabled()
     pane.deleteLater()
@@ -1066,7 +1131,7 @@ def test_embedded_publish_preserves_validation_busy_state_and_signal() -> None:
     application = QApplication.instance() or QApplication([])
     pane = TopicDetailsPane()
     publisher = pane.findChild(PublishPane, "topicPublishPane")
-    topic = pane.findChild(QLabel, "publishTopic")
+    topic_hint = pane.findChild(QLabel, "publishTopicHint")
     payload = pane.findChild(QPlainTextEdit, "publishPayload")
     encoding = pane.findChild(QComboBox, "publishEncoding")
     button = pane.findChild(QPushButton, "publishButton")
@@ -1082,11 +1147,15 @@ def test_embedded_publish_preserves_validation_busy_state_and_signal() -> None:
     encoding.setCurrentIndex(1)
 
     assert button.isEnabled()
+    assert topic_hint.isHidden()
     button.click()
     assert requested == [("devices/door", "b3Blbg==", "base64")]
 
     publisher.render("devices/+", True, False)
-    assert topic.text() == "devices/+"
+    assert topic_hint.text() == (
+        "Select a concrete topic from the Payload tab to publish."
+    )
+    assert not topic_hint.isHidden()
     assert not button.isEnabled()
 
     publisher.render("devices/door", True, True)
@@ -1107,7 +1176,7 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
         repository.subscriptions[0].topic_filter,
     )
     pane = TopicDetailsPane()
-    notice = pane.findChild(QLabel, "subscriptionFilterNotice")
+    context_kind = pane.findChild(QLabel, "topicContextKind")
     decoded = pane.findChild(QPlainTextEdit, "decodedPayload")
     raw = pane.findChild(QPlainTextEdit, "rawPayload")
     topics = pane.findChild(QTableWidget, "filterMatchingTopics")
@@ -1116,7 +1185,11 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
 
     pane.render(view_model)
 
-    assert notice.text() == "Filter: home/+/temperature"
+    assert pane.heading.text() == "home/+/temperature"
+    assert pane.heading.accessibleName() == (
+        "Selected topic filter: home/+/temperature"
+    )
+    assert not context_kind.isHidden()
     assert decoded.isHidden()
     assert raw.isHidden()
     assert topics.rowCount() == 1
@@ -1132,7 +1205,8 @@ def test_topic_details_distinguishes_wildcard_filters_from_concrete_topics() -> 
     view_model.select_topic("home/kitchen/temperature")
     pane.render(view_model)
 
-    assert notice.isHidden()
+    assert pane.heading.text() == "home/kitchen/temperature"
+    assert context_kind.isHidden()
     assert not decoded.isHidden()
     assert raw.isHidden()
     assert decoded.toPlainText() == "21.5"
@@ -1157,14 +1231,16 @@ def test_connection_controls_bundle_actions_and_request_signals() -> None:
     controls.connect_requested.connect(lambda: requests.append("connect"))
     controls.reconnect_requested.connect(lambda: requests.append("reconnect"))
     controls.disconnect_requested.connect(lambda: requests.append("disconnect"))
+    controls.details_requested.connect(lambda: requests.append("details"))
 
     controls.render((broker,), broker, "disconnected")
     controls.lifecycle_action.trigger()
     controls.render((broker,), broker, "connected")
     controls.lifecycle_action.trigger()
     controls.disconnect_action.trigger()
+    controls.button.click()
 
-    assert requests == ["connect", "reconnect", "disconnect"]
+    assert requests == ["connect", "reconnect", "disconnect", "details"]
     assert controls.button.text() == "Local broker · Connected"
     controls.deleteLater()
     application.processEvents()
@@ -1565,20 +1641,15 @@ def test_observer_tree_does_not_render_a_broker_profile_dropdown() -> None:
     application.processEvents()
 
 
-def test_profile_menu_creates_a_new_broker_profile() -> None:
+def test_broker_pane_creates_a_new_broker_profile() -> None:
     application = QApplication.instance() or QApplication([])
     broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
     view_model = MainViewModel(
         runtime_for(FakeGuiRepository(), broker_repository),
     )
     window = MainWindow(view_model)
-    button = window.findChild(QToolButton, "brokerConnectionButton")
-    assert button is not None
-    add_action = next(
-        action
-        for action in button.menu().actions()
-        if action.objectName() == "addBrokerProfileAction"
-    )
+    add_action = window.findChild(QAction, "addBrokerProfilePaneAction")
+    assert add_action is not None
 
     add_action.trigger()
     dialog = window.findChild(BrokerSettingsDialog, "createBrokerProfileDialog")
@@ -1632,7 +1703,7 @@ def test_about_action_opens_the_project_about_view() -> None:
     application.processEvents()
 
 
-def test_profile_menu_edits_an_inactive_profile_without_connecting() -> None:
+def test_broker_pane_edits_an_inactive_profile_without_connecting() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
@@ -1640,12 +1711,8 @@ def test_profile_menu_edits_an_inactive_profile_without_connecting() -> None:
     inactive_profile = broker_repository.get_all_profiles()[1]
     view_model = MainViewModel(runtime_for(repository, broker_repository))
     window = MainWindow(view_model)
-    edit_menu = window.findChild(QMenu, "editBrokerProfileMenu")
-    next(
-        action
-        for action in edit_menu.actions()
-        if action.text() == inactive_profile.name
-    ).trigger()
+    row = _broker_profile_row(window, inactive_profile.name)
+    row.findChild(QToolButton, "editBrokerProfileButton").click()
     dialog = window.findChild(BrokerSettingsDialog, "brokerSettingsDialog")
     assert dialog is not None
     assert dialog.profile_id == inactive_profile.id
@@ -1667,26 +1734,21 @@ def test_profile_menu_edits_an_inactive_profile_without_connecting() -> None:
     application.processEvents()
 
 
-async def test_profile_menu_deletes_the_active_profile_after_switching() -> None:
+async def test_broker_pane_deletes_the_active_profile_after_switching() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
         view_model = MainViewModel(runtime_for(repository, broker_repository))
         window = MainWindow(view_model)
-        button = window.findChild(QToolButton, "brokerConnectionButton")
-        assert button is not None
-        delete_action = next(
-            action
-            for action in button.menu().actions()
-            if action.objectName() == "deleteBrokerProfileAction"
-        )
+        row = _broker_profile_row(window, "Default")
+        delete_button = row.findChild(QToolButton, "deleteBrokerProfileButton")
 
         with patch(
             "topicgate.gui.main_window.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ):
-            delete_action.trigger()
+            delete_button.click()
             await asyncio.sleep(0)
 
         assert [profile.name for profile in view_model.broker_profiles] == [
@@ -1697,32 +1759,63 @@ async def test_profile_menu_deletes_the_active_profile_after_switching() -> None
             QAction,
             "deleteBrokerProfileAction",
         ).isEnabled()
+        remaining_delete = _broker_profile_row(
+            window,
+            "Local MQTT",
+        ).findChild(QToolButton, "deleteBrokerProfileButton")
+        assert not remaining_delete.isEnabled()
         window.close()
         application.processEvents()
 
     await scenario()
 
 
-async def test_profile_dropdown_confirms_before_shutting_down_and_switching() -> None:
+async def test_broker_pane_deletes_an_inactive_profile_without_switching() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
+    view_model = MainViewModel(runtime_for(repository, broker_repository))
+    window = MainWindow(view_model)
+    inactive_profile = broker_repository.get_all_profiles()[1]
+    delete_button = _broker_profile_row(
+        window,
+        inactive_profile.name,
+    ).findChild(QToolButton, "deleteBrokerProfileButton")
+
+    with patch(
+        "topicgate.gui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ) as question:
+        delete_button.click()
+        await asyncio.sleep(0)
+
+    assert [profile.name for profile in view_model.broker_profiles] == ["Default"]
+    assert view_model.active_broker_profile.name == "Default"
+    assert repository.broker_configurations == []
+    assert "connect to another broker" not in question.call_args.args[2]
+    window.close()
+    application.processEvents()
+
+
+async def test_broker_selector_confirms_before_shutting_down_and_switching() -> None:
     async def scenario() -> None:
         application = QApplication.instance() or QApplication([])
         repository = FakeGuiRepository()
         broker_repository = FakeBrokerRepository(MqttConfig("broker", 1883, "", ""))
         view_model = MainViewModel(runtime_for(repository, broker_repository))
         window = MainWindow(view_model)
-        button = window.findChild(QToolButton, "brokerConnectionButton")
-        assert button is not None
+        selector = window.findChild(QComboBox, "connectionBrokerSelector")
+        assert selector is not None
         local_profile = broker_repository.get_all_profiles()[1]
 
         with patch(
             "topicgate.gui.main_window.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ) as question:
-            next(
-                action
-                for action in button.menu().actions()
-                if action.data() == local_profile.id
-            ).trigger()
+            _broker_profile_row(window, local_profile.name).findChild(
+                QToolButton,
+                "selectBrokerProfileButton",
+            ).click()
             await asyncio.sleep(0)
 
         assert repository.broker_configurations == [local_profile.config]
