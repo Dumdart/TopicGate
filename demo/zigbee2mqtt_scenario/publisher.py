@@ -8,7 +8,7 @@ import os
 import signal
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any, Protocol
 
 import paho.mqtt.client as mqtt
@@ -39,7 +39,7 @@ DEMO_CASES = (
         "attic_sensor",
         "stale",
         "zigbee2mqtt/attic_sensor",
-        "State is published once with last_seen 24 hours in the past.",
+        "Non-retained state is published only in the full phase, then cached.",
     ),
     DemoCase(
         "basement_freezer",
@@ -58,6 +58,12 @@ DEMO_CASES = (
 EXPECTED_DEVICES = tuple(case.device for case in DEMO_CASES)
 MISSING_TOPIC = "zigbee2mqtt/nursery_sensor"
 HEALTHY_INTERVAL_SECONDS = 5.0
+STALE_LAST_SEEN = "2000-01-01T00:00:00+00:00"
+
+
+class ScenarioPhase(StrEnum):
+    FULL = "full"
+    HEALTHY = "healthy"
 
 
 class PublishResult(Protocol):
@@ -91,9 +97,11 @@ def publish_message(
     result.wait_for_publish(timeout=5)
 
 
-def publish_initial_state(client: Publisher, now: datetime) -> None:
+def publish_initial_state(client: Publisher) -> None:
     """Publish every case except the dedicated disconnected-publisher value."""
-    publish_message(client, "zigbee2mqtt/bridge/state", {"state": "online"}, retain=True)
+    publish_message(
+        client, "zigbee2mqtt/bridge/state", {"state": "online"}, retain=True
+    )
     client.publish(
         "zigbee2mqtt/bridge/devices", bridge_devices_payload(), qos=1, retain=True
     ).wait_for_publish(timeout=5)
@@ -115,13 +123,13 @@ def publish_initial_state(client: Publisher, now: datetime) -> None:
         {
             "battery": 41,
             "humidity": 67.2,
-            "last_seen": (now - timedelta(hours=24)).isoformat(),
+            "last_seen": STALE_LAST_SEEN,
             "temperature": 12.4,
         },
     )
 
 
-def publish_healthy_state(client: Publisher, sequence: int, now: datetime) -> None:
+def publish_healthy_state(client: Publisher) -> None:
     publish_message(
         client,
         "zigbee2mqtt/kitchen_sensor/availability",
@@ -133,10 +141,9 @@ def publish_healthy_state(client: Publisher, sequence: int, now: datetime) -> No
         "zigbee2mqtt/kitchen_sensor",
         {
             "battery": 96,
-            "humidity": 45.0 + (sequence % 3) / 10,
-            "last_seen": now.isoformat(),
+            "humidity": 45.2,
             "linkquality": 132,
-            "temperature": 21.0 + (sequence % 5) / 10,
+            "temperature": 21.3,
         },
     )
 
@@ -185,7 +192,6 @@ def connect(client: mqtt.Client, host: str, port: int) -> None:
 def publish_disconnected_retained_value(
     host: str,
     port: int,
-    now: datetime,
 ) -> None:
     ghost = new_client("topicgate-demo-disconnected-publisher")
     connect(ghost, host, port)
@@ -193,7 +199,7 @@ def publish_disconnected_retained_value(
         publish_message(
             ghost,
             "zigbee2mqtt/basement_freezer",
-            {"last_seen": now.isoformat(), "temperature": -18.7},
+            {"temperature": -18.7},
             retain=True,
         )
     finally:
@@ -201,27 +207,35 @@ def publish_disconnected_retained_value(
         ghost.loop_stop()
 
 
-def run(host: str, port: int, *, once: bool = False) -> None:
+def run(
+    host: str,
+    port: int,
+    *,
+    phase: ScenarioPhase = ScenarioPhase.FULL,
+    once: bool = False,
+) -> None:
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
 
-    client = new_client("topicgate-demo-live-publisher")
+    client = new_client(f"topicgate-demo-{phase}-publisher")
     client.will_set(
         "zigbee2mqtt/bridge/state", encode({"state": "offline"}), qos=1, retain=True
     )
     connect(client, host, port)
     try:
-        now = datetime.now(UTC)
-        publish_initial_state(client, now)
-        publish_disconnected_retained_value(host, port, now)
-        publish_healthy_state(client, 0, now)
-        print(f"Scenario ready on mqtt://{host}:{port}; Ctrl+C to stop.", flush=True)
+        if phase is ScenarioPhase.FULL:
+            publish_initial_state(client)
+            publish_disconnected_retained_value(host, port)
+        publish_healthy_state(client)
+        print(
+            f"Scenario {phase} phase ready on mqtt://{host}:{port}; "
+            "Ctrl+C to stop.",
+            flush=True,
+        )
 
-        sequence = 1
         while not once and not stop.wait(HEALTHY_INTERVAL_SECONDS):
-            publish_healthy_state(client, sequence, datetime.now(UTC))
-            sequence += 1
+            publish_healthy_state(client)
     finally:
         client.disconnect()
         client.loop_stop()
@@ -231,6 +245,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=os.getenv("MQTT_HOST", "localhost"))
     parser.add_argument("--port", type=int, default=int(os.getenv("MQTT_PORT", "1883")))
+    parser.add_argument(
+        "--phase",
+        type=ScenarioPhase,
+        choices=tuple(ScenarioPhase),
+        default=ScenarioPhase.FULL,
+        help="Publish the full scenario or only refresh the healthy device.",
+    )
     parser.add_argument(
         "--once",
         action="store_true",
@@ -249,7 +270,7 @@ def main() -> None:
     if args.describe:
         print(render_scenario_table())
         return
-    run(args.host, args.port, once=args.once)
+    run(args.host, args.port, phase=args.phase, once=args.once)
 
 
 if __name__ == "__main__":

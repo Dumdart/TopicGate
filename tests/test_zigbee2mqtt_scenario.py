@@ -1,5 +1,4 @@
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,11 +27,12 @@ class RecordingClient:
 
 def test_initial_scenario_has_expected_anomalies_and_omits_missing_topic():
     client = RecordingClient()
-    now = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 
-    publisher.publish_initial_state(client, now)
+    publisher.publish_initial_state(client)
 
-    messages = {topic: (payload, retain) for topic, payload, _, retain in client.messages}
+    messages = {
+        topic: (payload, retain) for topic, payload, _, retain in client.messages
+    }
     assert set(messages) == {
         "zigbee2mqtt/attic_sensor",
         "zigbee2mqtt/attic_sensor/availability",
@@ -47,45 +47,66 @@ def test_initial_scenario_has_expected_anomalies_and_omits_missing_topic():
     assert inventory == set(publisher.EXPECTED_DEVICES)
     assert len(inventory) == 5
     assert publisher.MISSING_TOPIC not in messages
-    assert messages["zigbee2mqtt/garage_sensor/availability"][0] == {"state": "offline"}
-    assert messages["zigbee2mqtt/attic_sensor"][0]["last_seen"] == "2026-08-28T10:00:00+00:00"
+    assert messages["zigbee2mqtt/garage_sensor/availability"][0] == {
+        "state": "offline"
+    }
+    assert (
+        messages["zigbee2mqtt/attic_sensor"][0]["last_seen"]
+        == publisher.STALE_LAST_SEEN
+    )
 
 
 def test_healthy_device_refreshes_with_non_retained_state():
     client = RecordingClient()
-    now = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 
-    publisher.publish_healthy_state(client, sequence=3, now=now)
+    publisher.publish_healthy_state(client)
 
-    messages = {topic: (payload, retain) for topic, payload, _, retain in client.messages}
-    assert messages["zigbee2mqtt/kitchen_sensor/availability"] == ({"state": "online"}, True)
-    assert messages["zigbee2mqtt/kitchen_sensor"][0]["last_seen"] == now.isoformat()
+    messages = {
+        topic: (payload, retain) for topic, payload, _, retain in client.messages
+    }
+    assert messages["zigbee2mqtt/kitchen_sensor/availability"] == (
+        {"state": "online"},
+        True,
+    )
+    assert messages["zigbee2mqtt/kitchen_sensor"][0] == {
+        "battery": 96,
+        "humidity": 45.2,
+        "linkquality": 132,
+        "temperature": 21.3,
+    }
     assert messages["zigbee2mqtt/kitchen_sensor"][1] is False
 
 
 def test_retained_value_is_published_by_a_client_that_then_disconnects():
     client = RecordingClient()
-    now = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 
     with (
         patch.object(publisher, "new_client", return_value=client),
         patch.object(publisher, "connect") as connect,
     ):
-        publisher.publish_disconnected_retained_value("broker", 1883, now)
+        publisher.publish_disconnected_retained_value("broker", 1883)
 
     connect.assert_called_once_with(client, "broker", 1883)
     topic, payload, qos, retain = client.messages[0]
     assert topic == "zigbee2mqtt/basement_freezer"
-    assert payload == {
-        "last_seen": "2026-08-29T10:00:00+00:00",
-        "temperature": -18.7,
-    }
+    assert payload == {"temperature": -18.7}
     assert qos == 1
     assert retain is True
     assert [message[0] for message in client.messages[-2:]] == [
         "disconnect",
         "loop_stop",
     ]
+
+
+def test_healthy_phase_publishes_no_stale_or_disconnected_values():
+    client = RecordingClient()
+
+    publisher.publish_healthy_state(client)
+
+    assert {message[0] for message in client.messages} == {
+        "zigbee2mqtt/kitchen_sensor/availability",
+        "zigbee2mqtt/kitchen_sensor",
+    }
 
 
 def test_documented_scenario_table_is_generated_from_publisher_catalog():

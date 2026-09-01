@@ -1,111 +1,82 @@
 # Zigbee2MQTT scenario
 
-This hardware-free demo combines a disposable local Mosquitto broker with a
-small Zigbee2MQTT-shaped publisher. It provides deterministic topics and
-payloads for screenshots, regression checks, and live demonstrations.
+This hardware-free demo starts a disposable local Mosquitto broker and guides
+you through a deterministic Zigbee2MQTT-shaped scenario in TopicGate. It needs
+neither Zigbee hardware nor Home Assistant.
 
 ## Prerequisites
 
 - Docker with Docker Compose
 - Python 3.11 or newer
-- `uv` with the project dependencies installed
+- `uv`
 - Bash, such as Git Bash on Windows
 
-From the repository root, install the development dependencies if needed:
+From the repository root, install the project dependencies if needed:
 
 ```console
 uv sync --extra apps --extra test
 ```
 
-## Start the scenario
+## Run the guided scenario
 
-Run the broker and publisher together:
+From the repository root, run one command:
 
 ```bash
 bash demo/zigbee2mqtt_scenario/run_demo.sh
 ```
 
-Keep this terminal open. The script:
+The script does the setup for you. It starts the broker, creates and tests the
+`Zigbee2MQTT Demo` broker profile, and adds the `zigbee2mqtt/#` subscription.
+It then pauses at each of these steps:
 
-1. Loads the broker settings from `.env`.
-2. Starts the authenticated Mosquitto container and waits for it to become healthy.
-3. Runs `publisher.py`, which refreshes the healthy device every five seconds.
-4. Stops and removes the disposable broker when the publisher exits.
+1. Start TopicGate Desktop yourself with `uv run topicgate-gui`, select
+   `Zigbee2MQTT Demo`, and connect.
+2. Continue to publish the full scenario. Inspect the healthy, offline,
+   retained, and missing conditions while they are observed as **Live**.
+3. Continue and close TopicGate completely. The publisher stops.
+4. Restart TopicGate and reconnect. Continue to resume only the healthy device.
+5. The kitchen state becomes **Live** again, while the previously stored,
+   non-retained attic state is now **Stale**.
+6. Inspect the result, close TopicGate, and continue once more. The script
+   removes the broker and only the TopicGate configuration it created.
 
-Press Ctrl+C when the demo is finished. Starting with a fresh broker also
-prevents retained topics from an earlier scenario version from reappearing.
+The script deliberately does not launch the GUI. This keeps the beginner flow
+visible and avoids hiding a second process behind the terminal.
 
-## Configure TopicGate with the CLI
+## Stop and recover
 
-While the scenario is running, open a second terminal in the repository root and
-create the broker profile:
-
-```console
-uv run topicgate-cli profile add \
-  --name "Zigbee2MQTT Demo" \
-  --host localhost \
-  --port 1883 \
-  --username topicgate
-```
-
-When prompted, enter the demo password:
-
-```text
-topicgate-demo-password
-```
-
-Then add the scenario subscription:
-
-```console
-uv run topicgate-cli sub add \
-  --name "Zigbee2MQTT Demo" \
-  --topic "zigbee2mqtt/#" \
-  --retain-as-published
-```
-
-Both commands are safe to run again: the CLI reuses the existing profile and
-accepts an existing subscription. Start TopicGate Desktop or the MCP server after
-creating the profile. If either process was already running, restart it so it
-reloads the externally created profile, then connect `Zigbee2MQTT Demo`.
-
-For Desktop:
-
-```console
-uv run topicgate-gui
-```
-
-For the read-only MCP server:
-
-```console
-uv run topicgate
-```
-
-## Interpret the results
-
-TopicGate's state badge describes observation provenance, not device health:
-
-- **Live** means TopicGate received the MQTT message during the current process.
-- The garage device reports **offline** inside its decoded availability payload.
-- The attic sensor's old `last_seen` value is payload evidence of staleness; it
-  does not change TopicGate's observation badge.
-- The basement value is marked retained even though its publisher disconnected.
-- The nursery topic is intentionally absent. Its expected presence is established
-  by `zigbee2mqtt/bridge/devices`.
-
-Non-retained sensor values are visible only while TopicGate is connected. The
-kitchen value refreshes every five seconds, but the attic value is published only
-once at scenario startup.
-
-## Inspect MQTT directly
-
-To inspect retained values and future publications without TopicGate, run this in
-another terminal:
+Press Ctrl+C at any prompt to stop the publisher and remove the demo broker and
+its volumes. If TopicGate may still be open, the script preserves its small
+ownership record instead of changing TopicGate's database underneath the app.
+Close TopicGate, then finish cleanup with:
 
 ```bash
-docker compose -f demo/zigbee2mqtt_scenario/docker-compose.yml exec mosquitto \
-  mosquitto_sub -h localhost -u topicgate -P topicgate-demo-password \
-  -t "zigbee2mqtt/#" -v
+bash demo/zigbee2mqtt_scenario/run_demo.sh cleanup
 ```
+
+Cleanup uses a dedicated Compose project name and removes its containers,
+network, volumes, and orphans. If the profile or subscription existed before
+the demo, it is validated and preserved. A conflicting pre-existing
+configuration is reported instead of overwritten.
+
+## Interpret the conditions
+
+TopicGate's state badge describes when TopicGate observed a message, not the
+device's decoded health:
+
+- `kitchen_sensor` is healthy. Its exact state repeats every five seconds and
+  becomes **Live** in both phases.
+- `garage_sensor/availability` is **Live**, while its decoded payload explicitly
+  reports `{"state":"offline"}`.
+- `attic_sensor` is non-retained and published only in the first phase. After
+  TopicGate restarts, its stored observation predates the new observation
+  session and is genuinely **Stale**. Its fixed historical `last_seen` value is
+  payload data; TopicGate does not derive its badge from that field.
+- `basement_freezer` is retained by the broker. The client that published it
+  disconnects immediately, so a later subscriber still receives the value.
+- `nursery_sensor` is listed in `zigbee2mqtt/bridge/devices` but its expected
+  state topic is never published. That inventory makes the missing topic an
+  assertable completeness condition.
 
 ## Canonical scenario
 
@@ -114,15 +85,33 @@ docker compose -f demo/zigbee2mqtt_scenario/docker-compose.yml exec mosquitto \
 | --- | --- | --- | --- |
 | `kitchen_sensor` | healthy | `zigbee2mqtt/kitchen_sensor` | Online availability and state refreshed every five seconds. |
 | `garage_sensor` | offline | `zigbee2mqtt/garage_sensor/availability` | Availability is explicitly offline. |
-| `attic_sensor` | stale | `zigbee2mqtt/attic_sensor` | State is published once with last_seen 24 hours in the past. |
+| `attic_sensor` | stale | `zigbee2mqtt/attic_sensor` | Non-retained state is published only in the full phase, then cached. |
 | `basement_freezer` | retained/disconnected | `zigbee2mqtt/basement_freezer` | A short-lived client publishes retained state, then disconnects. |
 | `nursery_sensor` | missing expected topic | `zigbee2mqtt/nursery_sensor` | Listed in bridge/devices but intentionally never published. |
 <!-- scenario-table:end -->
 
-`zigbee2mqtt/bridge/devices` is the machine-readable inventory. It lists all five
-devices, including `nursery_sensor`; the absence of `zigbee2mqtt/nursery_sensor`
-is therefore observable evidence rather than an undocumented assumption.
+All JSON is encoded with sorted keys and fixed values. Print this catalog with:
 
-The table above is rendered from `DEMO_CASES` in `publisher.py`. A regression test
-guards the documentation and the MQTT publication plan against drift. Run
-`uv run python demo/zigbee2mqtt_scenario/publisher.py --describe` to print it.
+```console
+uv run python demo/zigbee2mqtt_scenario/publisher.py --describe
+```
+
+## Automated checks
+
+The ordinary unit tests use an in-memory publisher fake:
+
+```console
+uv run pytest tests/test_zigbee2mqtt_scenario.py tests/test_topicgate_cli.py
+```
+
+The explicit smoke test chooses an unused local port, starts its own Compose
+project, subscribes before publishing, asserts the exact full-phase messages,
+checks the retained value with a late subscriber, verifies that the healthy
+phase omits the attic state, and always tears the project down:
+
+```console
+uv run python demo/zigbee2mqtt_scenario/smoke_test.py
+```
+
+This real-broker check is intentionally separate from the default pytest suite
+because it requires a running Docker engine.

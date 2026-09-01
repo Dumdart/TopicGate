@@ -197,9 +197,20 @@ class BrokerProfileService:
         self.save()
 
     def delete_profile(self, profile_id: UUID) -> BrokerProfile:
-        profile = self._runtime_state.get_profile_handle(profile_id) or self.get_profile(
-            profile_id
+        identities = self.brokers.list_profiles()
+        identity = next((item for item in identities if item.id == profile_id), None)
+        if identity is None:
+            raise KeyError(f"Unknown broker profile: {profile_id}")
+        if len(identities) == 1:
+            raise ValueError("The final broker profile cannot be removed.")
+
+        profile = (
+            self._runtime_state.get_profile_handle(profile_id)
+            or self.get_profile(profile_id)
         )
+        if identity.is_active:
+            replacement = next(item for item in identities if item.id != profile_id)
+            self.select_active_profile(replacement.id)
         self.brokers.delete_profile(profile_id)
         if self._topic_message_recorder is not None:
             self._topic_message_recorder.remove_current_broker(profile_id)
@@ -221,7 +232,9 @@ class BrokerProfileService:
             self._runtime_state.set_config_id(profile_id, config.id)
         self.select_active_profile(profile_id)
 
-    def add_subscription(self, profile_id: UUID, subscription: Subscription) -> Subscription:
+    def add_subscription(
+        self, profile_id: UUID, subscription: Subscription
+    ) -> Subscription:
         profile = self.get_profile(profile_id)
         return self.subscriptions.add(
             profile.workspace_id,

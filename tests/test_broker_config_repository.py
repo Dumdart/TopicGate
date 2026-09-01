@@ -237,6 +237,31 @@ def test_broker_repository_creates_updates_and_deletes_profiles(
     assert repository.save.call_count == 3
 
 
+def test_deleting_active_profile_selects_a_replacement(credential_store) -> None:
+    repository = BrokerProfileService(credential_store=credential_store)
+    active = repository.get_profile()
+
+    repository.delete_profile(active.id)
+
+    assert repository.get_profile().name == "Local MQTT"
+    assert repository.get().mqtt == repository.get_profile().config
+
+
+def test_broker_profile_service_rejects_deleting_final_profile(
+    credential_store,
+) -> None:
+    repository = BrokerProfileService(credential_store=credential_store)
+    default, local = repository.get_all_profiles()
+    repository.delete_profile(local.id)
+
+    try:
+        repository.delete_profile(default.id)
+    except ValueError as error:
+        assert str(error) == "The final broker profile cannot be removed."
+    else:
+        raise AssertionError("Expected final broker profile deletion to fail")
+
+
 def test_broker_profile_service_rejects_duplicate_names(
     credential_store,
 ) -> None:

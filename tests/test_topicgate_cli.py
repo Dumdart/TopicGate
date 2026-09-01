@@ -1,3 +1,4 @@
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -32,6 +33,38 @@ def test_profile_add_reuses_existing_profile() -> None:
 
     assert result == 0
     dependencies.broker_profiles.create_profile.assert_not_called()
+
+
+def test_profile_add_reads_password_from_stdin() -> None:
+    dependencies, profile = dependencies_with()
+    dependencies.broker_profiles.get_profile_by_name.side_effect = KeyError(
+        profile.name
+    )
+    dependencies.broker_profiles.create_profile.return_value = profile
+
+    with (
+        patch(
+            "topicgate.cli.topicgate_cli.AppDependencies",
+            return_value=dependencies,
+        ),
+        patch("sys.stdin", StringIO("demo-secret\n")),
+    ):
+        result = main(
+            [
+                "profile",
+                "add",
+                "--name",
+                profile.name,
+                "--port",
+                "1884",
+                "--password-stdin",
+            ]
+        )
+
+    assert result == 0
+    config = dependencies.broker_profiles.create_profile.call_args.args[1]
+    assert config.port == 1884
+    assert config.password == "demo-secret"
 
 
 def test_subscription_add_resolves_name_and_parses_options() -> None:
@@ -111,3 +144,47 @@ def test_profile_test_runs_temporary_connection_check() -> None:
 
     assert result == 0
     dependencies.broker_profiles.test_profile.assert_called_once_with(profile.id)
+
+
+def test_profile_test_can_target_one_named_profile() -> None:
+    dependencies, profile = dependencies_with()
+    dependencies.broker_profiles.test_profile.return_value = True
+
+    with patch(
+        "topicgate.cli.topicgate_cli.AppDependencies",
+        return_value=dependencies,
+    ):
+        result = main(["profile", "test", "--name", profile.name])
+
+    assert result == 0
+    dependencies.broker_profiles.get_all_profiles.assert_not_called()
+    dependencies.broker_profiles.test_profile.assert_called_once_with(profile.id)
+
+
+def test_profile_remove_resolves_name() -> None:
+    dependencies, profile = dependencies_with()
+
+    with patch(
+        "topicgate.cli.topicgate_cli.AppDependencies",
+        return_value=dependencies,
+    ):
+        result = main(["profile", "remove", "--name", profile.name])
+
+    assert result == 0
+    dependencies.broker_profiles.delete_profile.assert_called_once_with(profile.id)
+
+
+def test_subscription_list_has_stable_tab_separated_output(capsys) -> None:
+    dependencies, profile = dependencies_with()
+    profile.workspace = SimpleNamespace(
+        subscriptions=(Subscription("zigbee2mqtt/#", 1, True, 0),)
+    )
+
+    with patch(
+        "topicgate.cli.topicgate_cli.AppDependencies",
+        return_value=dependencies,
+    ):
+        result = main(["sub", "list", "--name", profile.name])
+
+    assert result == 0
+    assert capsys.readouterr().out == "zigbee2mqtt/#\t1\tTrue\t0\n"

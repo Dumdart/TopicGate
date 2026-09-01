@@ -2,6 +2,7 @@
 *.db
 AGENTS.md
 graphify-out/
+demo/zigbee2mqtt_scenario/.run-state.json
 
 # Distribution / build artifacts
 *.egg-info/
