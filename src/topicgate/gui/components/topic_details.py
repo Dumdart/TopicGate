@@ -1,5 +1,4 @@
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFormLayout,
     QHeaderView,
@@ -17,7 +16,7 @@ from topicgate.gui.main_view_model import MainViewModel
 from topicgate.gui.components.publish_pane import PublishPane
 from topicgate.gui.components.workspace_pane import WorkspacePane
 from topicgate.gui.components.topic_metadata import TopicMetadataPane
-from topicgate.paths import asset_path
+from topicgate.gui.icons import edit_icon
 
 
 class TopicDetailsPane(WorkspacePane):
@@ -38,7 +37,7 @@ class TopicDetailsPane(WorkspacePane):
 
         self._edit_button = QToolButton()
         self._edit_button.setObjectName("topicEditButton")
-        self._edit_button.setIcon(QIcon(asset_path("edit.svg")))
+        self._edit_button.setIcon(edit_icon())
         self._edit_button.setIconSize(QSize(14, 14))
         self._edit_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon

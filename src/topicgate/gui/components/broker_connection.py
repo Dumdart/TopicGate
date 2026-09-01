@@ -1,4 +1,4 @@
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
     QComboBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from topicgate.core.models.broker_summary import BrokerSummary
 from topicgate.gui.components.workspace_pane import WorkspacePane
+from topicgate.gui.icons import delete_icon, edit_icon
 from topicgate.gui.main_view_model import MainViewModel
 
 
@@ -57,6 +58,11 @@ class _BrokerProfileRow(QWidget):
 
         edit_button = QToolButton()
         edit_button.setObjectName("editBrokerProfileButton")
+        edit_button.setIcon(edit_icon())
+        edit_button.setIconSize(QSize(14, 14))
+        edit_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
         edit_button.setText("Edit")
         edit_button.setAccessibleName(f"Edit broker profile {name}")
         edit_button.clicked.connect(
@@ -65,6 +71,11 @@ class _BrokerProfileRow(QWidget):
 
         delete_button = QToolButton()
         delete_button.setObjectName("deleteBrokerProfileButton")
+        delete_button.setIcon(delete_icon())
+        delete_button.setIconSize(QSize(14, 14))
+        delete_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
         delete_button.setText("Delete")
         delete_button.setProperty("danger", True)
         delete_button.setAccessibleName(f"Delete broker profile {name}")

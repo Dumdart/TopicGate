@@ -935,12 +935,12 @@ def test_compact_broker_pane_exposes_switching_and_connection_actions() -> None:
     ]
     for profile_name in ("Default", "Local MQTT"):
         row = _broker_profile_row(window, profile_name)
-        assert row.findChild(QToolButton, "editBrokerProfileButton").text() == (
-            "Edit"
-        )
-        assert row.findChild(QToolButton, "deleteBrokerProfileButton").text() == (
-            "Delete"
-        )
+        edit_button = row.findChild(QToolButton, "editBrokerProfileButton")
+        delete_button = row.findChild(QToolButton, "deleteBrokerProfileButton")
+        assert edit_button.text() == "Edit"
+        assert not edit_button.icon().isNull()
+        assert delete_button.text() == "Delete"
+        assert not delete_button.icon().isNull()
     assert window.findChild(QAction, "addBrokerProfilePaneAction").text() == (
         "+ Add Broker"
     )
@@ -1395,7 +1395,9 @@ def test_observer_tree_adds_trash_buttons_only_to_subscription_filters() -> None
     assert tree.header().sectionSize(1) == 34
     assert buttons[0].size().width() == 24
     assert buttons[0].size().height() == 18
-    assert "background-color: #7f1d1d" in buttons[0].styleSheet()
+    assert not buttons[0].icon().isNull()
+    assert "background-color: transparent" in buttons[0].styleSheet()
+    assert "background-color: #fff5f5" in buttons[0].styleSheet()
     assert "QToolButton:hover" in buttons[0].styleSheet()
     assert buttons[0].toolTip() == (
         "Remove subscription home/+/temperature"

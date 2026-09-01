@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QScrollArea,
-    QStyle,
     QToolButton,
     QTreeView,
     QWidget,
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
 from topicgate.core.models.subscription import Subscription
 from topicgate.gui.components.workspace_pane import WorkspacePane
 from topicgate.gui.components.snapshot_panel import SnapshotPanel
+from topicgate.gui.icons import delete_icon
 from topicgate.presentation.topic_presentation import TopicTreeNode
 
 TOPIC_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -288,23 +288,21 @@ class ObserverTreePane(WorkspacePane):
         button.setObjectName("removeSubscriptionButton")
         button.setFixedSize(24, 18)
         button.setIconSize(QSize(12, 12))
-        button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon)
-        )
+        button.setIcon(delete_icon())
         button.setStyleSheet(
             "QToolButton {"
-            " background-color: #7f1d1d;"
-            " border: 1px solid #b91c1c;"
+            " background-color: transparent;"
+            " border: 1px solid transparent;"
             " border-radius: 4px;"
             " padding: 0;"
             "}"
             "QToolButton:hover {"
-            " background-color: #b91c1c;"
-            " border-color: #ef4444;"
+            " background-color: #fff5f5;"
+            " border-color: #d7a4a4;"
             "}"
             "QToolButton:pressed {"
-            " background-color: #450a0a;"
-            " border-color: #991b1b;"
+            " background-color: #fee2e2;"
+            " border-color: #c77d7d;"
             "}"
         )
         button.setToolTip(f"Remove subscription {subscription.topic_filter}")

@@ -133,7 +133,7 @@ class BrokerProfileService:
         if self._topic_message_recorder is not None:
             self._topic_message_recorder.remove_current_broker(profile_id)
         self._delete_password(profile_id)
-        self._runtime_state.remove(profile_id)
+        self._runtime_state.remove_profile_metadata(profile_id)
         self.save()
         return profile
 
