@@ -77,6 +77,7 @@ def build_repository(
     manager.subscribe_once = AsyncMock()
     manager.disconnect = MagicMock()
     manager.subscriptions = ()
+    health_sink = MagicMock()
 
     with patch(
         "topicgate.infrastructure.repository.observer_mqtt_repository.SubscriptionManager",
@@ -89,6 +90,7 @@ def build_repository(
             broker_id=broker_id,
             message_recorder=message_recorder,
             current_topics=current_topics,
+            health_sink=health_sink,
         )
 
     return repository, manager
@@ -118,6 +120,24 @@ def test_repository_reads_topic_values_from_current_topic_repository() -> None:
     repository.handle_message(None, None, message)
 
     assert repository.get_state(message.topic).payload == b"open"
+
+
+def test_health_failure_does_not_interrupt_observation_delivery() -> None:
+    captured = []
+    repository, _ = build_repository()
+    repository.health_sink.evaluate_observation.side_effect = RuntimeError(
+        "evaluation failed"
+    )
+    repository._observation_sink = captured.append
+
+    repository.handle_message(
+        None,
+        None,
+        MqttMessage("SmartHome/door/status", b"open", qos=1, retain=False),
+    )
+
+    assert len(captured) == 1
+    assert captured[0].payload == b"open"
 
 
 def test_repository_truncates_before_updating_model_and_sink() -> None:

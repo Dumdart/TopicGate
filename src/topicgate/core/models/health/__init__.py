@@ -9,6 +9,7 @@ from topicgate.core.models.health.health_enums import ActionKind
 from topicgate.core.models.health.health_enums import HealthSeverity
 from topicgate.core.models.health.health_enums import HealthStatus
 from topicgate.core.models.health.health_expectation import HealthExpectation
+from topicgate.core.models.health.health_transition import HealthTransition
 
 
 __all__ = [
@@ -22,5 +23,6 @@ __all__ = [
     "HealthExpectation",
     "HealthSeverity",
     "HealthStatus",
+    "HealthTransition",
     "TopicTarget",
 ]

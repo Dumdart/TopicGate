@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -31,6 +32,9 @@ from topicgate.processors.subscription_manager import SubscriptionManager
 from topicgate.processors.observation_retention_processor import (
     ObservationRetentionProcessor,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class ObserverMqttRepository:
@@ -206,7 +210,14 @@ class ObserverMqttRepository:
             observation_id=uuid4(),
         )
         self._message_recorder.record_message(entry)
-        self.health_sink.check_topic_message(entry)
+        try:
+            self.health_sink.evaluate_observation(entry)
+        except Exception:
+            logger.exception(
+                "Health evaluation failed for broker %s topic %s.",
+                entry.broker_id,
+                entry.topic,
+            )
         observation = CurrentTopic(entry, ObservationStatus.LIVE).to_observation()
         if self._observation_sink is not None:
             self._observation_sink(observation)
