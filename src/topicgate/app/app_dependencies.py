@@ -1,4 +1,5 @@
 from pathlib import Path
+from topicgate.app.services.health_expectation_service import HealthExpectationService
 from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.services.service_item import ServiceItem
 from topicgate.app.services.persistence_lifecycle import PersistenceLifecycle
@@ -112,6 +113,8 @@ class AppDependencies:
             database_path,
         )
 
+        self.health_sink = HealthExpectationService()
+
         self.service_items: tuple[ServiceItem, ...] = (
             self.persistence,
             self.runtime,
@@ -128,4 +131,5 @@ class AppDependencies:
             broker_id=profile.id,
             message_recorder=self.topic_messages,
             current_topics=self.topic_messages,
+            health_sink=self.health_sink
         )

@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.interfaces.current_topic_reader import CurrentTopicReader
+from topicgate.core.interfaces.health_observation_sink import HealthObservationSink
 from topicgate.core.interfaces.topic_message_recorder import TopicMessageRecorder
 from topicgate.core.models.connection_status import ConnectionStatus
 from topicgate.core.models.current_topic import CurrentTopic
@@ -48,6 +49,7 @@ class ObserverMqttRepository:
         broker_id: UUID,
         message_recorder: TopicMessageRecorder,
         current_topics: CurrentTopicReader,
+        health_sink: HealthObservationSink,
     ) -> None:
         self._retention_policy = retention_policy or ObservationRetentionPolicy
         self._observation_sink = observation_sink
@@ -55,6 +57,7 @@ class ObserverMqttRepository:
         self._broker_id = broker_id
         self._message_recorder = message_recorder
         self._current_topics = current_topics
+        self.health_sink = health_sink
         self.message_queue: asyncio.Queue[MqttMessage] = asyncio.Queue(
             maxsize=MAX_PENDING_MESSAGE_NOTIFICATIONS
         )
@@ -203,6 +206,7 @@ class ObserverMqttRepository:
             observation_id=uuid4(),
         )
         self._message_recorder.record_message(entry)
+        self.health_sink.check_topic_message(entry)
         observation = CurrentTopic(entry, ObservationStatus.LIVE).to_observation()
         if self._observation_sink is not None:
             self._observation_sink(observation)
