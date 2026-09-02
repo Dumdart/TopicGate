@@ -1,0 +1,76 @@
+from datetime import datetime, timezone
+from uuid import uuid4
+
+from topicgate.core.models.health.condition import EqualCondition
+from topicgate.core.models.health.expectation_failure import ExpectationFailure
+from topicgate.core.models.health.expectation_state import ExpectationState
+from topicgate.core.models.health.expectation_target import TopicTarget
+from topicgate.core.models.health.health_enums import ActionKind
+from topicgate.core.models.health.health_enums import HealthSeverity
+from topicgate.core.models.health.health_enums import HealthStatus
+from topicgate.core.models.health.health_expectation import HealthExpectation
+from topicgate.infrastructure.database.mappers.expectation_failure_mapper import (
+    ExpectationFailureMapper,
+)
+from topicgate.infrastructure.database.mappers.expectation_state_mapper import (
+    ExpectationStateMapper,
+)
+from topicgate.infrastructure.database.mappers.health_expectation_mapper import (
+    HealthExpectationMapper,
+)
+
+
+def test_health_expectation_mapper_round_trips_topic_and_condition() -> None:
+    expectation = HealthExpectation(
+        expectation_id=uuid4(),
+        revision=3,
+        enabled=True,
+        severity=HealthSeverity.CRITICAL,
+        target=TopicTarget(uuid4(), "devices/status"),
+        condition=EqualCondition(b"online"),
+        actions=frozenset({ActionKind.LOG, ActionKind.STORE_FAILURE}),
+    )
+
+    row = HealthExpectationMapper.to_row(expectation)
+    restored = HealthExpectationMapper.to_model(row)
+
+    assert restored == expectation
+    assert row.target == {
+        "kind": "topic",
+        "broker_id": str(expectation.target.broker_id),
+        "topic": "devices/status",
+    }
+    assert row.actions == ["log", "store_failure"]
+
+
+def test_expectation_failure_mapper_round_trips_optional_values() -> None:
+    timestamp = datetime.now(timezone.utc)
+    failure = ExpectationFailure(
+        failure_id=uuid4(),
+        expectation_id=uuid4(),
+        first_failed_at=timestamp,
+        last_seen_at=timestamp,
+        occurrence_count=2,
+        expected_revision=4,
+        last_healthy_at=timestamp,
+        recovered_at=None,
+        failure_code="mismatch",
+        evidence_summary="expected online",
+    )
+
+    assert ExpectationFailureMapper.to_model(
+        ExpectationFailureMapper.to_row(failure)
+    ) == failure
+
+
+def test_expectation_state_mapper_converts_status() -> None:
+    state = ExpectationState(
+        expectation_id=uuid4(),
+        current_status=HealthStatus.PROBLEM,
+        active_failure_id=uuid4(),
+    )
+
+    row = ExpectationStateMapper.to_row(state)
+
+    assert row.current_status == "problem"
+    assert ExpectationStateMapper.to_model(row) == state
