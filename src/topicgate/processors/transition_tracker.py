@@ -1,8 +1,7 @@
-from datetime import datetime
 from uuid import uuid4
 
+from topicgate.core.models.health import ExpectationEvaluation
 from topicgate.core.models.health import ExpectationState
-from topicgate.core.models.health import HealthExpectation
 from topicgate.core.models.health import HealthStatus
 from topicgate.core.models.health import HealthTransition
 
@@ -10,10 +9,8 @@ from topicgate.core.models.health import HealthTransition
 class TransitionTracker:
     def apply(
         self,
-        expectation: HealthExpectation,
         previous_state: ExpectationState | None,
-        status: HealthStatus,
-        evaluated_at: datetime,
+        evaluation: ExpectationEvaluation,
     ) -> tuple[ExpectationState, HealthTransition | None]:
         previous_status = (
             HealthStatus.UNKNOWN
@@ -28,12 +25,12 @@ class TransitionTracker:
         )
         transition: HealthTransition | None = None
 
-        if status is HealthStatus.HEALTHY:
-            last_healthy_at = evaluated_at
+        if evaluation.status is HealthStatus.HEALTHY:
+            last_healthy_at = evaluation.evaluated_at
             if previous_status is HealthStatus.PROBLEM:
                 transition = HealthTransition.RECOVERY
                 active_failure_id = None
-        elif status is HealthStatus.PROBLEM:
+        elif evaluation.status is HealthStatus.PROBLEM:
             if active_failure_id is not None:
                 transition = HealthTransition.ONGOING_FAILURE
             else:
@@ -42,9 +39,9 @@ class TransitionTracker:
 
         return (
             ExpectationState(
-                expectation_id=expectation.expectation_id,
-                current_status=status,
-                last_evaluated_at=evaluated_at,
+                expectation_id=evaluation.expectation_id,
+                current_status=evaluation.status,
+                last_evaluated_at=evaluation.evaluated_at,
                 last_healthy_at=last_healthy_at,
                 active_failure_id=active_failure_id,
             ),

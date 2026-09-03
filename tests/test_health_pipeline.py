@@ -11,7 +11,9 @@ from topicgate.app.services.health_expectation_service import (
 )
 from topicgate.core.models.health import ActionKind
 from topicgate.core.models.health import Condition
+from topicgate.core.models.health import ConditionResult
 from topicgate.core.models.health import EqualCondition
+from topicgate.core.models.health import ExpectationEvaluation
 from topicgate.core.models.health import ExpectationState
 from topicgate.core.models.health import HealthExpectation
 from topicgate.core.models.health import HealthSeverity
@@ -39,7 +41,7 @@ NOW = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
 
 
 class FailingCondition(Condition):
-    def handle_condition(self, actual: bytes | str) -> HealthStatus:
+    def handle_condition(self, actual: bytes | str) -> ConditionResult:
         raise ValueError("invalid observation")
 
 
@@ -74,6 +76,23 @@ def message(broker_id, payload=b"offline", *, received_at=NOW):
         payload_size=len(payload),
         message_count=1,
         observation_id=uuid4(),
+    )
+
+
+def evaluation(
+    item: HealthExpectation,
+    status: HealthStatus,
+    *,
+    evaluated_at: datetime = NOW,
+) -> ExpectationEvaluation:
+    return ExpectationEvaluation(
+        expectation_id=item.expectation_id,
+        expectation_revision=item.revision,
+        status=status,
+        evaluated_at=evaluated_at,
+        failure_code=None,
+        evidence_summary=None,
+        evidence_complete=True,
     )
 
 
@@ -147,10 +166,8 @@ def test_transition_tracker_matrix(
     )
 
     state, actual_transition = TransitionTracker().apply(
-        item,
         previous,
-        status,
-        NOW,
+        evaluation(item, status),
     )
 
     assert actual_transition is transition
@@ -172,10 +189,8 @@ def test_unknown_observation_retains_and_resumes_unresolved_failure() -> None:
     )
 
     state, transition = TransitionTracker().apply(
-        item,
         unknown_state,
-        HealthStatus.PROBLEM,
-        NOW,
+        evaluation(item, HealthStatus.PROBLEM),
     )
 
     assert transition is HealthTransition.ONGOING_FAILURE
@@ -193,7 +208,7 @@ def test_pipeline_creates_repeats_and_recovers_one_failure_episode(tmp_path) -> 
     item = expectation(broker_id, actions=frozenset({ActionKind.LOG}))
     expectations.create(item)
 
-    pipeline.evaluate_observation(message(broker_id))
+    evaluations = pipeline.evaluate_observation(message(broker_id))
     failed_state = states.get(item.expectation_id)
     assert failed_state is not None
     assert failed_state.active_failure_id is not None
@@ -201,8 +216,21 @@ def test_pipeline_creates_repeats_and_recovers_one_failure_episode(tmp_path) -> 
     failure = failures.get(failure_id)
     assert failure is not None
     assert failure.occurrence_count == 1
+    assert failure.failure_code == "EQUAL_CONDITION_FAILED"
+    assert failure.evidence_summary == (
+        "Expected value: b'online', Actual value: b'offline'"
+    )
+    assert len(evaluations) == 1
+    finding = evaluations[0]
+    assert finding.expectation_id == item.expectation_id
+    assert finding.expectation_revision == item.revision
+    assert finding.status is HealthStatus.PROBLEM
+    assert finding.evaluated_at == NOW
+    assert finding.failure_code == "EQUAL_CONDITION_FAILED"
+    assert finding.evidence_complete is True
     assert handler.execute.call_count == 1
     first_context = handler.execute.call_args.args[0]
+    assert first_context.evaluation is finding
     assert first_context.transition is HealthTransition.NEW_FAILURE
     assert first_context.severity is HealthSeverity.CRITICAL
 

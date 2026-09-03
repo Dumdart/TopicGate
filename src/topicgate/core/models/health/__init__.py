@@ -1,5 +1,7 @@
 from topicgate.core.models.health.condition import Condition
 from topicgate.core.models.health.condition import EqualCondition
+from topicgate.core.models.health.condition_result import ConditionResult
+from topicgate.core.models.health.expectation_evaluation import ExpectationEvaluation
 from topicgate.core.models.health.expectation_failure import ExpectationFailure
 from topicgate.core.models.health.expectation_state import ExpectationState
 from topicgate.core.models.health.expectation_target import BrokerTarget
@@ -16,7 +18,9 @@ __all__ = [
     "ActionKind",
     "BrokerTarget",
     "Condition",
+    "ConditionResult",
     "EqualCondition",
+    "ExpectationEvaluation",
     "ExpectationFailure",
     "ExpectationState",
     "ExpectationTarget",

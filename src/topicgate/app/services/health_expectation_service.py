@@ -8,6 +8,8 @@ from topicgate.core.interfaces.health_repositories import (
     HealthExpectationReader,
     TransactionManager,
 )
+from topicgate.core.models.health import ConditionResult
+from topicgate.core.models.health import ExpectationEvaluation
 from topicgate.core.models.health import ExpectationFailure
 from topicgate.core.models.health import ExpectationState
 from topicgate.core.models.health import HealthExpectation
@@ -38,7 +40,10 @@ class HealthExpectationService:
         self._transition_tracker = transition_tracker
         self._action_dispatcher = action_dispatcher
 
-    def evaluate_observation(self, topic_msg: TopicMessage) -> None:
+    def evaluate_observation(
+        self,
+        topic_msg: TopicMessage,
+    ) -> tuple[ExpectationEvaluation, ...]:
         try:
             expectations = self._expectation_repo.list_for_topic(
                 topic_msg.broker_id,
@@ -50,45 +55,49 @@ class HealthExpectationService:
                 topic_msg.broker_id,
                 topic_msg.topic,
             )
-            return
+            return ()
 
+        evaluations: list[ExpectationEvaluation] = []
         for expectation in expectations:
             if not expectation.enabled:
                 continue
             try:
-                self._evaluate(expectation, topic_msg)
+                evaluations.append(self._evaluate(expectation, topic_msg))
             except Exception:
                 logger.exception(
                     "Health expectation %s evaluation failed.",
                     expectation.expectation_id,
                 )
+        return tuple(evaluations)
 
     def _evaluate(
         self,
         expectation: HealthExpectation,
         topic_msg: TopicMessage,
-    ) -> None:
-        status = expectation.condition.handle_condition(topic_msg.payload)
-        evaluated_at = topic_msg.received_at
+    ) -> ExpectationEvaluation:
+        result = expectation.condition.handle_condition(topic_msg.payload)
+        evaluation = self._condition_result_to_evaluation(
+            result,
+            expectation,
+            topic_msg.received_at,
+        )
 
         with self._transaction_manager.transaction() as transaction:
             previous_state = self._state_repo.get(
                 expectation.expectation_id,
                 transaction=transaction,
             )
+
             state, transition = self._transition_tracker.apply(
-                expectation,
                 previous_state,
-                status,
-                evaluated_at,
+                evaluation,
             )
             failure = self._update_failure(
-                expectation,
+                evaluation,
                 previous_state,
                 state,
                 transition,
-                evaluated_at,
-                transaction,
+                transaction=transaction,
             )
             if failure is not None:
                 self._failure_repo.upsert(failure, transaction=transaction)
@@ -98,26 +107,41 @@ class HealthExpectationService:
             HealthTransition.NEW_FAILURE,
             HealthTransition.RECOVERY,
         }:
-            return
+            return evaluation
         self._action_dispatcher.dispatch(
             action_kinds=expectation.actions,
             context=HealthActionContext(
-                expectation_id=expectation.expectation_id,
-                expectation_revision=expectation.revision,
+                evaluation=evaluation,
                 transition=transition,
                 severity=expectation.severity,
-                evaluated_at=evaluated_at,
                 failure=failure,
             ),
+        )
+        return evaluation
+
+    @staticmethod
+    def _condition_result_to_evaluation(
+        condition_result: ConditionResult,
+        expectation: HealthExpectation,
+        evaluated_at: datetime,
+    ) -> ExpectationEvaluation:
+        return ExpectationEvaluation(
+            expectation_id=expectation.expectation_id,
+            expectation_revision=expectation.revision,
+            status=condition_result.status,
+            evaluated_at=evaluated_at,
+            failure_code=condition_result.failure_code,
+            evidence_summary=condition_result.evidence_summary,
+            evidence_complete=condition_result.evidence_complete,
         )
 
     def _update_failure(
         self,
-        expectation: HealthExpectation,
+        evaluation: ExpectationEvaluation,
         previous_state: ExpectationState | None,
         state: ExpectationState,
         transition: HealthTransition | None,
-        evaluated_at: datetime,
+        *,
         transaction: object,
     ) -> ExpectationFailure | None:
         if transition is HealthTransition.NEW_FAILURE:
@@ -125,13 +149,14 @@ class HealthExpectationService:
                 raise RuntimeError("New failure transition has no failure ID.")
             return ExpectationFailure(
                 failure_id=state.active_failure_id,
-                expectation_id=expectation.expectation_id,
-                first_failed_at=evaluated_at,
-                last_seen_at=evaluated_at,
+                expectation_id=evaluation.expectation_id,
+                first_failed_at=evaluation.evaluated_at,
+                last_seen_at=evaluation.evaluated_at,
                 occurrence_count=1,
-                expected_revision=expectation.revision,
+                expected_revision=evaluation.expectation_revision,
                 last_healthy_at=state.last_healthy_at,
-                failure_code="condition_mismatch",
+                failure_code=evaluation.failure_code,
+                evidence_summary=evaluation.evidence_summary,
             )
 
         previous_failure_id = (
@@ -150,15 +175,17 @@ class HealthExpectationService:
         if transition is HealthTransition.ONGOING_FAILURE:
             return replace(
                 failure,
-                last_seen_at=evaluated_at,
+                last_seen_at=evaluation.evaluated_at,
                 occurrence_count=failure.occurrence_count + 1,
-                expected_revision=expectation.revision,
+                expected_revision=evaluation.expectation_revision,
+                failure_code=evaluation.failure_code,
+                evidence_summary=evaluation.evidence_summary,
             )
         if transition is HealthTransition.RECOVERY:
             return replace(
                 failure,
-                last_seen_at=evaluated_at,
-                last_healthy_at=evaluated_at,
-                recovered_at=evaluated_at,
+                last_seen_at=evaluation.evaluated_at,
+                last_healthy_at=evaluation.evaluated_at,
+                recovered_at=evaluation.evaluated_at,
             )
         return None
