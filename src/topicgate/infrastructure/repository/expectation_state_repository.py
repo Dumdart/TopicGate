@@ -29,6 +29,11 @@ class ExpectationStateRepository:
             row = session.get(ExpectationStateRow, expectation_id)
             return None if row is None else ExpectationStateMapper.to_model(row)
 
+    def get_all_states(self) -> list[ExpectationState]:
+        with self._db.session() as session:
+            rows = session.query(ExpectationStateRow).all()
+            return [ExpectationStateMapper.to_model(row) for row in rows]
+
     def create(self, state: ExpectationState) -> ExpectationState:
         with self._db.transaction() as session:
             if session.get(ExpectationStateRow, state.expectation_id):

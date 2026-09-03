@@ -38,6 +38,11 @@ class ExpectationFailureRepository:
             session.add(ExpectationFailureMapper.to_row(failure))
         return failure
 
+    def get_all_states(self) -> list[ExpectationFailure]:
+        with self._db.session() as session:
+            rows = session.query(ExpectationFailureRow).all()
+            return [ExpectationFailureMapper.to_model(row) for row in rows]
+
     def upsert(
         self,
         failure: ExpectationFailure,
