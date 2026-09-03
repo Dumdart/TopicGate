@@ -8,17 +8,19 @@ from topicgate.core.interfaces.health_repositories import (
     HealthExpectationReader,
     TransactionManager,
 )
-from topicgate.core.models.health import ConditionResult
-from topicgate.core.models.health import ExpectationEvaluation
-from topicgate.core.models.health import ExpectationFailure
-from topicgate.core.models.health import ExpectationState
-from topicgate.core.models.health import HealthExpectation
-from topicgate.core.models.health import HealthTransition
+from topicgate.core.models.health import (
+    ConditionResult,
+    ExpectationEvaluation,
+    ExpectationFailure,
+    ExpectationState,
+    HealthExpectation,
+    HealthStatus,
+    HealthTransition,
+)
 from topicgate.core.models.health.health_action_context import HealthActionContext
 from topicgate.core.models.topic_message import TopicMessage
 from topicgate.processors.action_dispatcher import ActionDispatcher
 from topicgate.processors.transition_tracker import TransitionTracker
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,16 @@ class HealthExpectationService:
         expectation: HealthExpectation,
         topic_msg: TopicMessage,
     ) -> ExpectationEvaluation:
-        result = expectation.condition.handle_condition(topic_msg.payload)
+        result = (
+            expectation.condition.handle_condition(topic_msg.payload)
+            if not topic_msg.is_truncated
+            else ConditionResult(
+                status=HealthStatus.UNKNOWN,
+                evidence_complete=False,
+                evidence_summary="Message payload was truncated."
+            )
+        )
+
         evaluation = self._condition_result_to_evaluation(
             result,
             expectation,

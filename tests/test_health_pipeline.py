@@ -45,6 +45,15 @@ class FailingCondition(Condition):
         raise ValueError("invalid observation")
 
 
+class RecordingCondition(Condition):
+    def __init__(self) -> None:
+        self.values: list[bytes | str] = []
+
+    def handle_condition(self, actual: bytes | str) -> ConditionResult:
+        self.values.append(actual)
+        return ConditionResult(status=HealthStatus.HEALTHY)
+
+
 class StaticExpectationReader:
     def __init__(self, expectations) -> None:
         self._expectations = expectations
@@ -65,7 +74,13 @@ def expectation(broker_id, *, enabled=True, actions=frozenset()):
     )
 
 
-def message(broker_id, payload=b"offline", *, received_at=NOW):
+def message(
+    broker_id,
+    payload=b"offline",
+    *,
+    received_at=NOW,
+    is_truncated=False,
+):
     return TopicMessage(
         broker_id=broker_id,
         topic="devices/status",
@@ -76,6 +91,7 @@ def message(broker_id, payload=b"offline", *, received_at=NOW):
         payload_size=len(payload),
         message_count=1,
         observation_id=uuid4(),
+        is_truncated=is_truncated,
     )
 
 
@@ -195,6 +211,74 @@ def test_unknown_observation_retains_and_resumes_unresolved_failure() -> None:
 
     assert transition is HealthTransition.ONGOING_FAILURE
     assert state.active_failure_id == failure_id
+
+
+def test_truncated_observation_is_unknown_without_invoking_condition_or_actions(
+    tmp_path,
+) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'truncated.db'}")
+    condition = RecordingCondition()
+    broker_id = uuid4()
+    item = replace(expectation(broker_id), condition=condition)
+    handler = MagicMock()
+    states = MagicMock()
+    states.get.return_value = None
+    failures = MagicMock()
+    pipeline = HealthExpectationService(
+        StaticExpectationReader((item,)),
+        states,
+        failures,
+        database,
+        TransitionTracker(),
+        ActionDispatcher(HealthActionRegistry({ActionKind.LOG: handler})),
+    )
+
+    evaluations = pipeline.evaluate_observation(
+        message(broker_id, b"healthy-but-incomplete", is_truncated=True)
+    )
+
+    assert len(evaluations) == 1
+    assert evaluations[0].status is HealthStatus.UNKNOWN
+    assert evaluations[0].failure_code is None
+    assert evaluations[0].evidence_complete is False
+    assert evaluations[0].evidence_summary == "Message payload was truncated."
+    assert condition.values == []
+    stored_state = states.upsert.call_args.args[0]
+    assert stored_state.current_status is HealthStatus.UNKNOWN
+    handler.execute.assert_not_called()
+    database.dispose()
+
+
+def test_truncated_observation_does_not_recover_an_existing_failure(tmp_path) -> None:
+    database = DatabaseContext(f"sqlite:///{tmp_path / 'truncated-recovery.db'}")
+    handler = MagicMock()
+    pipeline, expectations, states, failures = service(
+        database,
+        {ActionKind.LOG: handler},
+    )
+    broker_id = uuid4()
+    item = expectation(broker_id, actions=frozenset({ActionKind.LOG}))
+    expectations.create(item)
+
+    pipeline.evaluate_observation(message(broker_id, b"offline"))
+    failed_state = states.get(item.expectation_id)
+    assert failed_state is not None
+    failure_id = failed_state.active_failure_id
+    assert failure_id is not None
+
+    evaluations = pipeline.evaluate_observation(
+        message(broker_id, b"online", is_truncated=True)
+    )
+
+    state = states.get(item.expectation_id)
+    failure = failures.get(failure_id)
+    assert evaluations[0].status is HealthStatus.UNKNOWN
+    assert state.current_status is HealthStatus.UNKNOWN
+    assert state.active_failure_id == failure_id
+    assert failure.recovered_at is None
+    assert failure.occurrence_count == 1
+    assert handler.execute.call_count == 1
+    database.dispose()
 
 
 def test_pipeline_creates_repeats_and_recovers_one_failure_episode(tmp_path) -> None:

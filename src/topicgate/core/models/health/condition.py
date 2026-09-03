@@ -21,7 +21,7 @@ class EqualCondition(Condition):
             raise TypeError("Actual and expected values must have the same type.")
         return actual == expected
 
-    def handle_condition(self, actual: bytes | str) -> ConditionResult:
+    def handle_condition(self, actual: bytes | str) -> ConditionResult:        
         status = (
             HealthStatus.HEALTHY
             if self.compare(actual, self.expected_value)

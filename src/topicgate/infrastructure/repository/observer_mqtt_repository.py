@@ -188,7 +188,7 @@ class ObserverMqttRepository:
 
     def handle_message(self, _client: Any, _userdata: Any, msg: MqttMessage) -> None:
         validate_topic_name(msg.topic)
-        msg = ObservationRetentionProcessor.truncate_mqtt_message(
+        msg, is_truncated = ObservationRetentionProcessor.truncate_mqtt_message(
             msg,
             self._retention_policy(),
         )
@@ -208,6 +208,7 @@ class ObserverMqttRepository:
                 1 if previous is None else previous.message.message_count + 1
             ),
             observation_id=uuid4(),
+            is_truncated=is_truncated
         )
         self._message_recorder.record_message(entry)
         try:
