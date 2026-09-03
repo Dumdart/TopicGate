@@ -8,11 +8,26 @@ from topicgate.core.models.health import HealthExpectation
 
 
 class HealthExpectationReader(Protocol):
+    def get(self, expectation_id: UUID) -> HealthExpectation | None: ...
+
+    def list_all(self) -> tuple[HealthExpectation, ...]: ...
+
+    def list_for_broker(self, broker_id: UUID) -> tuple[HealthExpectation, ...]: ...
+
     def list_for_topic(
         self,
         broker_id: UUID,
         topic: str,
     ) -> tuple[HealthExpectation, ...]: ...
+
+    def create(self, expectation: HealthExpectation) -> HealthExpectation: ...
+
+    def update(self, expectation: HealthExpectation) -> HealthExpectation: ...
+
+    def patch(self, expectation_id: UUID, updates: dict) -> HealthExpectation: ...
+
+    def delete(self, expectation_id: UUID, *, retain_history: bool = False) -> None: ...
+
 
 
 class ExpectationStateStore(Protocol):
@@ -22,6 +37,8 @@ class ExpectationStateStore(Protocol):
         *,
         transaction: object | None = None,
     ) -> ExpectationState | None: ...
+
+    def get_all_states(self) -> list[ExpectationState]: ...
 
     def upsert(
         self,
@@ -38,6 +55,8 @@ class ExpectationFailureStore(Protocol):
         *,
         transaction: object | None = None,
     ) -> ExpectationFailure | None: ...
+
+    def get_all_states(self) -> list[ExpectationFailure]: ...
 
     def upsert(
         self,

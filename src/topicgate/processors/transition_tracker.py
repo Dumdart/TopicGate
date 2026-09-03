@@ -12,11 +12,6 @@ class TransitionTracker:
         previous_state: ExpectationState | None,
         evaluation: ExpectationEvaluation,
     ) -> tuple[ExpectationState, HealthTransition | None]:
-        previous_status = (
-            HealthStatus.UNKNOWN
-            if previous_state is None
-            else previous_state.current_status
-        )
         active_failure_id = (
             None if previous_state is None else previous_state.active_failure_id
         )
@@ -24,6 +19,16 @@ class TransitionTracker:
             None if previous_state is None else previous_state.last_healthy_at
         )
         transition: HealthTransition | None = None
+
+        revision_changed = (
+            previous_state is not None
+            and previous_state.expectation_revision > 0
+            and previous_state.expectation_revision
+            != evaluation.expectation_revision
+        )
+        if revision_changed:
+            # Check a revision change starts a fresh incident for the new rule.
+            active_failure_id = None
 
         if evaluation.status is HealthStatus.HEALTHY:
             last_healthy_at = evaluation.evaluated_at
@@ -41,6 +46,7 @@ class TransitionTracker:
             ExpectationState(
                 expectation_id=evaluation.expectation_id,
                 current_status=evaluation.status,
+                expectation_revision=evaluation.expectation_revision,
                 last_evaluated_at=evaluation.evaluated_at,
                 last_healthy_at=last_healthy_at,
                 active_failure_id=active_failure_id,

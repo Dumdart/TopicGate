@@ -11,6 +11,9 @@ from topicgate.infrastructure.database.mappers.health_expectation_mapper import 
 from topicgate.infrastructure.database.models.health_expectation_row import (
     HealthExpectationRow,
 )
+from topicgate.infrastructure.database.models.expectation_failure_row import (
+    ExpectationFailureRow,
+)
 
 
 class HealthExpectationRepository:
@@ -21,6 +24,18 @@ class HealthExpectationRepository:
         with self._db.session() as session:
             row = session.get(HealthExpectationRow, expectation_id)
             return None if row is None else HealthExpectationMapper.to_model(row)
+
+    def list_all(self) -> tuple[HealthExpectation, ...]:
+        with self._db.session() as session:
+            rows = session.scalars(select(HealthExpectationRow)).all()
+        return tuple(HealthExpectationMapper.to_model(row) for row in rows)
+
+    def list_for_broker(self, broker_id: UUID) -> tuple[HealthExpectation, ...]:
+        return tuple(
+            expectation
+            for expectation in self.list_all()
+            if getattr(expectation.target, "broker_id", None) == broker_id
+        )
 
     def list_for_topic(
         self,
@@ -55,9 +70,32 @@ class HealthExpectationRepository:
             session.merge(HealthExpectationMapper.to_row(expectation))
         return expectation
 
-    def delete(self, expectation_id: UUID) -> None:
+    def update(self, expectation: HealthExpectation) -> HealthExpectation:
+        with self._db.transaction() as session:
+            row = session.get(HealthExpectationRow, expectation.expectation_id)
+            if row is None:
+                raise KeyError(
+                    f"Unknown health expectation: {expectation.expectation_id}"
+                )
+            session.merge(HealthExpectationMapper.to_row(expectation))
+        return expectation
+
+    def delete(self, expectation_id: UUID, *, retain_history: bool = False) -> None:
         with self._db.transaction() as session:
             row = session.get(HealthExpectationRow, expectation_id)
             if row is None:
                 raise KeyError(f"Unknown health expectation: {expectation_id}")
+            if not retain_history:
+                session.query(ExpectationFailureRow).filter(
+                    ExpectationFailureRow.expectation_id == expectation_id
+                ).delete(synchronize_session=False)
             session.delete(row)
+
+    def patch(self, expectation_id: UUID, updates: dict) -> HealthExpectation:
+        with self._db.transaction() as session:
+            row = session.get(HealthExpectationRow, expectation_id)
+            if row is None:
+                raise KeyError(f"Unknown health expectation: {expectation_id}")
+            for key, value in updates.items():
+                setattr(row, key, value)
+        return HealthExpectationMapper.to_model(row)

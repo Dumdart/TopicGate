@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from topicgate.infrastructure.database.base import Base
@@ -16,6 +16,7 @@ class ExpectationStateRow(Base):
         primary_key=True,
     )
     current_status: Mapped[str] = mapped_column(String)
+    expectation_revision: Mapped[int] = mapped_column(Integer, default=1)
     last_evaluated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

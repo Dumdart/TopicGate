@@ -1,4 +1,10 @@
 from pathlib import Path
+
+from topicgate.app.services.expectation_management_service import (
+    ExpectationManagementService,
+)
+from topicgate.app.services.failure_history_service import FailureHistoryService
+from topicgate.app.services.health_report_service import HealthReportService
 from topicgate.app.services.health_expectation_service import HealthExpectationService
 from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.services.service_item import ServiceItem
@@ -120,6 +126,31 @@ class AppDependencies:
             transaction_manager=self._db_context,
             transition_tracker=self.transition_tracker,
             action_dispatcher=self.action_dispatcher,
+            subscriptions_reader=lambda broker_id: self.broker_profiles.get_profile(
+                broker_id
+            ).workspace.subscriptions,
+        )
+
+        self.expectation_management_service = ExpectationManagementService(
+            health_expectation_repository=self.health_expectation_repo,
+            expectation_state_repository=self.expectation_state_repo,
+            expectation_failure_repository=self.expectation_failure_repo,
+            transaction_manager=self._db_context,
+            subscriptions_reader=lambda broker_id: self.broker_profiles.get_profile(
+                broker_id
+            ).workspace.subscriptions,
+        )
+        self.failure_history_service = FailureHistoryService(
+            expectation_failure_repository=self.expectation_failure_repo,
+            health_expectation_repository=self.health_expectation_repo,
+        )
+        self.health_report_service = HealthReportService(
+            health_expectation_repository=self.health_expectation_repo,
+            expectation_state_repository=self.expectation_state_repo,
+            expectation_failure_repository=self.expectation_failure_repo,
+            subscriptions_reader=lambda broker_id: self.broker_profiles.get_profile(
+                broker_id
+            ).workspace.subscriptions,
         )
 
         profile = self.broker_profiles.get_profile()

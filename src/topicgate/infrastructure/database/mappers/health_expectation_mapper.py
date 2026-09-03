@@ -30,6 +30,8 @@ class HealthExpectationMapper:
                 expectation.condition
             ),
             actions=sorted(action.value for action in expectation.actions),
+            name=expectation.name,
+            description=expectation.description,
         )
 
     @staticmethod
@@ -42,6 +44,8 @@ class HealthExpectationMapper:
             target=HealthExpectationMapper._dict_to_target(row.target),
             condition=HealthExpectationMapper._dict_to_condition(row.condition),
             actions=frozenset(ActionKind(action) for action in row.actions),
+            name=getattr(row, "name", "") or "",
+            description=getattr(row, "description", "") or "",
         )
 
     @staticmethod

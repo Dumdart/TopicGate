@@ -15,3 +15,5 @@ class ExpectationFailure:
     recovered_at: datetime | None = None
     failure_code: str | None = None
     evidence_summary: str | None = None
+    snapshot_broker_id: UUID | None = None
+    snapshot_topic: str | None = None

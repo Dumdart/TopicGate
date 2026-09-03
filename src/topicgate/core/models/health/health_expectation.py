@@ -22,6 +22,8 @@ class HealthExpectation:
     target: ExpectationTarget
     condition: Condition
     actions: frozenset[ActionKind]
+    name: str = ""
+    description: str = ""
 
 
 __all__ = [

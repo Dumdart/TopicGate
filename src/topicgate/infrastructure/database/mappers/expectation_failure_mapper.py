@@ -20,6 +20,8 @@ class ExpectationFailureMapper:
             recovered_at=failure.recovered_at,
             failure_code=failure.failure_code,
             evidence_summary=failure.evidence_summary,
+            snapshot_broker_id=failure.snapshot_broker_id,
+            snapshot_topic=failure.snapshot_topic,
         )
 
     @staticmethod
@@ -35,4 +37,6 @@ class ExpectationFailureMapper:
             recovered_at=row.recovered_at,
             failure_code=row.failure_code,
             evidence_summary=row.evidence_summary,
+            snapshot_broker_id=getattr(row, "snapshot_broker_id", None),
+            snapshot_topic=getattr(row, "snapshot_topic", None),
         )

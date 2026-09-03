@@ -26,11 +26,11 @@ class FailureHistoryService:
 
     def __init__(
         self,
-        failure_repository: ExpectationFailureStore,
-        expectation_repository: HealthExpectationReader | None = None,
+        expectation_failure_repository: ExpectationFailureStore,
+        health_expectation_repository: HealthExpectationReader | None = None,
     ) -> None:
-        self._failure_repository = failure_repository
-        self._expectation_repository = expectation_repository
+        self._failure_repository = expectation_failure_repository
+        self._expectation_repository = health_expectation_repository
 
     def get_bounded_evidence(
         self,

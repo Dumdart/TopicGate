@@ -1,6 +1,8 @@
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from uuid import UUID
 
 from topicgate.core.interfaces.health_repositories import (
     ExpectationFailureStore,
@@ -15,14 +17,20 @@ from topicgate.core.models.health import (
     ExpectationState,
     HealthExpectation,
     HealthStatus,
+    BrokerTarget,
     HealthTransition,
+    TopicTarget,
 )
 from topicgate.core.models.health.health_action_context import HealthActionContext
 from topicgate.core.models.topic_message import TopicMessage
+from topicgate.core.models.subscription import Subscription
+from topicgate.core.mqtt_topics import mqtt_filter_matches
 from topicgate.processors.action_dispatcher import ActionDispatcher
 from topicgate.processors.transition_tracker import TransitionTracker
 
 logger = logging.getLogger(__name__)
+
+SubscriptionsReader = Callable[[UUID], tuple[Subscription, ...]]
 
 
 class HealthExpectationService:
@@ -34,6 +42,7 @@ class HealthExpectationService:
         transaction_manager: TransactionManager,
         transition_tracker: TransitionTracker,
         action_dispatcher: ActionDispatcher,
+        subscriptions_reader: SubscriptionsReader | None = None,
     ) -> None:
         self._expectation_repo = health_expectation_repo
         self._state_repo = expectation_state_repo
@@ -41,6 +50,7 @@ class HealthExpectationService:
         self._transaction_manager = transaction_manager
         self._transition_tracker = transition_tracker
         self._action_dispatcher = action_dispatcher
+        self._subscriptions_reader = subscriptions_reader
 
     def evaluate_observation(
         self,
@@ -64,7 +74,13 @@ class HealthExpectationService:
             if not expectation.enabled:
                 continue
             try:
-                evaluations.append(self._evaluate(expectation, topic_msg))
+                evaluations.append(
+                    self._evaluate(
+                        expectation,
+                        topic_msg,
+                        observable=self._is_observable(expectation, topic_msg.topic),
+                    )
+                )
             except Exception:
                 logger.exception(
                     "Health expectation %s evaluation failed.",
@@ -76,14 +92,20 @@ class HealthExpectationService:
         self,
         expectation: HealthExpectation,
         topic_msg: TopicMessage,
+        *,
+        observable: bool = True,
     ) -> ExpectationEvaluation:
         result = (
             expectation.condition.handle_condition(topic_msg.payload)
-            if not topic_msg.is_truncated
+            if observable and not topic_msg.is_truncated
             else ConditionResult(
                 status=HealthStatus.UNKNOWN,
                 evidence_complete=False,
-                evidence_summary="Message payload was truncated."
+                evidence_summary=(
+                    "Message payload was truncated."
+                    if topic_msg.is_truncated
+                    else "Topic is not covered by an active subscription."
+                ),
             )
         )
 
@@ -99,11 +121,23 @@ class HealthExpectationService:
                 transaction=transaction,
             )
 
+            if (
+                previous_state is not None
+                and previous_state.expectation_revision
+                != evaluation.expectation_revision
+            ):
+                previous_state = self._reset_changed_revision(
+                    previous_state,
+                    evaluation.evaluated_at,
+                    transaction,
+                )
+
             state, transition = self._transition_tracker.apply(
                 previous_state,
                 evaluation,
             )
             failure = self._update_failure(
+                expectation,
                 evaluation,
                 previous_state,
                 state,
@@ -148,6 +182,7 @@ class HealthExpectationService:
 
     def _update_failure(
         self,
+        expectation: HealthExpectation,
         evaluation: ExpectationEvaluation,
         previous_state: ExpectationState | None,
         state: ExpectationState,
@@ -168,6 +203,8 @@ class HealthExpectationService:
                 last_healthy_at=state.last_healthy_at,
                 failure_code=evaluation.failure_code,
                 evidence_summary=evaluation.evidence_summary,
+                snapshot_broker_id=_target_broker_id(expectation.target),
+                snapshot_topic=_target_topic(expectation.target),
             )
 
         previous_failure_id = (
@@ -200,3 +237,48 @@ class HealthExpectationService:
                 recovered_at=evaluation.evaluated_at,
             )
         return None
+
+    def _reset_changed_revision(
+        self,
+        previous_state: ExpectationState,
+        changed_at: datetime,
+        transaction: object,
+    ) -> ExpectationState:
+        """Close the old incident before evaluating the new rule revision."""
+        if previous_state.active_failure_id is not None:
+            failure = self._failure_repo.get(
+                previous_state.active_failure_id,
+                transaction=transaction,
+            )
+            if failure is not None and failure.recovered_at is None:
+                self._failure_repo.upsert(
+                    replace(failure, recovered_at=changed_at),
+                    transaction=transaction,
+                )
+        return replace(
+            previous_state,
+            current_status=HealthStatus.UNKNOWN,
+            active_failure_id=None,
+        )
+
+    def _is_observable(self, expectation: HealthExpectation, topic: str) -> bool:
+        if not isinstance(expectation.target, TopicTarget):
+            return isinstance(expectation.target, BrokerTarget)
+        if self._subscriptions_reader is None:
+            return True
+        if expectation.target.topic != topic:
+            return False
+        return any(
+            mqtt_filter_matches(subscription.topic_filter, topic)
+            for subscription in self._subscriptions_reader(
+                expectation.target.broker_id
+            )
+        )
+
+
+def _target_broker_id(target) -> UUID | None:
+    return getattr(target, "broker_id", None)
+
+
+def _target_topic(target) -> str | None:
+    return getattr(target, "topic", None)

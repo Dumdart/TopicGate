@@ -12,3 +12,4 @@ class ExpectationState:
     last_evaluated_at: datetime | None = None
     last_healthy_at: datetime | None = None
     active_failure_id: UUID | None = None
+    expectation_revision: int = 0

@@ -13,6 +13,7 @@ class ExpectationStateMapper:
         return ExpectationStateRow(
             expectation_id=state.expectation_id,
             current_status=state.current_status.value,
+            expectation_revision=state.expectation_revision,
             last_evaluated_at=state.last_evaluated_at,
             last_healthy_at=state.last_healthy_at,
             active_failure_id=state.active_failure_id,
@@ -23,6 +24,7 @@ class ExpectationStateMapper:
         return ExpectationState(
             expectation_id=row.expectation_id,
             current_status=HealthStatus(row.current_status),
+            expectation_revision=getattr(row, "expectation_revision", 0) or 0,
             last_evaluated_at=row.last_evaluated_at,
             last_healthy_at=row.last_healthy_at,
             active_failure_id=row.active_failure_id,
