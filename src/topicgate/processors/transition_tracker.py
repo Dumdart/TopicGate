@@ -27,7 +27,7 @@ class TransitionTracker:
 
         if evaluation.status is HealthStatus.HEALTHY:
             last_healthy_at = evaluation.evaluated_at
-            if previous_status is HealthStatus.PROBLEM:
+            if active_failure_id is not None:
                 transition = HealthTransition.RECOVERY
                 active_failure_id = None
         elif evaluation.status is HealthStatus.PROBLEM:

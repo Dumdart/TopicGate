@@ -133,34 +133,28 @@ def service(database, actions=None):
 
 
 @pytest.mark.parametrize(
-    ("previous_status", "status", "transition", "retains_failure"),
+    ("previous_status", "has_active_failure", "status", "transition", "retains_failure"),
     [
-        (None, HealthStatus.HEALTHY, None, False),
-        (None, HealthStatus.PROBLEM, HealthTransition.NEW_FAILURE, True),
-        (
-            HealthStatus.UNKNOWN,
-            HealthStatus.PROBLEM,
-            HealthTransition.NEW_FAILURE,
-            True,
-        ),
-        (
-            HealthStatus.HEALTHY,
-            HealthStatus.PROBLEM,
-            HealthTransition.NEW_FAILURE,
-            True,
-        ),
-        (
-            HealthStatus.PROBLEM,
-            HealthStatus.PROBLEM,
-            HealthTransition.ONGOING_FAILURE,
-            True,
-        ),
-        (HealthStatus.PROBLEM, HealthStatus.HEALTHY, HealthTransition.RECOVERY, False),
-        (HealthStatus.PROBLEM, HealthStatus.UNKNOWN, None, True),
+        (None, False, HealthStatus.UNKNOWN, None, False),
+        (None, False, HealthStatus.HEALTHY, None, False),
+        (None, False, HealthStatus.PROBLEM, HealthTransition.NEW_FAILURE, True),
+        (HealthStatus.UNKNOWN, False, HealthStatus.UNKNOWN, None, False),
+        (HealthStatus.UNKNOWN, False, HealthStatus.HEALTHY, None, False),
+        (HealthStatus.UNKNOWN, False, HealthStatus.PROBLEM, HealthTransition.NEW_FAILURE, True),
+        (HealthStatus.HEALTHY, False, HealthStatus.UNKNOWN, None, False),
+        (HealthStatus.HEALTHY, False, HealthStatus.HEALTHY, None, False),
+        (HealthStatus.HEALTHY, False, HealthStatus.PROBLEM, HealthTransition.NEW_FAILURE, True),
+        (HealthStatus.PROBLEM, True, HealthStatus.UNKNOWN, None, True),
+        (HealthStatus.PROBLEM, True, HealthStatus.HEALTHY, HealthTransition.RECOVERY, False),
+        (HealthStatus.PROBLEM, True, HealthStatus.PROBLEM, HealthTransition.ONGOING_FAILURE, True),
+        (HealthStatus.UNKNOWN, True, HealthStatus.UNKNOWN, None, True),
+        (HealthStatus.UNKNOWN, True, HealthStatus.HEALTHY, HealthTransition.RECOVERY, False),
+        (HealthStatus.UNKNOWN, True, HealthStatus.PROBLEM, HealthTransition.ONGOING_FAILURE, True),
     ],
 )
 def test_transition_tracker_matrix(
     previous_status,
+    has_active_failure,
     status,
     transition,
     retains_failure,
@@ -176,7 +170,7 @@ def test_transition_tracker_matrix(
             previous_status,
             last_healthy_at=NOW - timedelta(minutes=1),
             active_failure_id=(
-                failure_id if previous_status is HealthStatus.PROBLEM else None
+                failure_id if has_active_failure else None
             ),
         )
     )
@@ -190,7 +184,7 @@ def test_transition_tracker_matrix(
     assert state.current_status is status
     assert state.last_evaluated_at == NOW
     assert (state.active_failure_id is not None) is retains_failure
-    if previous_status is HealthStatus.PROBLEM and retains_failure:
+    if has_active_failure and retains_failure:
         assert state.active_failure_id == failure_id
 
 
@@ -339,6 +333,43 @@ def test_pipeline_creates_repeats_and_recovers_one_failure_episode(tmp_path) -> 
     assert handler.execute.call_count == 2
     assert handler.execute.call_args.args[0].transition is HealthTransition.RECOVERY
     database.dispose()
+
+
+def test_restart_with_active_failure_does_not_dispatch_actions_again(tmp_path) -> None:
+    database_path = tmp_path / "restart.db"
+    url = f"sqlite:///{database_path}"
+    first_database = DatabaseContext(url)
+    first_handler = MagicMock()
+    first_pipeline, first_expectations, first_states, _ = service(
+        first_database,
+        {ActionKind.LOG: first_handler},
+    )
+    broker_id = uuid4()
+    item = expectation(broker_id, actions=frozenset({ActionKind.LOG}))
+    first_expectations.create(item)
+
+    first_pipeline.evaluate_observation(message(broker_id))
+    first_failure_id = first_states.get(item.expectation_id).active_failure_id
+    assert first_failure_id is not None
+    assert first_handler.execute.call_count == 1
+    first_database.dispose()
+
+    second_database = DatabaseContext(url)
+    try:
+        second_handler = MagicMock()
+        second_pipeline, _, second_states, second_failures = service(
+            second_database,
+            {ActionKind.LOG: second_handler},
+        )
+
+        second_pipeline.evaluate_observation(message(broker_id))
+
+        state = second_states.get(item.expectation_id)
+        assert state.active_failure_id == first_failure_id
+        assert second_failures.get(first_failure_id).occurrence_count == 2
+        second_handler.execute.assert_not_called()
+    finally:
+        second_database.dispose()
 
 
 def test_pipeline_no_expectations_and_disabled_expectations_are_safe_noops(
