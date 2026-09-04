@@ -1,7 +1,10 @@
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.core.models.connection_status import ConnectionStatus
@@ -183,6 +186,31 @@ def test_repository_records_processed_topic_message() -> None:
     assert recorded.topic == observation.topic
     assert recorded.payload == observation.payload
     assert recorded.observation_id == observation.observation_id
+
+
+def test_repository_counts_message_recording_failures() -> None:
+    recorder = MagicMock()
+    repository, _ = build_repository(message_recorder=recorder)
+    recorder.record_message.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        repository.handle_message(
+            None,
+            None,
+            MqttMessage("SmartHome/value", b"42", 1, True),
+        )
+
+    assert repository.recording_failure_count == 1
+
+
+def test_repository_tracks_rejected_subscriptions() -> None:
+    repository, _ = build_repository()
+    rejected = SimpleNamespace(is_failure=True)
+    accepted = SimpleNamespace(is_failure=False)
+
+    repository._handle_subscription_result((accepted, rejected))
+
+    assert repository.subscription_rejected_count == 1
 
 
 def test_repository_reads_current_values_instead_of_supplied_model_values() -> None:

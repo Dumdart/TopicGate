@@ -70,6 +70,9 @@ class ObserverMqttRepository:
         self.connected_at: datetime | None = None
         self.observation_started_at: datetime | None = None
         self._dropped_message_count = 0
+        self._recording_failure_count = 0
+        self._subscription_failure_count = 0
+        self._subscription_rejected_count = 0
         self._is_running = False
         self._is_stopping = False
         self._lifecycle_lock = asyncio.Lock()
@@ -93,7 +96,11 @@ class ObserverMqttRepository:
         try:
             await self._mqtt_gate.start()
             self._set_connection_status(ConnectionStatus.CONNECTED)
-            await self._subscription_manager.activate()
+            try:
+                await self._subscription_manager.activate()
+            except Exception:
+                self._subscription_failure_count += 1
+                raise
         except Exception as ex:
             self._is_running = False
             self._is_stopping = True
@@ -210,7 +217,11 @@ class ObserverMqttRepository:
             observation_id=uuid4(),
             is_truncated=is_truncated
         )
-        self._message_recorder.record_message(entry)
+        try:
+            self._message_recorder.record_message(entry)
+        except Exception:
+            self._recording_failure_count += 1
+            raise
         try:
             self.health_sink.evaluate_observation(entry)
         except Exception:
@@ -230,6 +241,18 @@ class ObserverMqttRepository:
     @property
     def dropped_message_count(self) -> int:
         return self._dropped_message_count + self._mqtt_gate.dropped_message_count
+
+    @property
+    def recording_failure_count(self) -> int:
+        return self._recording_failure_count
+
+    @property
+    def subscription_failure_count(self) -> int:
+        return self._subscription_failure_count
+
+    @property
+    def subscription_rejected_count(self) -> int:
+        return self._subscription_rejected_count
 
     def drain_pending_messages(self) -> tuple[MqttMessage, ...]:
         messages: list[MqttMessage] = []
@@ -301,6 +324,14 @@ class ObserverMqttRepository:
         else:
             self._set_connection_status(ConnectionStatus.DISCONNECTED)
 
+    def _handle_subscription_result(self, reason_codes: Any) -> None:
+        codes = reason_codes if isinstance(reason_codes, (list, tuple)) else ()
+        self._subscription_rejected_count = sum(
+            1 for code in codes if _reason_code_failed(code)
+        )
+        if not self._subscription_rejected_count:
+            self._subscription_failure_count = 0
+
     def _set_connection_status(self, status: ConnectionStatus) -> None:
         if self.connection_status != status:
             if status == ConnectionStatus.CONNECTED:
@@ -322,3 +353,13 @@ class ObserverMqttRepository:
             ) and current.status is ObservationStatus.LIVE:
                 removed.append(topic)
         self._message_recorder.remove_current_topics(self._broker_id, removed)
+
+
+def _reason_code_failed(reason_code: Any) -> bool:
+    is_failure = getattr(reason_code, "is_failure", None)
+    if is_failure is not None:
+        return bool(is_failure)
+    try:
+        return int(reason_code) >= 128
+    except (TypeError, ValueError):
+        return False

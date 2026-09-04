@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from topicgate.app.services.broker_health_monitor import BrokerHealthMonitor
 from topicgate.app.services.expectation_management_service import (
     ExpectationManagementService,
 )
@@ -129,6 +130,10 @@ class AppDependencies:
             subscriptions_reader=lambda broker_id: self.broker_profiles.get_profile(
                 broker_id
             ).workspace.subscriptions,
+            broker_metadata_reader=lambda broker_id: (
+                self.broker_runtime_state.repositories[broker_id]
+            ),
+            current_topics_reader=self.topic_messages.get_current_topics,
         )
 
         self.expectation_management_service = ExpectationManagementService(
@@ -185,9 +190,14 @@ class AppDependencies:
             database_path.parent,
             database_path,
         )
+        self.health_monitor = BrokerHealthMonitor(
+            self.health_sink,
+            broker_ids_reader=lambda: (self.runtime.active_broker.id,),
+        )
 
         self.service_items: tuple[ServiceItem, ...] = (
             self.persistence,
+            self.health_monitor,
             self.runtime,
         )
 

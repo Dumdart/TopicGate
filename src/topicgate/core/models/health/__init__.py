@@ -1,6 +1,10 @@
 from topicgate.core.models.health.condition import Condition
 from topicgate.core.models.health.condition import EqualCondition
 from topicgate.core.models.health.condition_result import ConditionResult
+from topicgate.core.models.health.diagnostic_report import DiagnosticReport
+from topicgate.core.models.health.diagnostic_report import ObservationFindingCode
+from topicgate.core.models.health.diagnostic_report import ObservationHealth
+from topicgate.core.models.health.diagnostic_report import ObservationHealthFinding
 from topicgate.core.models.health.expectation_evaluation import ExpectationEvaluation
 from topicgate.core.models.health.expectation_failure import ExpectationFailure
 from topicgate.core.models.health.expectation_state import ExpectationState
@@ -19,6 +23,7 @@ __all__ = [
     "BrokerTarget",
     "Condition",
     "ConditionResult",
+    "DiagnosticReport",
     "EqualCondition",
     "ExpectationEvaluation",
     "ExpectationFailure",
@@ -28,5 +33,8 @@ __all__ = [
     "HealthSeverity",
     "HealthStatus",
     "HealthTransition",
+    "ObservationFindingCode",
+    "ObservationHealth",
+    "ObservationHealthFinding",
     "TopicTarget",
 ]
