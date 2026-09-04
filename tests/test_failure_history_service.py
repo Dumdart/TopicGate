@@ -80,6 +80,35 @@ def test_filter_resolves_broker_topic_and_time_range():
     ) == (match,)
 
 
+def test_filter_uses_snapshotted_identity_after_expectation_deletion():
+    broker_id = uuid4()
+    failure = _failure(uuid4(), 1)
+    failure.snapshot_broker_id = broker_id
+    failure.snapshot_topic = "home/status"
+    service = _service([failure])
+
+    assert service.filter(broker_id, "home/status") == (failure,)
+
+
+def test_filter_uses_snapshotted_identity_after_expectation_edit():
+    original_broker_id = uuid4()
+    expectation = HealthExpectation(
+        uuid4(),
+        2,
+        True,
+        HealthSeverity.CRITICAL,
+        TopicTarget(uuid4(), "new/status"),
+        MagicMock(),
+        frozenset(),
+    )
+    failure = _failure(expectation.expectation_id, 1)
+    failure.snapshot_broker_id = original_broker_id
+    failure.snapshot_topic = "old/status"
+    service = _service([failure], {expectation.expectation_id: expectation})
+
+    assert service.filter(original_broker_id, "old/status") == (failure,)
+
+
 def test_cursor_pagination_returns_next_cursor():
     failures = [_failure(uuid4(), minute) for minute in range(3)]
     service = _service(failures)

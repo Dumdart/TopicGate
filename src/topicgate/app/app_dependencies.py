@@ -6,6 +6,7 @@ from topicgate.app.services.expectation_management_service import (
 )
 from topicgate.app.services.failure_history_service import FailureHistoryService
 from topicgate.app.services.health_report_service import HealthReportService
+from topicgate.app.services.health_query_service import HealthQueryService
 from topicgate.app.services.health_expectation_service import HealthExpectationService
 from topicgate.app.services.observation_query_service import ObservationQueryService
 from topicgate.app.services.service_item import ServiceItem
@@ -156,6 +157,12 @@ class AppDependencies:
             subscriptions_reader=lambda broker_id: self.broker_profiles.get_profile(
                 broker_id
             ).workspace.subscriptions,
+        )
+        self.health_query_service = HealthQueryService(
+            self.health_sink,
+            self.expectation_management_service,
+            self.failure_history_service,
+            self.health_report_service,
         )
 
         profile = self.broker_profiles.get_profile()

@@ -26,6 +26,10 @@ class App:
             runtime=self._dependencies.runtime,
             snapshot_service=self._dependencies.snapshot_service,
             mcp_setup_service=self._dependencies.mcp_setup,
+            health_query_service=self._dependencies.health_query_service,
+            expectation_management_service=(
+                self._dependencies.expectation_management_service
+            ),
         )
         self._window = MainWindow(self._view_model)
 

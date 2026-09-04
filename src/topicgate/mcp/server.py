@@ -12,6 +12,7 @@ from topicgate.app.services.service_container import ServiceContainer
 from topicgate.mcp.api.broker_api import BrokerAPI
 from topicgate.mcp.api.connection_api import ConnectionAPI
 from topicgate.mcp.api.dashboard_api import DashboardAPI
+from topicgate.mcp.api.health_api import HealthAPI
 from topicgate.mcp.api.mcp_api import McpApiContainer
 from topicgate.mcp.api.publish_api import PublishAPI
 from topicgate.mcp.api.snapshot_api import SnapshotAPI
@@ -41,7 +42,10 @@ limited, or disconnected snapshots can be valid.
 
 Broker selectors accept a UUID or a unique profile name. Names are trimmed and
 matched case-insensitively. Unknown names fail; ambiguous names fail rather than
-selecting arbitrarily. Call list_brokers and retry with the broker UUID when needed."""
+selecting arbitrarily. Call list_brokers and retry with the broker UUID when needed.
+
+query_failure_history is passive and available in every mode. Its response is
+bounded; inspect returned_count and next_cursor."""
 
 _SNAPSHOT_INSTRUCTIONS += "\n\n" + UNTRUSTED_MQTT_DATA_INSTRUCTIONS
 
@@ -59,7 +63,10 @@ are intended.
 """ + _SNAPSHOT_INSTRUCTIONS + """
 
 Use observe_broker_snapshot only when activation, reconnection, waiting, message
-receipt, and persistence are intended."""
+receipt, and persistence are intended. get_health_report runs a fresh local
+expectation evaluation and is available only in control mode because evaluation
+may persist health transitions and failure episodes. Its response is bounded;
+inspect returned_count and omitted_count."""
 
 # Check compatibility for integrations importing the original instruction constant.
 SERVER_INSTRUCTIONS = READ_ONLY_SERVER_INSTRUCTIONS
@@ -101,6 +108,7 @@ class Server:
                 SubscriptionAPI(runtime, self.resolver),
                 TopicAPI(runtime, self.resolver),
                 SnapshotAPI(self.dependencies.snapshot_service),
+                HealthAPI(self.dependencies.health_query_service, self.resolver),
                 DashboardAPI(runtime, self.dependencies.snapshot_service),
             ],
             control_enabled=mode.control_enabled,

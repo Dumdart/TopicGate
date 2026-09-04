@@ -115,6 +115,7 @@ async def test_read_only_server_hides_every_control_capability() -> None:
         runtime=runtime,
         broker_resolver=resolver(runtime),
         snapshot_service=MagicMock(),
+        health_query_service=MagicMock(),
         service_items=(),
     )
 
@@ -135,6 +136,7 @@ async def test_read_only_server_hides_every_control_capability() -> None:
         "list_brokers",
         "list_subscriptions",
         "list_topics",
+        "query_failure_history",
     }
     assert all(item.annotations.readOnlyHint is True for item in tools)
 

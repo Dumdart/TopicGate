@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +26,8 @@ from topicgate.gui.components.broker_settings_dialog import (
 from topicgate.gui.components.broker_connection import BrokerConnectionPane
 from topicgate.gui.components.connection_controls import ConnectionControls
 from topicgate.gui.components.log_console import LogConsoleDock
+from topicgate.gui.components.expectation_editor import ExpectationEditor
+from topicgate.gui.components.health_dialog import HealthDialog
 from topicgate.gui.components.mcp_setup_dialog import McpSetupDialog
 from topicgate.gui.components.observer_tree import ObserverTreePane
 from topicgate.gui.components.onboarding_panel import OnboardingPanel
@@ -60,6 +63,7 @@ class MainWindow(QMainWindow):
         self._settings = settings or QSettings()
         self._stored_observations_dialog: StoredObservationsDialog | None = None
         self._mcp_setup_dialog: McpSetupDialog | None = None
+        self._health_dialog: HealthDialog | None = None
         if settings is None:
             migrate_legacy_settings(self._settings)
         self.setWindowTitle(view_model.title)
@@ -79,6 +83,10 @@ class MainWindow(QMainWindow):
         self._topic_details = TopicDetailsPane()
         self._broker_connection = BrokerConnectionPane()
         self._subscription_settings = SubscriptionSettingsPane()
+        self._topic_expectations = ExpectationEditor(
+            self._view_model,
+            "topic",
+        )
         self._onboarding = OnboardingPanel()
         self._observer_tree.topic_selected.connect(self._view_model.select_topic)
         self._topic_details.topic_selected.connect(self._view_model.select_topic)
@@ -138,7 +146,11 @@ class MainWindow(QMainWindow):
         context_layout = QVBoxLayout(self._context_panel)
         context_layout.setContentsMargins(0, 0, 0, 0)
         context_layout.setSpacing(8)
-        context_layout.addWidget(self._subscription_settings)
+        self._settings_tabs = QTabWidget()
+        self._settings_tabs.setObjectName("topicSettingsTabs")
+        self._settings_tabs.addTab(self._subscription_settings, "Subscription")
+        self._settings_tabs.addTab(self._topic_expectations, "Expectations")
+        context_layout.addWidget(self._settings_tabs)
 
         self._topic_inspector = QWidget()
         self._topic_inspector.setObjectName("topicInspector")
@@ -263,6 +275,11 @@ class MainWindow(QMainWindow):
             self._show_stored_observations
         )
 
+        self._health_action = QAction("Broker health...", self)
+        self._health_action.setObjectName("healthAction")
+        self._health_action.setShortcut("Ctrl+Shift+H")
+        self._health_action.triggered.connect(self._show_health)
+
         self._quit_action = QAction("Quit", self)
         self._quit_action.setShortcut("Ctrl+Q")
         self._quit_action.triggered.connect(self.close)
@@ -288,6 +305,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self._add_filter_action)
         file_menu.addSeparator()
         file_menu.addAction(self._stored_observations_action)
+        file_menu.addAction(self._health_action)
         file_menu.addSeparator()
         file_menu.addAction(self._quit_action)
 
@@ -314,6 +332,19 @@ class MainWindow(QMainWindow):
 
     def _show_about_dialog(self) -> None:
         AboutDialog(self).open()
+
+    def _show_health(self) -> None:
+        dialog = self._health_dialog
+        if dialog is None:
+            dialog = HealthDialog(self._view_model, self)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.destroyed.connect(
+                lambda: setattr(self, "_health_dialog", None)
+            )
+            self._health_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _show_mcp_setup(self) -> None:
         dialog = McpSetupDialog(self._view_model, self)
@@ -392,12 +423,14 @@ class MainWindow(QMainWindow):
 
     def _render_details(self) -> None:
         self._topic_details.render(self._view_model)
+        self._topic_expectations.render()
 
     def _render_settings(self) -> None:
         self._subscription_settings.render(
             self._view_model.topic,
             self._view_model.selected_subscription,
         )
+        self._topic_expectations.render()
         self._render_broker_connection()
 
     def _render_connection(self) -> None:
@@ -438,6 +471,7 @@ class MainWindow(QMainWindow):
         self._topic_details.render(self._view_model)
         busy = self._view_model.is_busy("subscription")
         self._subscription_settings.setEnabled(not busy)
+        self._topic_expectations.setEnabled(not busy)
         exclusive_busy = (
             self._view_model.is_busy("broker")
             or self._view_model.is_busy("connection")

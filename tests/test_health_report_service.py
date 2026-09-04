@@ -86,3 +86,15 @@ def test_report_exposes_evidence_limitations() -> None:
 
     assert service.get_evidence_limitations(unavailable) == ("evidence_unavailable",)
     assert service.get_evidence_limitations(available) == ()
+
+
+def test_report_prefers_failure_identity_snapshot_after_expectation_edit() -> None:
+    original_broker_id = uuid4()
+    item = _expectation(TopicTarget(uuid4(), "new/status"))
+    failure = _failure(item.expectation_id)
+    failure.snapshot_broker_id = original_broker_id
+    failure.snapshot_topic = "old/status"
+    service = _service({item.expectation_id: item}, [], [failure])
+
+    assert service.broker_identity(failure) == original_broker_id
+    assert service.target_identity(failure) == "old/status"

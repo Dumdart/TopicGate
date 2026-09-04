@@ -139,6 +139,7 @@ async def test_cached_plugin_bundle_exposes_read_only_tools(
         "list_brokers",
         "list_subscriptions",
         "list_topics",
+        "query_failure_history",
     }
 
 

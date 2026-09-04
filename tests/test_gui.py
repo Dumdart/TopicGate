@@ -3,7 +3,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -68,6 +68,7 @@ from topicgate.gui.components.snapshot_panel import SnapshotPanel
 from topicgate.gui.components.stored_observations_dialog import (
     StoredObservationsDialog,
 )
+from topicgate.gui.components.health_dialog import HealthDialog
 from topicgate.gui.components.topic_details import TopicDetailsPane
 from topicgate.gui.gui import MainWindow
 from topicgate.gui.main_view_model import MainViewModel
@@ -77,6 +78,56 @@ from topicgate.presentation.snapshot_presentation import (
     SnapshotQuery,
 )
 from topicgate.presentation.topic_presentation import build_topic_tree
+
+
+def test_health_action_opens_broker_scoped_dialog() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    window = MainWindow(
+        MainViewModel(runtime_for(repository), repository.state.topic)
+    )
+
+    action = window.findChild(QAction, "healthAction")
+    assert action is not None
+    assert action.shortcut().toString() == "Ctrl+Shift+H"
+
+    action.trigger()
+    application.processEvents()
+
+    dialog = window.findChild(HealthDialog, "healthDialog")
+    assert dialog is not None
+    assert dialog.findChild(QTableWidget, "currentHealthTable") is not None
+    assert dialog.findChild(QWidget, "brokerExpectationEditor") is not None
+    assert dialog.findChild(QTableWidget, "healthHistoryTable") is not None
+    dialog.reject()
+    window.close()
+    application.processEvents()
+
+
+def test_topic_expectation_editor_creates_utf8_rule() -> None:
+    application = QApplication.instance() or QApplication([])
+    repository = FakeGuiRepository()
+    management = MagicMock()
+    management.list_expectations.return_value = ()
+    management.create_expectation.side_effect = lambda item, **_kwargs: item
+    view_model = MainViewModel(
+        runtime_for(repository),
+        repository.state.topic,
+        expectation_management_service=management,
+    )
+    window = MainWindow(view_model)
+    editor = window.findChild(QWidget, "topicExpectationEditor")
+
+    editor.findChild(QLineEdit, "expectationName").setText("Temperature")
+    expected = editor.findChild(QComboBox, "expectationExpectedValue")
+    expected.setEditText("21.5")
+    editor.findChild(QPushButton, "saveExpectationButton").click()
+
+    created = management.create_expectation.call_args.args[0]
+    assert created.name == "Temperature"
+    assert created.condition.expected_value == b"21.5"
+    window.close()
+    application.processEvents()
 
 
 def test_snapshot_panel_applies_clears_and_renders_health() -> None:
@@ -354,7 +405,7 @@ def test_window_keeps_broker_switching_above_topic_details() -> None:
     application.processEvents()
 
 
-def test_edit_subscription_button_reveals_only_subscription_settings() -> None:
+def test_settings_button_reveals_subscription_and_expectation_settings() -> None:
     application = QApplication.instance() or QApplication([])
     repository = FakeGuiRepository()
     view_model = MainViewModel(runtime_for(repository), repository.state.topic)
@@ -370,7 +421,7 @@ def test_edit_subscription_button_reveals_only_subscription_settings() -> None:
     assert context is not None
     assert edit_button is not None
     assert context.isHidden()
-    assert edit_button.text() == "Edit filter"
+    assert edit_button.text() == "Settings"
     assert not edit_button.icon().isNull()
     assert (
         edit_button.toolButtonStyle()
@@ -380,13 +431,14 @@ def test_edit_subscription_button_reveals_only_subscription_settings() -> None:
     edit_button.click()
 
     assert not context.isHidden()
-    assert edit_button.text() == "Edit filter"
+    assert edit_button.text() == "Settings"
+    assert context.findChild(QWidget, "topicExpectationEditor") is not None
     assert context.findChild(QWidget, "topicPublishPane") is None
 
     edit_button.click()
 
     assert context.isHidden()
-    assert edit_button.text() == "Edit filter"
+    assert edit_button.text() == "Settings"
     window.close()
     application.processEvents()
 

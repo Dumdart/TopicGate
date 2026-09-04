@@ -6,7 +6,7 @@ from topicgate.core.interfaces.health_repositories import (
     ExpectationFailureStore,
     HealthExpectationReader,
 )
-from topicgate.core.models.health import BrokerTarget, ExpectationFailure, TopicTarget
+from topicgate.core.models.health import ExpectationFailure
 
 
 DEFAULT_PAGE_SIZE = 50
@@ -95,15 +95,17 @@ class FailureHistoryService:
                     "expectation_repository is required for broker/topic filters"
                 )
             expectation = self._expectation_repository.get(failure.expectation_id)
-            if expectation is None:
-                continue
-            target = expectation.target
+            target = None if expectation is None else expectation.target
             target_broker = (
-                target.broker_id
-                if isinstance(target, (BrokerTarget, TopicTarget))
-                else None
+                failure.snapshot_broker_id
+                if failure.snapshot_broker_id is not None
+                else getattr(target, "broker_id", None)
             )
-            target_topic = target.topic if isinstance(target, TopicTarget) else None
+            target_topic = (
+                failure.snapshot_topic
+                if failure.snapshot_broker_id is not None
+                else getattr(target, "topic", None)
+            )
             if broker is not None and target_broker != broker:
                 continue
             if topic is not None and target_topic != topic:

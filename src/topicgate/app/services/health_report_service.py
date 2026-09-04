@@ -94,20 +94,22 @@ class HealthReportService:
         ]
 
     def broker_identity(self, failure: ExpectationFailure) -> UUID:
+        if failure.snapshot_broker_id is not None:
+            return failure.snapshot_broker_id
         expectation = self._get_expectation(failure)
         if expectation is None:
-            if failure.snapshot_broker_id is None:
-                raise KeyError(f"Unknown health expectation: {failure.expectation_id}")
-            return failure.snapshot_broker_id
+            raise KeyError(f"Unknown health expectation: {failure.expectation_id}")
         target = expectation.target
         if not isinstance(target, (BrokerTarget, TopicTarget)):
             raise TypeError(f"Unsupported expectation target: {type(target).__name__}")
         return target.broker_id
 
     def target_identity(self, failure: ExpectationFailure) -> str:
+        if failure.snapshot_broker_id is not None:
+            return failure.snapshot_topic or "broker"
         expectation = self._get_expectation(failure)
         if expectation is None:
-            return failure.snapshot_topic or "broker"
+            raise KeyError(f"Unknown health expectation: {failure.expectation_id}")
         target = expectation.target
         if isinstance(target, TopicTarget):
             return target.topic

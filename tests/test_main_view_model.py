@@ -30,12 +30,60 @@ from topicgate.core.models.observation_retention_policy import (
 from topicgate.core.config.mqtt_config import MqttConfig
 from topicgate.app.topicgate_runtime import TopicGateRuntime
 from topicgate.app.services.broker_snapshot_service import BrokerSnapshotService
+from topicgate.core.models.health import EqualCondition, TopicTarget
 from topicgate.gui.main_view_model import MainViewModel, mqtt_filter_matches
 from topicgate.presentation.snapshot_presentation import SnapshotQuery
 from topicgate.core.payload_limits import (
     MAX_FORMATTED_JSON_CHARACTERS,
     MAX_RENDERED_PAYLOAD_BYTES,
 )
+
+
+def test_expectation_editor_state_maps_topic_payloads_and_refreshes_health() -> None:
+    runtime = runtime_for(FakeObserverRepository())
+    management = MagicMock()
+    management.list_expectations.return_value = ()
+    management.create_expectation.side_effect = lambda item, **_kwargs: item
+    health_query = MagicMock()
+    health_query.get_health_report.return_value = MagicMock()
+    view_model = MainViewModel(
+        runtime,
+        "devices/status",
+        health_query_service=health_query,
+        expectation_management_service=management,
+    )
+
+    created = view_model.save_expectation(
+        target_kind="topic",
+        expectation_id=None,
+        name=" Device status ",
+        description=" Expected online ",
+        expected_value="b25saW5l",
+        encoding="base64",
+    )
+
+    assert created.name == "Device status"
+    assert created.description == "Expected online"
+    assert created.target == TopicTarget(runtime.active_broker.id, "devices/status")
+    assert created.condition == EqualCondition(b"online")
+    health_query.get_health_report.assert_called_once_with(runtime.active_broker.id)
+
+
+def test_expectation_editor_rejects_wildcard_topic_targets() -> None:
+    view_model = MainViewModel(
+        runtime_for(FakeObserverRepository()),
+        "devices/#",
+        expectation_management_service=MagicMock(),
+    )
+
+    with pytest.raises(ValueError, match="exact MQTT topic"):
+        view_model.save_expectation(
+            target_kind="topic",
+            expectation_id=None,
+            name="Status",
+            description="",
+            expected_value="online",
+        )
 
 
 async def test_publish_message_supports_utf8_and_strict_base64() -> None:

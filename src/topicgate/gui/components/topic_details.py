@@ -42,10 +42,10 @@ class TopicDetailsPane(WorkspacePane):
         self._edit_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self._edit_button.setText("Edit filter")
+        self._edit_button.setText("Settings")
         self._edit_button.setCheckable(True)
-        self._edit_button.setAccessibleName("Edit filter")
-        self._edit_button.setToolTip("Show filter settings")
+        self._edit_button.setAccessibleName("Topic settings")
+        self._edit_button.setToolTip("Show subscription and expectation settings")
         self._edit_button.toggled.connect(self._toggle_subscription_editing)
         self.header_layout.addWidget(self._edit_button)
 
@@ -244,9 +244,9 @@ class TopicDetailsPane(WorkspacePane):
 
     def _toggle_subscription_editing(self, editing: bool) -> None:
         self._edit_button.setToolTip(
-            "Hide filter settings"
+            "Hide topic settings"
             if editing
-            else "Show filter settings"
+            else "Show subscription and expectation settings"
         )
         self.subscription_editing_changed.emit(editing)
 
