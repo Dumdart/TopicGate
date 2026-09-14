@@ -39,6 +39,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python -m release.run_cd
 
+      - name: Install GUI system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libegl1
+
       - name: Set up release tools
         run: python -m pip install --upgrade build uv
 

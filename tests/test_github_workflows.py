@@ -18,8 +18,13 @@ def test_workflows_only_use_repository_owned_actions() -> None:
     assert external_actions == []
 
 
-def test_distribution_smoketests_install_linux_gui_dependencies() -> None:
-    workflow = (WORKFLOWS / "smoketests.yml").read_text(encoding="utf-8")
+def test_wheel_verification_workflows_install_linux_gui_dependencies() -> None:
+    smoketests = (WORKFLOWS / "smoketests.yml").read_text(encoding="utf-8")
+    release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 
-    assert "if: runner.os == 'Linux'" in workflow
-    assert "sudo apt-get install --yes libegl1" in workflow
+    assert "if: runner.os == 'Linux'" in smoketests
+    assert "sudo apt-get install --yes libegl1" in smoketests
+    assert "sudo apt-get install --yes libegl1" in release
+    assert release.index("install --yes libegl1") < release.index(
+        "Verify clean wheel installation"
+    )
