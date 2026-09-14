@@ -1,0 +1,102 @@
+name: Recover interrupted release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag whose PyPI publication completed
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+
+    steps:
+      - name: Check out repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          gh auth setup-git
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Verify release versions
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: python -m release.run_cd
+
+      - name: Download published distributions
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          version = os.environ["RELEASE_TAG"].removeprefix("v")
+          expected = {
+              f"topicgate-{version}-py3-none-any.whl",
+              f"topicgate-{version}.tar.gz",
+          }
+          with urlopen(
+              f"https://pypi.org/pypi/topicgate/{version}/json",
+              timeout=30,
+          ) as response:
+              release = json.load(response)
+          files = {item["filename"]: item for item in release["urls"]}
+          if not expected.issubset(files):
+              raise SystemExit(f"Missing PyPI distributions: {expected - files.keys()}")
+
+          destination = Path("dist")
+          destination.mkdir()
+          for filename in sorted(expected):
+              item = files[filename]
+              with urlopen(item["url"], timeout=60) as response:
+                  content = response.read()
+              digest = hashlib.sha256(content).hexdigest()
+              if digest != item["digests"]["sha256"]:
+                  raise SystemExit(f"PyPI digest mismatch: {filename}")
+              (destination / filename).write_bytes(content)
+              print(f"Downloaded and verified {filename}")
+          PY
+
+      - name: Install MCP Publisher
+        run: |
+          curl -L \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Validate MCP server metadata
+        run: mcp-publisher validate server.json
+
+      - name: Authenticate with MCP Registry
+        run: mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: python -m release.publish_mcp_registry server.json
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "GitHub release ${RELEASE_TAG} already exists"
+          else
+            gh release create "${RELEASE_TAG}" dist/* \
+              --title "TopicGate ${RELEASE_TAG}" \
+              --generate-notes
+          fi
